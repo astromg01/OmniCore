@@ -43,6 +43,7 @@ jobs:
           grep -q 'N64 RUN OK' app/src/main/cpp/n64/n64_libretro_host.cpp
           grep -q 'RETRO_ENVIRONMENT_SET_HW_RENDER' app/src/main/cpp/n64/n64_libretro_host.cpp
           grep -q 'glBlitFramebuffer' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'kTelemetryCapacity' app/src/main/cpp/n64/n64_libretro_host.h
           grep -q 'android:name=".emulation.N64EmulationActivity"' app/src/main/AndroidManifest.xml
           grep -q 'object N64SmartPerf' app/src/main/java/com/omnicore/emulator/performance/N64SmartPerf.kt
           grep -q 'N64InputSettings' app/src/main/java/com/omnicore/emulator/settings/N64InputSettings.kt
@@ -62,6 +63,12 @@ jobs:
           gradle --version
           test -x "$ANDROID_NDK_HOME/ndk-build"
           test -x "$ANDROID_SDK_ROOT/cmake/3.31.5/bin/cmake"
+
+      - name: Fast compile N64 host and Kotlin
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:externalNativeBuildDebug :app:compileDebugKotlin --stacktrace --no-daemon
 
       - name: Build isolated PS1 core
         shell: bash
