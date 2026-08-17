@@ -4,6 +4,8 @@ import android.content.Context
 import com.omnicore.emulator.core.CoreInfo
 import com.omnicore.emulator.core.CoreState
 import com.omnicore.emulator.core.EmulatorCore
+import com.omnicore.emulator.emulation.N64EmulationActivity
+import com.omnicore.emulator.library.RomDetector
 import com.omnicore.emulator.model.ConsoleSystem
 import com.omnicore.emulator.model.GameEntry
 import com.omnicore.emulator.performance.N64SmartPerf
@@ -22,27 +24,17 @@ class N64Core : EmulatorCore {
 
     override fun launch(context: Context, game: GameEntry): Result<Unit> = runCatching {
         check(isAvailable()) {
-            "O núcleo Nintendo 64 ainda não está empacotado neste build."
+            "O núcleo Nintendo 64 não está empacotado neste build."
+        }
+        val extension = RomDetector.extension(game.fileName)
+        require(extension in SUPPORTED_EXTENSIONS) {
+            "Formato Nintendo 64 não suportado: .$extension"
         }
 
-        // N64 gets its own settings + adaptive policy. Nothing here reuses the
-        // PlayStation runtime policy; the resulting decision is consumed by the
-        // dedicated N64 host as it comes online.
-        val requestedConfig = N64Settings.resolve(context)
-        val smartPerf = N64SmartPerf.initial(context, requestedConfig)
-        val prepared = N64RomPreparer.prepare(context, game).getOrThrow()
-
-        error(
-            buildString {
-                append("N64 Foundation pronta: ")
-                append(prepared.sourceOrder.label)
-                append(" → cache z64")
-                if (prepared.reusedCache) append(" reutilizado")
-                append(" • SmartPerf ")
-                append(smartPerf.level.name)
-                append(". O host de execução entra no próximo marco.")
-            }
-        )
+        // Warm only N64-owned caches here. ROM I/O stays off this caller thread
+        // and is performed by N64EmulationActivity.
+        N64SmartPerf.initial(context, N64Settings.resolve(context))
+        context.startActivity(N64EmulationActivity.intent(context, game))
     }
 
     companion object {
