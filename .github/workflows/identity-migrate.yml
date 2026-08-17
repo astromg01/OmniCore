@@ -1,60 +1,14 @@
-name: OmniCore Identity Migration
+name: OmniCore Identity Migration (retired)
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "tools/update_identity.py"
-      - ".github/workflows/identity-migrate.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  migrate:
+  retired:
     runs-on: ubuntu-24.04
     steps:
-      - name: Clone repository
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          git init .
-          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git fetch --no-tags origin main
-          git checkout -B main origin/main
-
-      - name: Update project identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/update_identity.py
-          grep -q 'mauricio-gamedev/OmniCore/releases' app/src/main/java/com/omnicore/emulator/update/UpdateManager.kt
-          grep -q 'Mauricio.gamedev' README.md
-          grep -q 'current%20DEV-0.9.0' README.md
-          grep -q 'Desenvolvido por Mauricio.gamedev' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
-          ! grep -RIn \
-            --exclude='*.b64' \
-            --exclude='update_identity.py' \
-            --exclude='identity-migrate.yml' \
-            --exclude-dir=.git \
-            --exclude-dir=build \
-            --exclude-dir=.gradle \
-            --exclude-dir=pcsx_rearmed \
-            'astromg01' .
-
-      - name: Commit identity migration
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "Mauricio.gamedev"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md CHANGELOG.md app
-          git diff --cached --check
-          if git diff --cached --quiet; then
-            echo "No identity changes needed."
-            exit 0
-          fi
-          git commit -m "Update OmniCore identity to Mauricio.gamedev"
-          git push origin main
+      - name: Migration complete
+        run: echo "OmniCore identity is now Mauricio.gamedev / @mauricio-gamedev."
