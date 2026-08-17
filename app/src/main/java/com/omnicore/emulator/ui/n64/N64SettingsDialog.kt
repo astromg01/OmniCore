@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.omnicore.emulator.core.n64.N64NativeBridge
+import com.omnicore.emulator.settings.N64InputSettings
 import com.omnicore.emulator.settings.N64PerformanceProfile
 import com.omnicore.emulator.settings.N64Settings
 
@@ -34,11 +35,16 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val device = remember { N64PerformanceProfile.detect(context) }
     var config by remember { mutableStateOf(N64Settings.resolve(context)) }
+    var input by remember { mutableStateOf(N64InputSettings.resolve(context)) }
 
-    fun refresh() { config = N64Settings.resolve(context) }
-    fun save(next: N64Settings.Config) {
+    fun refreshCore() { config = N64Settings.resolve(context) }
+    fun saveCore(next: N64Settings.Config) {
         N64Settings.saveCustom(context, next)
-        refresh()
+        refreshCore()
+    }
+    fun saveInput(next: N64InputSettings.Config) {
+        N64InputSettings.save(context, next)
+        input = N64InputSettings.resolve(context)
     }
 
     AlertDialog(
@@ -71,7 +77,7 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                         items(N64Settings.Preset.entries.filter { it != N64Settings.Preset.CUSTOM }) { preset ->
                             FilterChip(
                                 selected = config.preset == preset,
-                                onClick = { N64Settings.savePreset(context, preset); refresh() },
+                                onClick = { N64Settings.savePreset(context, preset); refreshCore() },
                                 label = { Text(preset.label) }
                             )
                         }
@@ -83,7 +89,7 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                         items(N64Settings.CpuMode.entries) { mode ->
                             FilterChip(
                                 selected = config.cpuMode == mode,
-                                onClick = { save(config.copy(cpuMode = mode)) },
+                                onClick = { saveCore(config.copy(cpuMode = mode)) },
                                 label = { Text(mode.label) }
                             )
                         }
@@ -91,12 +97,12 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                 }
                 item {
                     Text("RSP", fontWeight = FontWeight.Bold)
-                    Text("HLE é o padrão inicial de desempenho. LLE será liberado somente após validação por aparelho.", style = MaterialTheme.typography.bodySmall)
+                    Text("HLE é o backend ativo neste build. LLE é autocorrigido para HLE até ser validado no Android.", style = MaterialTheme.typography.bodySmall)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(N64Settings.RspMode.entries) { mode ->
                             FilterChip(
                                 selected = config.rspMode == mode,
-                                onClick = { save(config.copy(rspMode = mode)) },
+                                onClick = { saveCore(config.copy(rspMode = mode)) },
                                 label = { Text(mode.label) }
                             )
                         }
@@ -108,13 +114,13 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                         items(N64Settings.InternalResolution.entries) { mode ->
                             FilterChip(
                                 selected = config.internalResolution == mode,
-                                onClick = { save(config.copy(internalResolution = mode)) },
+                                onClick = { saveCore(config.copy(internalResolution = mode)) },
                                 label = { Text(mode.label) }
                             )
                         }
                     }
                     if (device.tier == N64PerformanceProfile.Tier.LOW) {
-                        Text("Auto-correção ativa: aparelhos limitados permanecem em resolução nativa.", style = MaterialTheme.typography.bodySmall)
+                        Text("Auto-correção ativa: hardware limitado permanece em resolução nativa.", style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 item {
@@ -122,12 +128,12 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                         title = "Framebuffer emulation",
                         subtitle = "Melhora compatibilidade visual, com custo adicional de GPU.",
                         checked = config.framebufferEmulation
-                    ) { save(config.copy(framebufferEmulation = it)) }
+                    ) { saveCore(config.copy(framebufferEmulation = it)) }
                     N64Toggle(
                         title = "Renderer em thread",
                         subtitle = "Mantém trabalho gráfico fora do caminho principal quando seguro.",
                         checked = config.threadedRenderer
-                    ) { save(config.copy(threadedRenderer = it)) }
+                    ) { saveCore(config.copy(threadedRenderer = it)) }
                 }
                 item {
                     Text("Expansion Pak", fontWeight = FontWeight.Bold)
@@ -135,15 +141,70 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                         items(N64Settings.ExpansionPak.entries) { mode ->
                             FilterChip(
                                 selected = config.expansionPak == mode,
-                                onClick = { save(config.copy(expansionPak = mode)) },
+                                onClick = { saveCore(config.copy(expansionPak = mode)) },
                                 label = { Text(mode.label) }
                             )
                         }
                     }
                 }
                 item {
+                    Text("Controle N64", fontWeight = FontWeight.Bold)
+                    Text("Mapa próprio: A/B, Z, L/R, Start, D-pad, analógico e quatro C-buttons.", style = MaterialTheme.typography.bodySmall)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(N64InputSettings.CButtonMode.entries) { mode ->
+                            FilterChip(
+                                selected = input.cButtonMode == mode,
+                                onClick = { saveInput(input.copy(cButtonMode = mode)) },
+                                label = { Text(mode.label) }
+                            )
+                        }
+                    }
+                }
+                item {
+                    Text("Analógico", fontWeight = FontWeight.Bold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AssistChip(
+                            onClick = { saveInput(input.copy(analogDeadzone = (input.analogDeadzone - 0.02f).coerceAtLeast(0.04f))) },
+                            label = { Text("Deadzone −") }
+                        )
+                        Text("${(input.analogDeadzone * 100).toInt()}%")
+                        AssistChip(
+                            onClick = { saveInput(input.copy(analogDeadzone = (input.analogDeadzone + 0.02f).coerceAtMost(0.30f))) },
+                            label = { Text("Deadzone +") }
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AssistChip(
+                            onClick = { saveInput(input.copy(analogSensitivity = (input.analogSensitivity - 0.05f).coerceAtLeast(0.70f))) },
+                            label = { Text("Sens. −") }
+                        )
+                        Text("${(input.analogSensitivity * 100).toInt()}%")
+                        AssistChip(
+                            onClick = { saveInput(input.copy(analogSensitivity = (input.analogSensitivity + 0.05f).coerceAtMost(1.30f))) },
+                            label = { Text("Sens. +") }
+                        )
+                    }
+                }
+                item {
+                    Text("Controller Pak", fontWeight = FontWeight.Bold)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(N64InputSettings.PakMode.entries) { mode ->
+                            FilterChip(
+                                selected = input.pakMode == mode,
+                                onClick = { saveInput(input.copy(pakMode = mode)) },
+                                label = { Text(mode.label) }
+                            )
+                        }
+                    }
+                    N64Toggle(
+                        title = "Resposta tátil",
+                        subtitle = "Vibração curta ao tocar nos controles virtuais.",
+                        checked = input.haptics
+                    ) { saveInput(input.copy(haptics = it)) }
+                }
+                item {
                     Text(
-                        "Essas opções pertencem somente ao Nintendo 64. Nenhuma configuração PS1 é alterada aqui.",
+                        "Essas opções pertencem somente ao Nintendo 64. Nenhuma configuração do PlayStation é alterada aqui.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 4.dp)
                     )
