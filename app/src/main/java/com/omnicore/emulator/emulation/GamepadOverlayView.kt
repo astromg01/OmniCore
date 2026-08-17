@@ -10,6 +10,7 @@ import android.view.View
 import com.omnicore.emulator.core.nativebridge.NativeBridge
 import kotlin.math.hypot
 import kotlin.math.min
+import kotlin.math.sqrt
 
 class GamepadOverlayView(context: Context) : View(context) {
     private data class Region(
@@ -21,14 +22,24 @@ class GamepadOverlayView(context: Context) : View(context) {
         val wide: Boolean = false
     )
 
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(72, 255, 255, 255)
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(145, 235, 238, 255)
+        style = Paint.Style.STROKE
+        strokeWidth = 1.7f * resources.displayMetrics.density
+    }
+    private val analogBasePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(58, 190, 185, 255)
         style = Paint.Style.FILL
     }
-    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(160, 255, 255, 255)
+    private val analogRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(130, 205, 200, 255)
         style = Paint.Style.STROKE
         strokeWidth = 2f * resources.displayMetrics.density
+    }
+    private val analogKnobPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(130, 225, 222, 255)
+        style = Paint.Style.FILL
     }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -38,6 +49,12 @@ class GamepadOverlayView(context: Context) : View(context) {
 
     private var regions: List<Region> = emptyList()
     private var pressed: Set<Int> = emptySet()
+    private var analogCx = 0f
+    private var analogCy = 0f
+    private var analogRadius = 0f
+    private var analogKnobX = 0f
+    private var analogKnobY = 0f
+    private var analogPointerId = -1
 
     init {
         isClickable = true
@@ -49,46 +66,57 @@ class GamepadOverlayView(context: Context) : View(context) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
         val base = min(w, h).toFloat()
-        val r = base * 0.068f
-        val small = base * 0.052f
-        textPaint.textSize = base * 0.038f
+        val r = base * 0.060f
+        val small = base * 0.048f
+        val dpadR = base * 0.048f
+        textPaint.textSize = base * 0.032f
+
+        analogCx = w * 0.145f
+        analogCy = h * 0.73f
+        analogRadius = base * 0.105f
+        analogKnobX = analogCx
+        analogKnobY = analogCy
+
+        val dpx = w * 0.315f
+        val dpy = h * 0.72f
+        val dStep = base * 0.082f
 
         regions = listOf(
-            // D-pad
-            Region(4, "▲", w * 0.17f, h * 0.57f, r),
-            Region(5, "▼", w * 0.17f, h * 0.83f, r),
-            Region(6, "◀", w * 0.10f, h * 0.70f, r),
-            Region(7, "▶", w * 0.24f, h * 0.70f, r),
+            Region(4, "▲", dpx, dpy - dStep, dpadR),
+            Region(5, "▼", dpx, dpy + dStep, dpadR),
+            Region(6, "◀", dpx - dStep, dpy, dpadR),
+            Region(7, "▶", dpx + dStep, dpy, dpadR),
 
-            // PlayStation face buttons mapped to the libretro RetroPad.
-            Region(9, "△", w * 0.83f, h * 0.53f, r),
-            Region(0, "×", w * 0.83f, h * 0.82f, r),
-            Region(1, "□", w * 0.76f, h * 0.68f, r),
-            Region(8, "○", w * 0.90f, h * 0.68f, r),
+            Region(9, "△", w * 0.845f, h * 0.55f, r),
+            Region(0, "×", w * 0.845f, h * 0.83f, r),
+            Region(1, "□", w * 0.775f, h * 0.69f, r),
+            Region(8, "○", w * 0.915f, h * 0.69f, r),
 
-            // Center
-            Region(2, "SELECT", w * 0.45f, h * 0.82f, small, wide = true),
-            Region(3, "START", w * 0.56f, h * 0.82f, small, wide = true),
+            Region(2, "SELECT", w * 0.465f, h * 0.84f, small, wide = true),
+            Region(3, "START", w * 0.565f, h * 0.84f, small, wide = true),
 
-            // Shoulders
-            Region(10, "L1", w * 0.09f, h * 0.14f, small, wide = true),
-            Region(12, "L2", w * 0.22f, h * 0.14f, small, wide = true),
-            Region(13, "R2", w * 0.78f, h * 0.14f, small, wide = true),
-            Region(11, "R1", w * 0.91f, h * 0.14f, small, wide = true)
+            Region(10, "L1", w * 0.095f, h * 0.13f, small, wide = true),
+            Region(12, "L2", w * 0.215f, h * 0.13f, small, wide = true),
+            Region(13, "R2", w * 0.785f, h * 0.13f, small, wide = true),
+            Region(11, "R1", w * 0.905f, h * 0.13f, small, wide = true)
         )
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+
+        canvas.drawCircle(analogCx, analogCy, analogRadius, analogBasePaint)
+        canvas.drawCircle(analogCx, analogCy, analogRadius, analogRingPaint)
+        canvas.drawCircle(analogKnobX, analogKnobY, analogRadius * 0.44f, analogKnobPaint)
+        textPaint.textSize = min(width, height) * 0.025f
+        canvas.drawText("L", analogCx, analogCy - analogRadius - textPaint.textSize * 0.35f, textPaint)
+
+        textPaint.textSize = min(width, height) * 0.032f
         regions.forEach { region ->
             val active = region.id in pressed
-            fillPaint.color = if (active) {
-                Color.argb(135, 255, 255, 255)
-            } else {
-                Color.argb(72, 255, 255, 255)
-            }
+            fillPaint.color = if (active) Color.argb(145, 218, 214, 255) else Color.argb(62, 235, 238, 255)
             if (region.wide) {
-                val halfW = region.radius * 1.55f
+                val halfW = region.radius * 1.60f
                 val halfH = region.radius * 0.72f
                 val rect = RectF(region.cx - halfW, region.cy - halfH, region.cx + halfW, region.cy + halfH)
                 canvas.drawRoundRect(rect, halfH, halfH, fillPaint)
@@ -103,27 +131,52 @@ class GamepadOverlayView(context: Context) : View(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val excludedIndex = when (event.actionMasked) {
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> event.actionIndex
-            MotionEvent.ACTION_CANCEL -> -2
-            else -> -1
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                val index = event.actionIndex
+                val x = event.getX(index)
+                val y = event.getY(index)
+                if (analogPointerId == -1 && insideAnalog(x, y, 1.20f)) {
+                    analogPointerId = event.getPointerId(index)
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                val pointerId = event.getPointerId(event.actionIndex)
+                if (pointerId == analogPointerId) {
+                    analogPointerId = -1
+                    updateAnalog(analogCx, analogCy)
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                analogPointerId = -1
+                updateAnalog(analogCx, analogCy)
+            }
         }
 
-        val next = if (excludedIndex == -2) {
+        if (analogPointerId != -1) {
+            val index = event.findPointerIndex(analogPointerId)
+            if (index >= 0 && !(event.actionMasked == MotionEvent.ACTION_POINTER_UP && event.getPointerId(event.actionIndex) == analogPointerId)) {
+                updateAnalog(event.getX(index), event.getY(index))
+            }
+        }
+
+        val excludedUpIndex = when (event.actionMasked) {
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> event.actionIndex
+            else -> -1
+        }
+        val next = if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
             emptySet()
         } else {
             buildSet {
                 for (pointerIndex in 0 until event.pointerCount) {
-                    if (pointerIndex == excludedIndex) continue
+                    if (pointerIndex == excludedUpIndex) continue
+                    if (event.getPointerId(pointerIndex) == analogPointerId) continue
                     val x = event.getX(pointerIndex)
                     val y = event.getY(pointerIndex)
-                    regions.forEach { region ->
-                        if (contains(region, x, y)) add(region.id)
-                    }
+                    regions.forEach { region -> if (contains(region, x, y)) add(region.id) }
                 }
             }
         }
-
         updatePressed(next)
         if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
         return true
@@ -136,16 +189,45 @@ class GamepadOverlayView(context: Context) : View(context) {
 
     fun releaseAll() {
         updatePressed(emptySet())
+        analogPointerId = -1
+        updateAnalog(analogCx, analogCy)
+    }
+
+    private fun insideAnalog(x: Float, y: Float, scale: Float): Boolean =
+        hypot((x - analogCx).toDouble(), (y - analogCy).toDouble()) <= analogRadius * scale
+
+    private fun updateAnalog(x: Float, y: Float) {
+        if (analogRadius <= 0f) return
+        var dx = (x - analogCx) / analogRadius
+        var dy = (y - analogCy) / analogRadius
+        val magnitude = sqrt(dx * dx + dy * dy)
+        if (magnitude > 1f) {
+            dx /= magnitude
+            dy /= magnitude
+        }
+        val deadzone = 0.11f
+        if (magnitude < deadzone) {
+            dx = 0f
+            dy = 0f
+        } else if (magnitude > 0f) {
+            val remapped = ((magnitude - deadzone) / (1f - deadzone)).coerceIn(0f, 1f)
+            val scale = remapped / magnitude.coerceAtLeast(0.0001f)
+            dx *= scale
+            dy *= scale
+        }
+        analogKnobX = analogCx + dx * analogRadius * 0.72f
+        analogKnobY = analogCy + dy * analogRadius * 0.72f
+        NativeBridge.setAnalog(0, dx, dy)
+        invalidate()
     }
 
     private fun contains(region: Region, x: Float, y: Float): Boolean {
         return if (region.wide) {
-            val halfW = region.radius * 1.7f
-            val halfH = region.radius * 0.9f
-            x in (region.cx - halfW)..(region.cx + halfW) &&
-                y in (region.cy - halfH)..(region.cy + halfH)
+            val halfW = region.radius * 1.75f
+            val halfH = region.radius * 0.92f
+            x in (region.cx - halfW)..(region.cx + halfW) && y in (region.cy - halfH)..(region.cy + halfH)
         } else {
-            hypot((x - region.cx).toDouble(), (y - region.cy).toDouble()) <= region.radius
+            hypot((x - region.cx).toDouble(), (y - region.cy).toDouble()) <= region.radius * 1.10f
         }
     }
 
