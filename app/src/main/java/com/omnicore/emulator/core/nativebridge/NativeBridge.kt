@@ -28,12 +28,14 @@ object NativeBridge {
         audioBufferBursts: Int,
         tryExclusiveAudio: Boolean,
         preferPowerEfficiency: Boolean,
-        aggressiveFramePacing: Boolean
+        aggressiveFramePacing: Boolean,
+        coreOptions: String,
+        dualShock: Boolean
     ): Boolean = loaded && runCatching {
         nativeStartPs1(
             gamePath, gameKey, systemDir, saveDir, stateDir, surface,
             performancePolicy, audioBufferBursts, tryExclusiveAudio,
-            preferPowerEfficiency, aggressiveFramePacing
+            preferPowerEfficiency, aggressiveFramePacing, coreOptions, dualShock
         )
     }.getOrDefault(false)
 
@@ -48,6 +50,13 @@ object NativeBridge {
         if (loaded) runCatching { nativeSetButton(id, pressed) }
     }
 
+    fun setAnalog(stick: Int, x: Float, y: Float) {
+        if (!loaded) return
+        val sx = (x.coerceIn(-1f, 1f) * 32767f).toInt()
+        val sy = (y.coerceIn(-1f, 1f) * 32767f).toInt()
+        runCatching { nativeSetAnalog(stick, sx, sy) }
+    }
+
     fun saveState(slot: Int = 0) {
         if (loaded) runCatching { nativeSaveState(slot) }
     }
@@ -60,21 +69,6 @@ object NativeBridge {
         if (loaded) runCatching { nativeLastMessage() }.getOrDefault("Runtime indisponível")
         else "Runtime indisponível"
 
-    private external fun nativeRuntimeVersion(): String
-    private external fun nativeHasPs1Core(): Boolean
-    private external fun nativeStartPs1(
-        gamePath: String,
-        gameKey: String,
-        systemDir: String,
-        saveDir: String,
-        stateDir: String,
-        surface: Surface,
-        performancePolicy: Int,
-        audioBufferBursts: Int,
-        tryExclusiveAudio: Boolean,
-        preferPowerEfficiency: Boolean,
-        aggressiveFramePacing: Boolean
-    ): Boolean
     fun updatePerformancePolicy(
         performancePolicy: Int,
         audioBufferBursts: Int,
@@ -90,6 +84,23 @@ object NativeBridge {
         }
     }
 
+    private external fun nativeRuntimeVersion(): String
+    private external fun nativeHasPs1Core(): Boolean
+    private external fun nativeStartPs1(
+        gamePath: String,
+        gameKey: String,
+        systemDir: String,
+        saveDir: String,
+        stateDir: String,
+        surface: Surface,
+        performancePolicy: Int,
+        audioBufferBursts: Int,
+        tryExclusiveAudio: Boolean,
+        preferPowerEfficiency: Boolean,
+        aggressiveFramePacing: Boolean,
+        coreOptions: String,
+        dualShock: Boolean
+    ): Boolean
     private external fun nativeStop()
     private external fun nativeUpdatePerformancePolicy(
         performancePolicy: Int,
@@ -100,6 +111,7 @@ object NativeBridge {
     )
     private external fun nativeIsRunning(): Boolean
     private external fun nativeSetButton(id: Int, pressed: Boolean)
+    private external fun nativeSetAnalog(stick: Int, x: Int, y: Int)
     private external fun nativeSaveState(slot: Int)
     private external fun nativeLoadState(slot: Int)
     private external fun nativeLastMessage(): String
