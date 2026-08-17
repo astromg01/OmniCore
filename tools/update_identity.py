@@ -6,13 +6,20 @@ NEW = "mauricio-gamedev"
 
 TEXT_EXTS = {".md", ".kt", ".kts", ".cpp", ".h", ".hpp", ".xml", ".yml", ".yaml", ".sh", ".txt", ".properties", ".toml", ".json"}
 SKIP_PARTS = {".git", "build", ".gradle", "third_party/pcsx_rearmed"}
+SKIP_FILES = {"tools/update_identity.py", ".github/workflows/identity-migrate.yml"}
+
+def eligible(path: Path) -> tuple[bool, str]:
+    if not path.is_file() or path.suffix.lower() not in TEXT_EXTS:
+        return False, ""
+    rel = path.relative_to(ROOT).as_posix()
+    if rel in SKIP_FILES or any(part in rel for part in SKIP_PARTS):
+        return False, rel
+    return True, rel
 
 changed = []
 for path in ROOT.rglob("*"):
-    if not path.is_file() or path.suffix.lower() not in TEXT_EXTS:
-        continue
-    rel = path.relative_to(ROOT).as_posix()
-    if any(part in rel for part in SKIP_PARTS):
+    ok, rel = eligible(path)
+    if not ok:
         continue
     text = path.read_text(encoding="utf-8")
     new = text.replace(OLD, NEW)
@@ -34,8 +41,8 @@ text = text.replace(
     "- Touch controls with D-pad, left analog stick, face buttons, shoulders, Start and Select.\n- **Intelligent left-stick mode**: native DualShock axes plus D-pad projection for early PS1 games that only understand digital movement.\n- Selectable left-stick modes: Intelligent, Native and D-pad.\n- Configurable touch size, opacity and optional haptics.\n- Android USB/Bluetooth controller axes through the native Android joystick path."
 )
 text = text.replace(
-    "Persistent validated **CUE/BIN disc cache** so unchanged games do not need to copy large BIN tracks on every launch.\n- Presentation modes:",
-    "Persistent validated **CUE/BIN disc cache** so unchanged games do not need to copy large BIN tracks on every launch.\n- Library search, recent/A–Z/size sorting and confirmation before removing entries.\n- Presentation modes:"
+    "- Persistent validated **CUE/BIN disc cache** so unchanged games do not need to copy large BIN tracks on every launch.\n- Presentation modes:",
+    "- Persistent validated **CUE/BIN disc cache** so unchanged games do not need to copy large BIN tracks on every launch.\n- Library search, recent/A–Z/size sorting and confirmation before removing entries.\n- Presentation modes:"
 )
 text = text.replace("**[OmniCore v0.8.0 DEV — Compatibility & UX]", "**[OmniCore v0.9.0 DEV — Input & Frontend Polish]")
 text = text.replace("OmniCore-v0.8.0-debug.apk", "OmniCore-v0.9.0-debug.apk")
@@ -69,10 +76,8 @@ if 'applicationId = "com.omnicore.emulator"' not in gradle:
 
 remaining = []
 for path in ROOT.rglob("*"):
-    if not path.is_file() or path.suffix.lower() not in TEXT_EXTS:
-        continue
-    rel = path.relative_to(ROOT).as_posix()
-    if any(part in rel for part in SKIP_PARTS):
+    ok, rel = eligible(path)
+    if not ok:
         continue
     try:
         data = path.read_text(encoding="utf-8")
