@@ -26,15 +26,19 @@ class Ps1Core : EmulatorCore {
             "O core PS1 não está empacotado neste APK. Gere o build completo pelo workflow Android Build."
         }
         val extension = RomDetector.extension(game.fileName)
-        require(extension in SINGLE_FILE_EXTENSIONS) {
-            "Na v0.2 o PS1 abre jogos de arquivo único (${SINGLE_FILE_EXTENSIONS.joinToString { ".$it" }}). " +
-                "CUE/M3U e jogos com várias faixas entram na próxima etapa."
+        require(extension in SUPPORTED_EXTENSIONS) {
+            "Formato PS1 não suportado: .$extension"
+        }
+        if (extension == "cue") {
+            require(!game.folderUri.isNullOrBlank() || game.companionUris.size > 1) {
+                "Este CUE precisa das faixas BIN. Importe a pasta do jogo ou selecione CUE + BIN juntos."
+            }
         }
         context.startActivity(EmulationActivity.intent(context, game, extension))
     }
 
-
     companion object {
         val SINGLE_FILE_EXTENSIONS = setOf("chd", "pbp", "iso", "bin", "img", "mdf", "cbn", "exe")
+        val SUPPORTED_EXTENSIONS = SINGLE_FILE_EXTENSIONS + "cue"
     }
 }
