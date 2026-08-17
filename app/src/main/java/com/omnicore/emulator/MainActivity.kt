@@ -3,7 +3,7 @@ package com.omnicore.emulator
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import com.omnicore.emulator.ui.OmniCoreApp
+import com.omnicore.emulator.ui.OmniCoreV3App
 import com.omnicore.emulator.ui.theme.OmniCoreTheme
 
 class MainActivity : ComponentActivity() {
@@ -11,7 +11,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             OmniCoreTheme {
-                OmniCoreApp()
+                OmniCoreV3App()
             }
         }
     }
