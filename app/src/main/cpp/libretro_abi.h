@@ -1,11 +1,6 @@
 #pragma once
 
-/*
- * Minimal libretro ABI declarations used by OmniCore's frontend runtime.
- * The canonical libretro.h header is permissively licensed by the RetroArch team.
- * This file intentionally contains only the stable ABI pieces OmniCore consumes.
- */
-
+/* Minimal libretro ABI declarations consumed by OmniCore. */
 #include <cstddef>
 #include <cstdint>
 #include <climits>
@@ -16,6 +11,7 @@ using retro_audio_sample_t = void (*)(std::int16_t left, std::int16_t right);
 using retro_audio_sample_batch_t = std::size_t (*)(const std::int16_t* data, std::size_t frames);
 using retro_input_poll_t = void (*)();
 using retro_input_state_t = std::int16_t (*)(unsigned port, unsigned device, unsigned index, unsigned id);
+using retro_audio_buffer_status_callback_t = void (*)(bool active, unsigned occupancy, bool underrunLikely);
 
 enum retro_pixel_format {
     RETRO_PIXEL_FORMAT_0RGB1555 = 0,
@@ -33,7 +29,6 @@ enum retro_log_level {
 };
 
 using retro_log_printf_t = void (*)(enum retro_log_level level, const char* fmt, ...);
-
 struct retro_log_callback { retro_log_printf_t log; };
 
 struct retro_game_info {
@@ -42,7 +37,6 @@ struct retro_game_info {
     std::size_t size;
     const char* meta;
 };
-
 struct retro_system_info {
     const char* library_name;
     const char* library_version;
@@ -50,7 +44,6 @@ struct retro_system_info {
     bool need_fullpath;
     bool block_extract;
 };
-
 struct retro_game_geometry {
     unsigned base_width;
     unsigned base_height;
@@ -58,11 +51,20 @@ struct retro_game_geometry {
     unsigned max_height;
     float aspect_ratio;
 };
-
 struct retro_system_timing { double fps; double sample_rate; };
 struct retro_system_av_info { retro_game_geometry geometry; retro_system_timing timing; };
 struct retro_variable { const char* key; const char* value; };
 struct retro_message { const char* msg; unsigned frames; };
+struct retro_audio_buffer_status_callback { retro_audio_buffer_status_callback_t callback; };
+struct retro_framebuffer {
+    void* data;
+    unsigned width;
+    unsigned height;
+    std::size_t pitch;
+    retro_pixel_format format;
+    unsigned access_flags;
+    unsigned memory_flags;
+};
 
 constexpr unsigned RETRO_ENVIRONMENT_EXPERIMENTAL = 0x10000u;
 constexpr unsigned RETRO_ENVIRONMENT_GET_CAN_DUPE = 3;
@@ -85,6 +87,7 @@ constexpr unsigned RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO = 34;
 constexpr unsigned RETRO_ENVIRONMENT_SET_CONTROLLER_INFO = 35;
 constexpr unsigned RETRO_ENVIRONMENT_SET_GEOMETRY = 37;
 constexpr unsigned RETRO_ENVIRONMENT_GET_LANGUAGE = 39;
+constexpr unsigned RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER = (40u | RETRO_ENVIRONMENT_EXPERIMENTAL);
 constexpr unsigned RETRO_ENVIRONMENT_GET_VFS_INTERFACE = (45u | RETRO_ENVIRONMENT_EXPERIMENTAL);
 constexpr unsigned RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE = (47u | RETRO_ENVIRONMENT_EXPERIMENTAL);
 constexpr unsigned RETRO_ENVIRONMENT_GET_FASTFORWARDING = (49u | RETRO_ENVIRONMENT_EXPERIMENTAL);
@@ -105,6 +108,8 @@ constexpr unsigned RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2 = 67;
 constexpr unsigned RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL = 68;
 constexpr unsigned RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK = 69;
 
+constexpr unsigned RETRO_MEMORY_ACCESS_WRITE = 1u << 0;
+
 constexpr unsigned RETRO_DEVICE_JOYPAD = 1;
 constexpr unsigned RETRO_DEVICE_ANALOG = 5;
 constexpr unsigned RETRO_DEVICE_INDEX_ANALOG_LEFT = 0;
@@ -113,7 +118,6 @@ constexpr unsigned RETRO_DEVICE_ID_ANALOG_X = 0;
 constexpr unsigned RETRO_DEVICE_ID_ANALOG_Y = 1;
 constexpr unsigned RETRO_DEVICE_TYPE_SHIFT = 8;
 constexpr unsigned RETRO_DEVICE_PSE_DUALSHOCK = ((1u + 1u) << RETRO_DEVICE_TYPE_SHIFT) | RETRO_DEVICE_ANALOG;
-
 constexpr unsigned RETRO_DEVICE_ID_JOYPAD_B = 0;
 constexpr unsigned RETRO_DEVICE_ID_JOYPAD_Y = 1;
 constexpr unsigned RETRO_DEVICE_ID_JOYPAD_SELECT = 2;
