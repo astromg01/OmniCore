@@ -27,15 +27,17 @@ jobs:
           git fetch --no-tags origin main
           git checkout -B main origin/main
 
-      - name: Validate runtime foundation
+      - name: Validate Runtime v6 foundation
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'versionName = "0.4.0"' app/build.gradle.kts
-          grep -q 'libretro_host_v5.cpp' app/src/main/cpp/CMakeLists.txt
-          test -f app/src/main/cpp/libretro_host_v5.cpp
+          grep -q 'versionName = "0.5.0"' app/build.gradle.kts
+          grep -q 'libretro_host_v6.cpp' app/src/main/cpp/CMakeLists.txt
+          test -f app/src/main/cpp/libretro_host_v6.cpp
           test -f app/src/main/java/com/omnicore/emulator/storage/Ps1BiosHealth.kt
+          ! grep -q 'libretro_host_v5.cpp' app/src/main/cpp/CMakeLists.txt
           ! grep -q 'libretro_host_v4.cpp' app/src/main/cpp/CMakeLists.txt
+          grep -q 'decoupled A/V' app/src/main/cpp/native_bridge.cpp
 
       - name: Verify Android toolchain
         shell: bash
@@ -110,15 +112,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v0.4.0-dev"
-          TITLE="OmniCore v0.4.0 Runtime Foundation"
-          NOTES="Major PS1 runtime foundation revision. Replaces the experimental direct Surface framebuffer with a compatibility-first video path, adds primed low-latency AAudio with bounded buffering and sample-rate adaptation, hybrid A/V timing with live runtime telemetry, corrected PCSX-ReARMed core option values, BIOS/HLE health reporting, and preserves CUE/BIN validation, DualShock touch input, save RAM, save states, SmartPerf and the immersive frontend. Includes the pinned PCSX-ReARMed source bundle. ROMs, BIOS, firmware and keys are not included."
+          TAG="v0.5.0-dev"
+          TITLE="OmniCore v0.5.0 Decoupled Runtime"
+          NOTES="Major PS1 runtime rewrite driven by real on-device black-screen/audio-starvation testing. Runtime v6 removes ANativeWindow work from the libretro emulation thread, uses a separate latest-frame render pipeline so Surface stalls can never block retro_run(), expands runtime video diagnostics (core frames vs presented frames vs black frames vs Surface failures), removes forced AAudio startup with an empty reservoir, doubles the audio ring, keeps bounded adaptive AAudio buffering, and makes Smart/Balanced presets compatibility-first by disabling aggressive GPU/SPU threading. Includes CUE/BIN validation, verified BIOS/HLE health, DualShock touch input, save RAM/save states, SmartPerf and the pinned PCSX-ReARMed source bundle. ROMs, BIOS, firmware and keys are not included."
           APK="app/build/outputs/apk/debug/app-debug.apk"
           SOURCE="build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz"
           TARGET="$(git rev-parse HEAD)"
 
-          cp "$APK" build/OmniCore-v0.4.0-debug.apk
-          sha256sum build/OmniCore-v0.4.0-debug.apk > build/OmniCore-v0.4.0-debug.sha256
+          cp "$APK" build/OmniCore-v0.5.0-debug.apk
+          sha256sum build/OmniCore-v0.5.0-debug.apk > build/OmniCore-v0.5.0-debug.sha256
 
           backoff_sleep() {
             local attempt="$1"
@@ -139,8 +141,6 @@ jobs:
                 if gh release create "$TAG" --target "$TARGET" --title "$TITLE" --notes "$NOTES" --prerelease; then
                   return 0
                 fi
-                # A create request may have succeeded server-side even when the
-                # response was lost. Re-check before the next attempt.
                 if gh release view "$TAG" >/dev/null 2>&1; then
                   if gh release edit "$TAG" --title "$TITLE" --notes "$NOTES" --prerelease --target "$TARGET"; then
                     return 0
@@ -157,8 +157,8 @@ jobs:
             local attempt
             for attempt in 1 2 3 4 5 6 7; do
               if gh release upload "$TAG" \
-                build/OmniCore-v0.4.0-debug.apk \
-                build/OmniCore-v0.4.0-debug.sha256 \
+                build/OmniCore-v0.5.0-debug.apk \
+                build/OmniCore-v0.5.0-debug.sha256 \
                 "$SOURCE" \
                 --clobber; then
                 return 0
