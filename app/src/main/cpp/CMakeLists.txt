@@ -40,6 +40,7 @@ find_library(aaudio-lib aaudio)
 find_library(dl-lib dl)
 find_library(egl-lib EGL)
 find_library(glesv2-lib GLESv2)
+find_library(glesv3-lib GLESv3)
 
 target_link_libraries(
     omnicore_runtime
@@ -51,12 +52,13 @@ target_link_libraries(
     ${glesv2-lib}
 )
 
-# Nintendo 64 runtime. This is a separate shared object on purpose: no PS1 host
-# state, callbacks or console-specific settings are linked into the N64 backend.
+# Nintendo 64 runtime. This remains a different shared object and owns its own
+# EGL/GLES3 context, libretro callbacks, telemetry and controller state.
 add_library(
     omnicore_n64_runtime
     SHARED
     n64/n64_native_bridge.cpp
+    n64/n64_libretro_host.cpp
 )
 
 target_compile_features(omnicore_n64_runtime PRIVATE cxx_std_20)
@@ -77,8 +79,13 @@ target_link_options(
     -Wl,--gc-sections
     -Wl,-z,max-page-size=16384
 )
+set_property(TARGET omnicore_n64_runtime PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+target_include_directories(omnicore_n64_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(
     omnicore_n64_runtime
+    ${android-lib}
     ${log-lib}
     ${dl-lib}
+    ${egl-lib}
+    ${glesv3-lib}
 )
