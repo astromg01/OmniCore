@@ -74,7 +74,8 @@ object N64NativeBridge {
                 threadedRenderer = config.threadedRenderer,
                 internalResolution = config.internalResolution.multiplier,
                 analogDeadzonePercent = (input.analogDeadzone * 100f).roundToInt(),
-                analogSensitivityPercent = (input.analogSensitivity * 100f).roundToInt()
+                analogSensitivityPercent = (input.analogSensitivity * 100f).roundToInt(),
+                audioBufferBursts = decision.audioBufferBursts.coerceIn(2, 7)
             )
         }.getOrDefault(false)
     }
@@ -129,7 +130,8 @@ object N64NativeBridge {
         threadedRenderer: Boolean,
         internalResolution: Int,
         analogDeadzonePercent: Int,
-        analogSensitivityPercent: Int
+        analogSensitivityPercent: Int,
+        audioBufferBursts: Int
     ): Boolean
     private external fun nativeStop()
     private external fun nativeSetPaused(paused: Boolean)
