@@ -10,7 +10,6 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
-#include <vector>
 
 #include "n64_libretro_abi.h"
 
@@ -56,6 +55,8 @@ public:
     void setAnalog(float x, float y, float cX, float cY);
 
 private:
+    static constexpr std::size_t kTelemetryCapacity = 120;
+
     LibretroHost() = default;
     ~LibretroHost();
     LibretroHost(const LibretroHost&) = delete;
@@ -98,8 +99,11 @@ private:
     std::string message_ = "N64 host idle";
 
     mutable std::mutex telemetryMutex_;
-    std::vector<float> frameWindow_;
+    std::array<float, kTelemetryCapacity> frameWindow_{};
+    std::size_t frameWindowCount_ = 0;
+    std::size_t frameWindowWrite_ = 0;
     int audioUnderruns_ = 0;
+    std::atomic<float> targetFrameMs_{1000.0f / 60.0f};
 
     mutable std::mutex optionMutex_;
     std::unordered_map<std::string, std::string> options_;
