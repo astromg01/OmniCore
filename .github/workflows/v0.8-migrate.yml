@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "tools/apply_v08.py"
+      - "tools/v08-trigger.txt"
 
 permissions:
   contents: write
