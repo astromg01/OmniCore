@@ -23,7 +23,7 @@ jobs:
           git fetch --no-tags origin main
           git checkout -B main origin/main
 
-      - name: Apply patch and push
+      - name: Apply source patch and push
         shell: bash
         run: |
           set -euo pipefail
@@ -32,6 +32,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add app/src/main/java/com/omnicore/emulator/emulation/EmulationActivity.kt
           git add app/src/main/java/com/omnicore/emulator/storage/SafGameSource.kt
-          git add app/build.gradle.kts .github/workflows/android.yml
+          git add app/build.gradle.kts
           git commit -m "Fix PS1 CUE BIN local staging"
           git push origin HEAD:main
