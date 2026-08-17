@@ -1,0 +1,47 @@
+name: OmniCore 0.6 Migration
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/v0.6-migrate.yml"
+      - "tools/apply_v0_6_runtime.py"
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone repository
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin main
+          git checkout -B main origin/main
+
+      - name: Generate Runtime v7 and updater UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/apply_v0_6_runtime.py
+          test -f app/src/main/cpp/libretro_host_v7.cpp
+          grep -q 'gl_presenter.h' app/src/main/cpp/libretro_host_v7.cpp
+          grep -q 'EGL/GLES falhou' app/src/main/cpp/libretro_host_v7.cpp
+          grep -q 'UpdateManager' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
+
+      - name: Commit generated runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/cpp/libretro_host_v7.cpp \
+                  app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
+          git commit -m "Integrate Runtime v7 EGL GLES presenter and updater UI"
+          git push origin HEAD:main
