@@ -86,7 +86,7 @@ object InputSettings {
     fun resetControlPositions(context: Context) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val editor = prefs.edit()
-        prefs.all.keys.filter { it.startsWith(POSITION_PREFIX) }.forEach(editor::remove)
+        prefs.all.keys.filter { it.startsWith(POSITION_PREFIX) }.forEach { key -> editor.remove(key) }
         editor.apply()
     }
 }
