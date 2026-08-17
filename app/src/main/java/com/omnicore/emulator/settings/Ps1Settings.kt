@@ -28,6 +28,10 @@ object Ps1Settings {
             add("pcsx_rearmed_bios=auto")
             add("pcsx_rearmed_drc=enabled")
             add("pcsx_rearmed_drc_thread=auto")
+            // Compatibility-first video contract for Runtime v7+: force the
+            // core's documented XRGB8888 output. The GLES presenter converts
+            // this explicitly to RGBA, removing RGB565/native-surface ambiguity.
+            add("pcsx_rearmed_rgb32_output=enabled")
             add("pcsx_rearmed_gpu_thread_rendering=${if (!threadedGpu) "disabled" else if (preset == Preset.PERFORMANCE) "enabled" else "auto"}")
             add("pcsx_rearmed_spu_thread=${if (threadedSpu) "enabled" else "disabled"}")
             add("pcsx_rearmed_neon_enhancement_enable=${if (enhancedResolution) "enabled" else "disabled"}")
