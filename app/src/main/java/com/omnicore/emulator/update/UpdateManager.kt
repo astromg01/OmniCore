@@ -17,7 +17,7 @@ import java.net.URL
 import java.security.MessageDigest
 
 object UpdateManager {
-    private const val RELEASES_API = "https://api.github.com/repos/astromg01/OmniCore/releases?per_page=10"
+    private const val RELEASES_API = "https://api.github.com/repos/mauricio-gamedev/OmniCore/releases?per_page=10"
     const val ACTION_INSTALL_STATUS = "com.omnicore.emulator.UPDATE_INSTALL_STATUS"
 
     data class ReleaseInfo(

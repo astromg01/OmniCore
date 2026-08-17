@@ -782,6 +782,7 @@ private fun HubTuning(biosCount: Int, gameCount: Int, onImportBios: () -> Unit) 
                 Text("Runtime: ${NativeBridge.runtimeVersion()}", color = HubSoft, style = MaterialTheme.typography.bodySmall)
                 Text("PS1: ${if (NativeBridge.hasPs1Core()) "PCSX-ReARMed pronto" else "core indisponível"}", color = HubSoft, style = MaterialTheme.typography.bodySmall)
                 Text("BIOS: $biosCount arquivo(s) .bin", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Text("Desenvolvido por Mauricio.gamedev • @mauricio-gamedev", color = HubCyan, style = MaterialTheme.typography.bodySmall)
                 Button(onClick = onImportBios) { Text("Importar BIOS próprio") }
             }
         }

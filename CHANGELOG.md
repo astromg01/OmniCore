@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.9.0 — Input & Frontend Polish
+
+### Input
+- Added Intelligent left-stick compatibility mode: native DualShock axes plus D-pad projection for early PS1 games.
+- Added selectable Intelligent, Native and D-pad stick modes.
+- Added Android USB/Bluetooth joystick-axis handling with deadzone normalization.
+- Added configurable touch-control scale, opacity and optional haptics.
+
+### Frontend
+- Added library search and Recent / A–Z / Size ordering.
+- Added confirmation before removing library entries.
+- Preserved Runtime v7, EGL/GLES, AAudio, BIOS boot, CUE/BIN cache, saves and the stable DEV update path.
+
+## 0.8.0 — Compatibility & UX
+
+- Added persistent validated CUE/BIN staging cache for faster repeated launches.
+- Added optional classic PlayStation BIOS boot/logo.
+- Added 4:3, 16:9 presentation and fullscreen modes.
+- Preserved the validated Runtime v7 / EGL-GLES video foundation.
+
+## 0.7.0 — Video Composition Fix
+
+- Fixed Android SurfaceView composition that could hide correctly rendered PS1 frames behind an opaque View background.
+- Switched the PS1 compatibility path to XRGB8888 output and explicit GLES presentation.
+- Marked the first real-device PS1 gameplay milestone with working video and audio.
+
 ## 0.6.0 — EGL/GLES Video Foundation
 
 ### Video / runtime

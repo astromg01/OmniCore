@@ -3,7 +3,7 @@
 > Android-first multi-system emulation frontend focused on clean architecture, stable frame pacing and device-aware performance.
 
 [![Android](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
-[![Current DEV](https://img.shields.io/badge/current%20DEV-0.8.0-7C5CFF)](https://github.com/astromg01/OmniCore/releases/tag/v0.8.0-dev)
+[![Current DEV](https://img.shields.io/badge/current%20DEV-0.9.0-7C5CFF)](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.9.0-dev)
 [![PS1](https://img.shields.io/badge/PS1-functional-57D8FF)](https://github.com/libretro/pcsx_rearmed)
 [![Runtime](https://img.shields.io/badge/runtime-v7%20EGL%2FGLES-9879FF)](app/src/main/cpp/)
 [![License note](https://img.shields.io/badge/core%20license-GPL--2.0-important)](THIRD_PARTY_NOTICES.md)
@@ -12,11 +12,11 @@ OmniCore is a unified Android emulation hub built around **independent native ba
 
 The project is intentionally progressive: **PlayStation 1 is the first functional backend**. N64, PSP, Wii / GameCube, PS2 and Switch remain roadmap targets and are not presented as working emulators yet.
 
-## Current status — v0.8.0 DEV
+## Current status — v0.9.0 DEV
 
 The PS1 backend has crossed the first major runtime milestone: **real gameplay, video and audio have been validated on Android hardware** using the OmniCore frontend and the pinned PCSX-ReARMed core.
 
-The v0.8.0 line keeps the working v0.7 video/audio foundation intact and focuses on compatibility, startup latency and user-facing refinement.
+The v0.9.0 line preserves the validated v0.7/v0.8 runtime foundation and focuses on input compatibility and frontend polish.
 
 ### PlayStation 1
 
@@ -30,12 +30,16 @@ The v0.8.0 line keeps the working v0.7 video/audio foundation intact and focuses
 - AAudio output with priming, sample-rate adaptation and bounded adaptive buffering.
 - Real gameplay validated with stable video and non-stuttering audio on Android hardware.
 - Touch controls with D-pad, left analog stick, face buttons, shoulders, Start and Select.
-- Android/Bluetooth controller input path.
+- **Intelligent left-stick mode**: native DualShock axes plus D-pad projection for early PS1 games that only understand digital movement.
+- Selectable left-stick modes: Intelligent, Native and D-pad.
+- Configurable touch size, opacity and optional haptics.
+- Android USB/Bluetooth controller axes through the native Android joystick path.
 - Save RAM / memory-card persistence and save states.
 - Optional user-supplied PS1 BIOS import; no BIOS is bundled.
 - Optional **classic PlayStation BIOS boot/logo** when a valid real BIOS is available.
 - CUE/BIN folder workflows plus supported single-file images such as CHD and PBP.
 - Persistent validated **CUE/BIN disc cache** so unchanged games do not need to copy large BIN tracks on every launch.
+- Library search, recent/A–Z/size sorting and confirmation before removing entries.
 - Presentation modes: **4:3 original, 16:9 expansion and fullscreen**.
 - Runtime diagnostics for produced, presented and dropped frames plus audio-buffer state.
 
@@ -107,11 +111,11 @@ Development builds from v0.6.0 onward use a stable **DEV-only** signing certific
 
 The current development release is:
 
-**[OmniCore v0.8.0 DEV — Compatibility & UX](https://github.com/astromg01/OmniCore/releases/tag/v0.8.0-dev)**
+**[OmniCore v0.9.0 DEV — Input & Frontend Polish](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.9.0-dev)**
 
 Direct APK:
 
-**[OmniCore-v0.8.0-debug.apk](https://github.com/astromg01/OmniCore/releases/download/v0.8.0-dev/OmniCore-v0.8.0-debug.apk)**
+**[OmniCore-v0.9.0-debug.apk](https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.9.0-dev/OmniCore-v0.9.0-debug.apk)**
 
 Development releases are for testing and may still contain game-specific compatibility regressions. Keep important save data backed up while the runtime remains under active development.
 
@@ -208,4 +212,4 @@ OmniCore's final distribution/licensing model must remain compatible with every 
 
 ---
 
-**OmniCore** is developed by [@astromg01](https://github.com/astromg01).
+**OmniCore** is developed by [Mauricio.gamedev (@mauricio-gamedev)](https://github.com/mauricio-gamedev).
