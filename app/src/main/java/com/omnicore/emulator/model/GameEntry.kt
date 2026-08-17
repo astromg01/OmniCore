@@ -7,5 +7,7 @@ data class GameEntry(
     val uri: String,
     val system: ConsoleSystem,
     val sizeBytes: Long = 0L,
-    val addedAt: Long = System.currentTimeMillis()
+    val addedAt: Long = System.currentTimeMillis(),
+    val folderUri: String? = null,
+    val companionUris: List<String> = emptyList()
 )
