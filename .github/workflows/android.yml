@@ -35,6 +35,8 @@ jobs:
           grep -q 'ConsoleSystem.NINTENDO_64 -> N64Core()' app/src/main/java/com/omnicore/emulator/core/CoreRegistry.kt
           grep -q 'omnicore_n64_runtime' app/src/main/cpp/CMakeLists.txt
           grep -q 'N64RomPreparer' app/src/main/java/com/omnicore/emulator/core/n64/N64Core.kt
+          grep -q 'N64SmartPerf.initial' app/src/main/java/com/omnicore/emulator/core/n64/N64Core.kt
+          grep -q 'object N64SmartPerf' app/src/main/java/com/omnicore/emulator/performance/N64SmartPerf.kt
           grep -q 'N64InputSettings' app/src/main/java/com/omnicore/emulator/settings/N64InputSettings.kt
           grep -q 'Configurar N64' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
           grep -q 'PlayStation Tuning' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
