@@ -27,12 +27,6 @@ jobs:
           git fetch --no-tags origin agent/0.10.0-n64-foundation
           git checkout -B agent/0.10.0-n64-foundation origin/agent/0.10.0-n64-foundation
 
-      - name: Apply N64 UI separation
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/agent_010_n64_ui.py
-
       - name: Validate N64 architecture
         shell: bash
         run: |
@@ -41,6 +35,7 @@ jobs:
           grep -q 'ConsoleSystem.NINTENDO_64 -> N64Core()' app/src/main/java/com/omnicore/emulator/core/CoreRegistry.kt
           grep -q 'omnicore_n64_runtime' app/src/main/cpp/CMakeLists.txt
           grep -q 'N64RomPreparer' app/src/main/java/com/omnicore/emulator/core/n64/N64Core.kt
+          grep -q 'N64InputSettings' app/src/main/java/com/omnicore/emulator/settings/N64InputSettings.kt
           grep -q 'Configurar N64' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
           grep -q 'PlayStation Tuning' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
           git diff --check
@@ -89,20 +84,20 @@ jobs:
           set -euo pipefail
           gradle :app:assembleDebug --stacktrace --no-daemon
 
-      - name: Commit validated source migration
+      - name: Record validation success
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          mkdir -p .ci
+          rm -f .ci/n64-foundation-failure.txt
+          printf 'run_id=%s\ncommit=%s\nstatus=success\n' "$GITHUB_RUN_ID" "$GITHUB_SHA" > .ci/n64-foundation-success.txt
           git config user.name "Mauricio.dev"
           git config user.email "antoniomauriciorodriguesalves@gmail.com"
-          git add app/build.gradle.kts app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
-          git diff --cached --check
-          if ! git diff --cached --quiet; then
-            git commit -m "Expose isolated Nintendo 64 foundation [skip ci]"
-            git push origin HEAD:agent/0.10.0-n64-foundation
-          fi
+          git add .ci
+          git commit -m "Record N64 foundation validation success [skip ci]" || true
+          git push origin HEAD:agent/0.10.0-n64-foundation || true
 
       - name: Record validation failure
         if: failure()
@@ -113,9 +108,10 @@ jobs:
           set +e
           [[ -d .git ]] || exit 0
           mkdir -p .ci
-          printf 'run_id=%s\ncommit=%s\n' "$GITHUB_RUN_ID" "$GITHUB_SHA" > .ci/n64-foundation-failure.txt
+          rm -f .ci/n64-foundation-success.txt
+          printf 'run_id=%s\ncommit=%s\nstatus=failure\n' "$GITHUB_RUN_ID" "$GITHUB_SHA" > .ci/n64-foundation-failure.txt
           git config user.name "Mauricio.dev"
           git config user.email "antoniomauriciorodriguesalves@gmail.com"
-          git add .ci/n64-foundation-failure.txt
+          git add .ci
           git commit -m "Record N64 foundation validation failure [skip ci]" || true
           git push origin HEAD:agent/0.10.0-n64-foundation || true
