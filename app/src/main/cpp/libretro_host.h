@@ -25,7 +25,9 @@ public:
         std::string saveDir,
         std::string stateDir,
         ANativeWindow* window,
-        RuntimePerformanceConfig performance
+        RuntimePerformanceConfig performance,
+        std::string coreOptions,
+        bool dualShock
     );
     ~LibretroSession();
 
@@ -36,6 +38,7 @@ public:
     void stop();
     bool running() const;
     void setButton(unsigned id, bool pressed);
+    void setAnalog(unsigned stick, std::int16_t x, std::int16_t y);
     void requestSaveState(int slot);
     void requestLoadState(int slot);
     void updatePerformanceConfig(RuntimePerformanceConfig performance);
