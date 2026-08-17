@@ -18,6 +18,7 @@ import android.system.OsConstants
 import android.view.Gravity
 import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -426,10 +427,6 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
             }
         }
 
-        // CUE/BIN tracks are materialized as real local files because the core
-        // re-opens every track with stdio/fstat/seek. Some Android providers
-        // expose seekable descriptors that cannot safely be reopened through
-        // a /proc/self/fd symlink.
         runCatching { descriptor.close() }
         contentResolver.openInputStream(uri).use { input ->
             requireNotNull(input) { "Não consegui ler ${target.name}." }
