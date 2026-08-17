@@ -7,7 +7,11 @@ import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
+import android.view.InputDevice
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -15,6 +19,7 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
 import com.omnicore.emulator.core.n64.N64NativeBridge
@@ -26,14 +31,13 @@ import com.omnicore.emulator.settings.N64InputSettings
 import com.omnicore.emulator.settings.N64Settings
 import com.omnicore.emulator.storage.N64Storage
 import java.io.File
+import kotlin.math.abs
 
-/**
- * Nintendo 64 owns a separate Android surface/lifecycle. No PlayStation native
- * bridge, overlay, save path or runtime policy is referenced from this class.
- */
+/** Nintendo 64 owns a separate Android surface, input layer and runtime policy. */
 class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var root: FrameLayout
     private lateinit var surfaceView: AspectSurfaceView
+    private lateinit var controls: N64GamepadOverlayView
     private lateinit var statusView: TextView
 
     private val handler = Handler(Looper.getMainLooper())
@@ -42,6 +46,8 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
     private var started = false
     private var runOkPolls = 0
     private var lastMessage = ""
+    private var lastAdaptAt = 0L
+    private var controlsVisible = true
 
     private var preparedRom: File? = null
     private var storagePaths: N64Storage.Paths? = null
@@ -63,10 +69,9 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                 }
 
                 val telemetry = N64NativeBridge.telemetry()
-                if (telemetry.sampleWindowFrames >= 90) {
-                    // Startup-sensitive N64 knobs are never hot-switched in the
-                    // middle of retro_run(). Queue the decision for the next safe
-                    // session/restart instead.
+                val now = SystemClock.elapsedRealtime()
+                if (telemetry.sampleWindowFrames >= 90 && now - lastAdaptAt >= 2500L) {
+                    lastAdaptAt = now
                     pendingDecision = N64SmartPerf.adapt(
                         this@N64EmulationActivity,
                         requestedConfig,
@@ -122,6 +127,15 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             )
         )
 
+        controls = N64GamepadOverlayView(this, inputConfig.haptics)
+        root.addView(
+            controls,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
         statusView = TextView(this).apply {
             text = "Preparando $title • ${launchDecision.level.name}…"
             setTextColor(Color.WHITE)
@@ -139,6 +153,52 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                 Gravity.TOP or Gravity.CENTER_HORIZONTAL
             ).apply { topMargin = dp(10) }
         )
+
+        val menu = TextView(this).apply {
+            text = "⋮"
+            setTextColor(Color.argb(225, 245, 245, 255))
+            textSize = 26f
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.argb(78, 20, 22, 36))
+            setOnClickListener { showQuickMenu(this) }
+        }
+        root.addView(
+            menu,
+            FrameLayout.LayoutParams(dp(42), dp(42), Gravity.TOP or Gravity.END).apply {
+                topMargin = dp(8)
+                rightMargin = dp(8)
+            }
+        )
+    }
+
+    private fun showQuickMenu(anchor: View) {
+        PopupMenu(this, anchor).apply {
+            menu.add(if (controlsVisible) "Ocultar controles" else "Mostrar controles")
+            menu.add("Mostrar status")
+            menu.add("Sair do jogo")
+            setOnMenuItemClickListener { item ->
+                when (item.title.toString()) {
+                    "Ocultar controles", "Mostrar controles" -> {
+                        controlsVisible = !controlsVisible
+                        if (!controlsVisible) controls.releaseAll()
+                        controls.visibility = if (controlsVisible) View.VISIBLE else View.GONE
+                        true
+                    }
+                    "Mostrar status" -> {
+                        statusView.text = N64NativeBridge.lastMessage()
+                        statusView.visibility = View.VISIBLE
+                        runOkPolls = 0
+                        true
+                    }
+                    "Sair do jogo" -> {
+                        finish()
+                        true
+                    }
+                    else -> false
+                }
+            }
+            show()
+        }
     }
 
     private fun prepareGameAsync(game: GameEntry) {
@@ -183,7 +243,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         if (!surface.isValid) return
 
         val decision = pendingDecision ?: launchDecision
-        statusView.text = "N64 • iniciando ${decision.level.name} / ${decision.effective.cpuMode.label} / GLES3…"
+        statusView.text = "N64 • ${decision.level.name} / ${decision.effective.cpuMode.label} / GLES3 + AAudio…"
         started = N64NativeBridge.start(surface, rom, paths, decision, inputConfig)
         if (!started) {
             statusView.text = "N64 BOOT E00 • runtime recusou iniciar a sessão"
@@ -198,6 +258,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        if (::controls.isInitialized) controls.releaseAll()
         if (started) {
             N64NativeBridge.stop()
             started = false
@@ -205,6 +266,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
     }
 
     override fun onPause() {
+        if (::controls.isInitialized) controls.releaseAll()
         if (started) N64NativeBridge.setPaused(true)
         super.onPause()
     }
@@ -219,9 +281,69 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
     override fun onDestroy() {
         destroyed = true
         handler.removeCallbacksAndMessages(null)
+        if (::controls.isInitialized) controls.releaseAll()
         N64NativeBridge.stop()
         prepareThread = null
         super.onDestroy()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (isGamepadSource(event.source)) {
+            val retroId = when (event.keyCode) {
+                KeyEvent.KEYCODE_BUTTON_A -> 0
+                KeyEvent.KEYCODE_BUTTON_B -> 1
+                KeyEvent.KEYCODE_BUTTON_X -> 10
+                KeyEvent.KEYCODE_BUTTON_Y -> 9
+                KeyEvent.KEYCODE_BUTTON_L1 -> 2
+                KeyEvent.KEYCODE_BUTTON_R1 -> 13
+                KeyEvent.KEYCODE_BUTTON_L2 -> 12
+                KeyEvent.KEYCODE_BUTTON_R2 -> 11
+                KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_BUTTON_Z -> 8
+                KeyEvent.KEYCODE_BUTTON_START -> 3
+                KeyEvent.KEYCODE_DPAD_UP -> 4
+                KeyEvent.KEYCODE_DPAD_DOWN -> 5
+                KeyEvent.KEYCODE_DPAD_LEFT -> 6
+                KeyEvent.KEYCODE_DPAD_RIGHT -> 7
+                else -> -1
+            }
+            if (retroId >= 0) {
+                N64NativeBridge.setButton(retroId, event.action == KeyEvent.ACTION_DOWN)
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_MOVE && isGamepadSource(event.source)) {
+            val x = centeredAxis(event, MotionEvent.AXIS_X)
+            val y = centeredAxis(event, MotionEvent.AXIS_Y)
+            var cX = 0f
+            var cY = 0f
+            if (inputConfig.cButtonMode == N64InputSettings.CButtonMode.RIGHT_STICK) {
+                cX = centeredAxis(event, MotionEvent.AXIS_Z)
+                cY = centeredAxis(event, MotionEvent.AXIS_RZ)
+                if (abs(cX) < 0.001f && abs(cY) < 0.001f) {
+                    cX = centeredAxis(event, MotionEvent.AXIS_RX)
+                    cY = centeredAxis(event, MotionEvent.AXIS_RY)
+                }
+            }
+            N64NativeBridge.setAnalog(x, y, cX, cY)
+            return true
+        }
+        return super.onGenericMotionEvent(event)
+    }
+
+    private fun centeredAxis(event: MotionEvent, axis: Int): Float {
+        val range = event.device?.getMotionRange(axis, event.source)
+        val value = event.getAxisValue(axis)
+        val flat = range?.flat ?: 0.05f
+        return if (abs(value) > flat) value.coerceIn(-1f, 1f) else 0f
+    }
+
+    private fun isGamepadSource(source: Int): Boolean {
+        return source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+            source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
     }
 
     private fun gameFromIntent(): GameEntry? {
