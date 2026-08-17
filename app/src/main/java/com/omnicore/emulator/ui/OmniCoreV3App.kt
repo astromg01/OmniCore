@@ -1,6 +1,7 @@
 package com.omnicore.emulator.ui
 
 import android.content.Intent
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -51,6 +52,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.omnicore.emulator.BuildConfig
 import com.omnicore.emulator.core.CoreRegistry
 import com.omnicore.emulator.core.CoreState
 import com.omnicore.emulator.core.nativebridge.NativeBridge
@@ -63,6 +65,7 @@ import com.omnicore.emulator.settings.Ps1Settings
 import com.omnicore.emulator.storage.GameLibraryStore
 import com.omnicore.emulator.storage.Ps1Files
 import com.omnicore.emulator.storage.SafGameSource
+import com.omnicore.emulator.update.UpdateManager
 import java.util.UUID
 
 private enum class HubScreen { LIBRARY, CORES, TUNING }
@@ -329,7 +332,7 @@ private fun HubTopBar(screen: HubScreen, count: Int, onImport: () -> Unit) {
                 Text("OmniCore", fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleLarge)
                 Text(
                     when (screen) {
-                        HubScreen.LIBRARY -> "$count jogo(s) • Runtime v4"
+                        HubScreen.LIBRARY -> "$count jogo(s) • Runtime v7"
                         HubScreen.CORES -> "Motores de emulação"
                         HubScreen.TUNING -> "Graphics & Performance Lab"
                     },
@@ -450,7 +453,7 @@ private fun EngineHero() {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text("PLAYSTATION ENGINE", color = HubCyan, fontWeight = FontWeight.Black, style = MaterialTheme.typography.labelMedium)
                 Text("PCSX-ReARMed", fontWeight = FontWeight.Black, style = MaterialTheme.typography.headlineSmall)
-                Text("CUE/BIN • CHD • PBP • SmartPerf 3 • framebuffer direto", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Text("CUE/BIN • CHD • PBP • EGL/GLES • A/V desacoplado", color = HubSoft, style = MaterialTheme.typography.bodySmall)
             }
             AssistChip(onClick = {}, label = { Text(if (NativeBridge.hasPs1Core()) "ONLINE" else "OFFLINE") })
         }
@@ -496,6 +499,40 @@ private fun HubTuning(biosCount: Int, gameCount: Int, onImportBios: () -> Unit) 
     val device = remember { PerformanceManager.profile(context) }
     var perfMode by remember { mutableStateOf(PerformanceManager.readUserMode(context)) }
     var config by remember { mutableStateOf(Ps1Settings.resolve(context)) }
+    var updateStatus by remember { mutableStateOf("Canal DEV • pronto para verificar") }
+    var updateRelease by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
+
+    fun checkUpdate() {
+        updateStatus = "Verificando GitHub Releases…"
+        UpdateManager.checkForUpdate(context) { result ->
+            when (result) {
+                is UpdateManager.CheckResult.Available -> {
+                    updateRelease = result.release
+                    updateStatus = "OmniCore ${result.release.version} disponível"
+                }
+                is UpdateManager.CheckResult.Current -> {
+                    updateRelease = null
+                    updateStatus = "Você já está na versão DEV mais recente (${result.version})."
+                }
+                is UpdateManager.CheckResult.Error -> updateStatus = result.message
+            }
+        }
+    }
+
+    fun installUpdate(release: UpdateManager.ReleaseInfo) {
+        UpdateManager.install(context, release) { result ->
+            when (result) {
+                is UpdateManager.InstallResult.Progress -> updateStatus = result.message
+                UpdateManager.InstallResult.NeedsUnknownSourcesPermission -> {
+                    updateStatus = "Autorize o OmniCore a instalar updates e toque em Atualizar novamente."
+                    context.startActivity(UpdateManager.unknownSourcesIntent(context))
+                }
+                UpdateManager.InstallResult.InstallerStarted ->
+                    updateStatus = "Confirme a atualização na tela oficial do Android."
+                is UpdateManager.InstallResult.Error -> updateStatus = result.message
+            }
+        }
+    }
 
     fun refresh() { config = Ps1Settings.resolve(context) }
     fun saveCustom(next: Ps1Settings.Config) {
@@ -603,7 +640,23 @@ private fun HubTuning(biosCount: Int, gameCount: Int, onImportBios: () -> Unit) 
             }
         }
         item {
-            HubSection("Sistema", "OmniCore 0.3.0 • $gameCount jogo(s) na biblioteca") {
+            HubSection("Atualizações", "Canal DEV assinado de forma estável a partir da 0.6.0.") {
+                Text(updateStatus, color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Button(onClick = { checkUpdate() }) { Text("Verificar atualização") }
+                updateRelease?.let { release ->
+                    Button(onClick = { installUpdate(release) }) {
+                        Text("Atualizar para ${release.version}")
+                    }
+                }
+                Text(
+                    "Builds DEV 0.6+ podem atualizar por cima mantendo dados. O Android ainda mostra a confirmação oficial de instalação.",
+                    color = Color(0xFF737C98),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+        item {
+            HubSection("Sistema", "OmniCore ${BuildConfig.VERSION_NAME} • $gameCount jogo(s) na biblioteca") {
                 Text("Runtime: ${NativeBridge.runtimeVersion()}", color = HubSoft, style = MaterialTheme.typography.bodySmall)
                 Text("PS1: ${if (NativeBridge.hasPs1Core()) "PCSX-ReARMed pronto" else "core indisponível"}", color = HubSoft, style = MaterialTheme.typography.bodySmall)
                 Text("BIOS: $biosCount arquivo(s) .bin", color = HubSoft, style = MaterialTheme.typography.bodySmall)
