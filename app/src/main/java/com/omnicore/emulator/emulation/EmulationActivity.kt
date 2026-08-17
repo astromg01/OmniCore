@@ -31,6 +31,7 @@ import com.omnicore.emulator.core.ps1.Ps1Core
 import com.omnicore.emulator.model.GameEntry
 import com.omnicore.emulator.performance.PerformanceManager
 import com.omnicore.emulator.storage.Ps1Files
+import com.omnicore.emulator.storage.SafGameSource
 import java.io.File
 
 class EmulationActivity : Activity(), SurfaceHolder.Callback {
@@ -40,8 +41,8 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var statusView: TextView
 
     private val handler = Handler(Looper.getMainLooper())
-    private var pfd: ParcelFileDescriptor? = null
-    private var sessionFile: File? = null
+    private var sessionDescriptors: List<ParcelFileDescriptor> = emptyList()
+    private var sessionDir: File? = null
     private var preparationThread: Thread? = null
     @Volatile private var destroyed = false
     private var started = false
@@ -75,8 +76,12 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         gameTitle = intent.getStringExtra(EXTRA_GAME_TITLE).orEmpty().ifBlank { "PlayStation" }
         val uriString = intent.getStringExtra(EXTRA_GAME_URI)
         val extension = intent.getStringExtra(EXTRA_EXTENSION).orEmpty().lowercase()
+        val folderUri = intent.getStringExtra(EXTRA_FOLDER_URI)?.takeIf { it.isNotBlank() }?.let(Uri::parse)
+        val companionUris = intent.getStringArrayListExtra(EXTRA_COMPANION_URIS)
+            .orEmpty()
+            .map(Uri::parse)
 
-        if (uriString.isNullOrBlank() || extension !in Ps1Core.SINGLE_FILE_EXTENSIONS) {
+        if (uriString.isNullOrBlank() || extension !in Ps1Core.SUPPORTED_EXTENSIONS) {
             Toast.makeText(this, "Arquivo de PS1 não suportado nesta versão.", Toast.LENGTH_LONG).show()
             finish()
             return
@@ -84,7 +89,7 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
 
         buildUi()
         handler.post(statusPoll)
-        prepareGameAsync(Uri.parse(uriString), extension)
+        prepareGameAsync(Uri.parse(uriString), extension, folderUri, companionUris)
     }
 
     private fun buildUi() {
@@ -148,7 +153,7 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
             }
         )
 
-        root.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+        root.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
             val width = right - left
             val height = bottom - top
             if (width <= 0 || height <= 0) return@addOnLayoutChangeListener
@@ -175,19 +180,24 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
 
     private data class PreparedContent(
         val path: String,
-        val descriptor: ParcelFileDescriptor,
-        val sessionFile: File
+        val descriptors: List<ParcelFileDescriptor>,
+        val sessionDir: File
     ) : AutoCloseable {
         override fun close() {
-            runCatching { descriptor.close() }
-            runCatching { sessionFile.delete() }
+            descriptors.forEach { descriptor -> runCatching { descriptor.close() } }
+            runCatching { sessionDir.deleteRecursively() }
         }
     }
 
-    private fun prepareGameAsync(uri: Uri, extension: String) {
-        statusView.text = "Preparando $gameTitle…"
+    private fun prepareGameAsync(
+        uri: Uri,
+        extension: String,
+        folderUri: Uri?,
+        companionUris: List<Uri>
+    ) {
+        statusView.text = if (extension == "cue") "Preparando faixas de $gameTitle…" else "Preparando $gameTitle…"
         preparationThread = Thread({
-            val result = prepareSessionPath(uri, extension)
+            val result = prepareSessionPath(uri, extension, folderUri, companionUris)
             handler.post {
                 preparationThread = null
                 if (destroyed) {
@@ -196,8 +206,8 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
                 }
 
                 result.onSuccess { prepared ->
-                    pfd = prepared.descriptor
-                    sessionFile = prepared.sessionFile
+                    sessionDescriptors = prepared.descriptors
+                    sessionDir = prepared.sessionDir
                     gamePath = prepared.path
                     statusView.text = "Iniciando $gameTitle…"
                     if (surfaceView.holder.surface.isValid) {
@@ -218,52 +228,144 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         }
     }
 
-    private fun prepareSessionPath(uri: Uri, extension: String): Result<PreparedContent> = runCatching {
-        val descriptor = requireNotNull(contentResolver.openFileDescriptor(uri, "r")) {
-            "O Android não forneceu acesso ao arquivo."
+    private fun prepareSessionPath(
+        uri: Uri,
+        extension: String,
+        folderUri: Uri?,
+        companionUris: List<Uri>
+    ): Result<PreparedContent> = runCatching {
+        if (extension == "cue") {
+            prepareCueSession(uri, folderUri, companionUris)
+        } else {
+            prepareSingleFileSession(uri, extension)
         }
-        val dir = File(cacheDir, "ps1-session").apply { mkdirs() }
-        val target = File(dir, "${gameKey.replace(Regex("[^A-Za-z0-9_-]"), "_")}.$extension")
-        try {
+    }
+
+    private fun prepareSingleFileSession(uri: Uri, extension: String): PreparedContent {
+        val dir = freshSessionDir()
+        val descriptors = mutableListOf<ParcelFileDescriptor>()
+        return try {
+            val target = File(dir, "game.$extension")
+            stageDocument(uri, target, descriptors)
             ensurePreparationActive()
-            target.delete()
-
-            val procPath = "/proc/self/fd/${descriptor.fd}"
-            val seekable = runCatching {
-                Os.lseek(descriptor.fileDescriptor, 0L, OsConstants.SEEK_CUR)
-                true
-            }.getOrDefault(false)
-            val linked = seekable && runCatching {
-                Os.symlink(procPath, target.absolutePath)
-                true
-            }.getOrDefault(false)
-
-            if (!linked) {
-                // A random-access emulator cannot safely run from a pipe/non-seekable
-                // provider. Only those cases fall back to a local copy. Normal Android
-                // document providers stay zero-copy through /proc/self/fd.
-                contentResolver.openInputStream(uri).use { input ->
-                    requireNotNull(input) { "Não consegui ler o arquivo selecionado." }
-                    target.outputStream().buffered(COPY_BUFFER_BYTES).use { output ->
-                        val buffer = ByteArray(COPY_BUFFER_BYTES)
-                        while (true) {
-                            ensurePreparationActive()
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            output.write(buffer, 0, count)
-                        }
-                    }
-                }
-            }
-
-            ensurePreparationActive()
-            PreparedContent(target.absolutePath, descriptor, target)
+            PreparedContent(target.absolutePath, descriptors.toList(), dir)
         } catch (error: Throwable) {
-            runCatching { descriptor.close() }
-            runCatching { target.delete() }
+            descriptors.forEach { descriptor -> runCatching { descriptor.close() } }
+            runCatching { dir.deleteRecursively() }
             throw error
         }
     }
+
+    private fun prepareCueSession(
+        cueUri: Uri,
+        folderUri: Uri?,
+        companionUris: List<Uri>
+    ): PreparedContent {
+        val dir = freshSessionDir()
+        val descriptors = mutableListOf<ParcelFileDescriptor>()
+        return try {
+            ensurePreparationActive()
+            val sources = if (folderUri != null) {
+                SafGameSource.listDirectChildren(this, folderUri).filterNot { it.isDirectory }
+            } else {
+                (companionUris + cueUri)
+                    .distinctBy(Uri::toString)
+                    .map { SafGameSource.metadata(this, it) }
+            }
+
+            val cueText = SafGameSource.readCueText(this, cueUri)
+            val references = SafGameSource.cueReferences(cueText)
+            require(references.isNotEmpty()) {
+                "O arquivo CUE não contém nenhuma faixa FILE reconhecível."
+            }
+
+            val byName = sources.associateBy { it.name.lowercase() }
+            val resolvedNames = mutableMapOf<String, String>()
+            val stagedUris = mutableSetOf<String>()
+
+            references.forEach { reference ->
+                ensurePreparationActive()
+                val baseName = SafGameSource.normalizeReference(reference)
+                val source = byName[baseName.lowercase()]
+                    ?: error("A faixa '$baseName' citada no CUE não foi encontrada. Importe a pasta completa do jogo.")
+                val safeName = safeFileName(source.name)
+                resolvedNames[baseName.lowercase()] = safeName
+                if (stagedUris.add(source.uri.toString())) {
+                    stageDocument(source.uri, File(dir, safeName), descriptors)
+                }
+            }
+
+            // Optional SBI files are tiny and improve compatibility for protected discs.
+            sources.filter { it.extension == "sbi" }.forEach { source ->
+                if (stagedUris.add(source.uri.toString())) {
+                    stageDocument(source.uri, File(dir, safeFileName(source.name)), descriptors)
+                }
+            }
+
+            val rewrittenCue = SafGameSource.rewriteCueReferences(cueText, resolvedNames)
+            val localCue = File(dir, "game.cue")
+            localCue.writeText(rewrittenCue, Charsets.UTF_8)
+            ensurePreparationActive()
+            PreparedContent(localCue.absolutePath, descriptors.toList(), dir)
+        } catch (error: Throwable) {
+            descriptors.forEach { descriptor -> runCatching { descriptor.close() } }
+            runCatching { dir.deleteRecursively() }
+            throw error
+        }
+    }
+
+    private fun freshSessionDir(): File {
+        val safeKey = gameKey.replace(Regex("[^A-Za-z0-9_-]"), "_")
+        val dir = File(cacheDir, "ps1-session/$safeKey")
+        dir.deleteRecursively()
+        require(dir.mkdirs() || dir.isDirectory) { "Não consegui criar a sessão temporária do jogo." }
+        return dir
+    }
+
+    private fun stageDocument(
+        uri: Uri,
+        target: File,
+        retainedDescriptors: MutableList<ParcelFileDescriptor>
+    ) {
+        ensurePreparationActive()
+        target.parentFile?.mkdirs()
+        target.delete()
+
+        val descriptor = requireNotNull(contentResolver.openFileDescriptor(uri, "r")) {
+            "O Android não forneceu acesso a ${target.name}."
+        }
+        val procPath = "/proc/self/fd/${descriptor.fd}"
+        val seekable = runCatching {
+            Os.lseek(descriptor.fileDescriptor, 0L, OsConstants.SEEK_CUR)
+            true
+        }.getOrDefault(false)
+        val linked = seekable && runCatching {
+            Os.symlink(procPath, target.absolutePath)
+            true
+        }.getOrDefault(false)
+
+        if (linked) {
+            retainedDescriptors += descriptor
+            return
+        }
+
+        runCatching { descriptor.close() }
+        contentResolver.openInputStream(uri).use { input ->
+            requireNotNull(input) { "Não consegui ler ${target.name}." }
+            target.outputStream().buffered(COPY_BUFFER_BYTES).use { output ->
+                val buffer = ByteArray(COPY_BUFFER_BYTES)
+                while (true) {
+                    ensurePreparationActive()
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                }
+            }
+        }
+    }
+
+    private fun safeFileName(name: String): String =
+        name.replace('\\', '_').replace('/', '_').ifBlank { "track.bin" }
 
     private fun ensurePreparationActive() {
         if (destroyed || Thread.currentThread().isInterrupted) {
@@ -321,10 +423,10 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         handler.removeCallbacks(statusPoll)
         unregisterThermalAdaptation()
         stopSession()
-        runCatching { pfd?.close() }
-        pfd = null
-        runCatching { sessionFile?.delete() }
-        sessionFile = null
+        sessionDescriptors.forEach { descriptor -> runCatching { descriptor.close() } }
+        sessionDescriptors = emptyList()
+        runCatching { sessionDir?.deleteRecursively() }
+        sessionDir = null
         super.onDestroy()
     }
 
@@ -386,10 +488,10 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
             KeyEvent.KEYCODE_DPAD_DOWN -> 5
             KeyEvent.KEYCODE_DPAD_LEFT -> 6
             KeyEvent.KEYCODE_DPAD_RIGHT -> 7
-            KeyEvent.KEYCODE_BUTTON_A -> 0      // Cross
-            KeyEvent.KEYCODE_BUTTON_X -> 1      // Square
-            KeyEvent.KEYCODE_BUTTON_B -> 8      // Circle
-            KeyEvent.KEYCODE_BUTTON_Y -> 9      // Triangle
+            KeyEvent.KEYCODE_BUTTON_A -> 0
+            KeyEvent.KEYCODE_BUTTON_X -> 1
+            KeyEvent.KEYCODE_BUTTON_B -> 8
+            KeyEvent.KEYCODE_BUTTON_Y -> 9
             KeyEvent.KEYCODE_BUTTON_SELECT -> 2
             KeyEvent.KEYCODE_BUTTON_START -> 3
             KeyEvent.KEYCODE_BUTTON_L1 -> 10
@@ -429,13 +531,13 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     companion object {
-        // Large enough to avoid excessive Java/Kotlin I/O overhead on ISO/CHD fallbacks,
-        // still small enough to keep memory pressure negligible on entry-level devices.
         private const val COPY_BUFFER_BYTES = 256 * 1024
         private const val EXTRA_GAME_URI = "gameUri"
         private const val EXTRA_GAME_ID = "gameId"
         private const val EXTRA_GAME_TITLE = "gameTitle"
         private const val EXTRA_EXTENSION = "extension"
+        private const val EXTRA_FOLDER_URI = "folderUri"
+        private const val EXTRA_COMPANION_URIS = "companionUris"
 
         fun intent(context: Context, game: GameEntry, extension: String): Intent =
             Intent(context, EmulationActivity::class.java).apply {
@@ -443,6 +545,8 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
                 putExtra(EXTRA_GAME_ID, game.id)
                 putExtra(EXTRA_GAME_TITLE, game.title)
                 putExtra(EXTRA_EXTENSION, extension)
+                putExtra(EXTRA_FOLDER_URI, game.folderUri)
+                putStringArrayListExtra(EXTRA_COMPANION_URIS, ArrayList(game.companionUris))
             }
     }
 }
