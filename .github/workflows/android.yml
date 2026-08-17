@@ -27,12 +27,12 @@ jobs:
           git fetch --no-tags origin main
           git checkout -B main origin/main
 
-      - name: Validate 0.9.2 information and controls foundation
+      - name: Validate 0.9.3 clean overlay and cheats foundation
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'versionName = "0.9.2"' app/build.gradle.kts
-          grep -q 'OmniCore Native Runtime 0.9.2' app/src/main/cpp/native_bridge.cpp
+          grep -q 'versionName = "0.9.3"' app/build.gradle.kts
+          grep -q 'OmniCore Native Runtime 0.9.3' app/src/main/cpp/native_bridge.cpp
           grep -q 'libretro_host_v7.cpp' app/src/main/cpp/CMakeLists.txt
           grep -q 'gl_presenter.cpp' app/src/main/cpp/CMakeLists.txt
           grep -q 'GLESv2' app/src/main/cpp/CMakeLists.txt
@@ -41,6 +41,7 @@ jobs:
           test -f app/src/main/java/com/omnicore/emulator/update/UpdateManager.kt
           test -f app/src/main/java/com/omnicore/emulator/update/UpdateInstallReceiver.kt
           test -f app/src/main/java/com/omnicore/emulator/settings/InputSettings.kt
+          test -f app/src/main/java/com/omnicore/emulator/cheats/CheatStore.kt
           grep -q 'EGL-GLES presenter' app/src/main/cpp/native_bridge.cpp
           grep -q 'setWillNotDraw(true)' app/src/main/java/com/omnicore/emulator/emulation/EmulationActivity.kt
           grep -q 'pcsx_rearmed_rgb32_output=enabled' app/src/main/java/com/omnicore/emulator/settings/Ps1Settings.kt
@@ -51,9 +52,14 @@ jobs:
           grep -q 'dpadProjection' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
           grep -q 'EDITAR CONTROLES' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
           grep -q 'findButtonAt' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
+          grep -q 'OverlayPreset.TABLET' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
+          grep -q 'CheatStore' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
+          grep -q 'nativeSetCheat' app/src/main/java/com/omnicore/emulator/core/nativebridge/NativeBridge.kt
+          grep -q 'retro_cheat_set' app/src/main/cpp/libretro_host_v7.cpp
           grep -q 'OmniCore-StatePrefetch' app/src/main/java/com/omnicore/emulator/core/nativebridge/NativeBridge.kt
           grep -q 'warmRuntimeCaches' app/src/main/java/com/omnicore/emulator/MainActivity.kt
           grep -q 'Mostrar setas do D-pad' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
+          grep -q 'Quick Menu' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
           grep -q 'Informações do OmniCore' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
           grep -q 'Buscar na biblioteca' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
           grep -q 'Remover da biblioteca?' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
@@ -158,15 +164,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v0.9.2-dev"
-          TITLE="OmniCore v0.9.2 Information & Control Polish"
-          NOTES="Information and control discoverability update on top of the validated 0.9.1 touch, smoothness and save foundation. The Tuning Center now exposes the visual D-pad toggle directly, explaining that Smart analog continues projecting digital directions even when the arrows are hidden. The system information card was rebuilt into a practical OmniCore status panel with app version and build code, native Runtime v7, PS1 core status, Android/API/ABI details, SmartPerf device profile, library and BIOS counts, current 0.9.1 feature summary and realistic project status. Existing touch editor, nearest-button hit testing, background app warmup, save-state prefetch, controller support, CUE/BIN cache, BIOS boot option, aspect modes, AAudio and SmartPerf remain intact. Uses the same stable DEV signing certificate and updates in place. ROMs, BIOS, firmware and console keys are not included."
+          TAG="v0.9.3-dev"
+          TITLE="OmniCore v0.9.3 Clean Overlay & Cheat Manager"
+          NOTES="Clean gameplay UI and per-game customization update on top of the validated Runtime v7/EGL-GLES foundation. The always-visible save/load/status/exit bars are retired by the Clean Overlay layer and replaced with a compact Quick Menu opened by the small ⋮ control or a three-finger gesture. Four fingers toggle an ultra-immersive overlay mode. Touch controls now support dynamic idle opacity, optional labels, shoulder visibility, START/SELECT visibility, D-pad visibility and six layout presets: Clean, Compact, Standard, Left hand, Right hand and Tablet. Layout positions and visual choices can be stored per game while global defaults remain available. The editor is only shown when requested instead of occupying the playfield. A per-game Cheat Manager stores named codes, toggles them live and applies them through PCSX-ReARMed libretro retro_cheat_reset/retro_cheat_set on the emulation thread. Existing Smart analog, nearest-button multitouch, save-state prefetch, CUE/BIN cache, controller support, BIOS boot, aspect modes, AAudio and SmartPerf remain intact. Uses the same stable DEV signing certificate and updates in place. ROMs, BIOS, firmware, console keys and cheat databases are not included."
           APK="app/build/outputs/apk/debug/app-debug.apk"
           SOURCE="build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz"
           TARGET="$(git rev-parse HEAD)"
 
-          cp "$APK" build/OmniCore-v0.9.2-debug.apk
-          sha256sum build/OmniCore-v0.9.2-debug.apk > build/OmniCore-v0.9.2-debug.sha256
+          cp "$APK" build/OmniCore-v0.9.3-debug.apk
+          sha256sum build/OmniCore-v0.9.3-debug.apk > build/OmniCore-v0.9.3-debug.sha256
 
           backoff_sleep() {
             local attempt="$1"
@@ -196,8 +202,8 @@ jobs:
             local attempt
             for attempt in 1 2 3 4 5 6 7; do
               if gh release upload "$TAG" \
-                build/OmniCore-v0.9.2-debug.apk \
-                build/OmniCore-v0.9.2-debug.sha256 \
+                build/OmniCore-v0.9.3-debug.apk \
+                build/OmniCore-v0.9.3-debug.sha256 \
                 "$SOURCE" --clobber; then return 0; fi
               if (( attempt < 7 )); then backoff_sleep "$attempt"; fi
             done
