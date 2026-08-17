@@ -16,6 +16,7 @@ class GameLibraryStore(context: Context) {
             buildList {
                 for (i in 0 until array.length()) {
                     val item = array.getJSONObject(i)
+                    val companions = item.optJSONArray("companionUris")
                     add(
                         GameEntry(
                             id = item.getString("id"),
@@ -24,7 +25,13 @@ class GameLibraryStore(context: Context) {
                             uri = item.getString("uri"),
                             system = ConsoleSystem.valueOf(item.getString("system")),
                             sizeBytes = item.optLong("sizeBytes", 0L),
-                            addedAt = item.optLong("addedAt", System.currentTimeMillis())
+                            addedAt = item.optLong("addedAt", System.currentTimeMillis()),
+                            folderUri = item.optString("folderUri").takeIf { it.isNotBlank() },
+                            companionUris = buildList {
+                                if (companions != null) {
+                                    for (j in 0 until companions.length()) add(companions.getString(j))
+                                }
+                            }
                         )
                     )
                 }
@@ -43,6 +50,8 @@ class GameLibraryStore(context: Context) {
                 put("system", game.system.name)
                 put("sizeBytes", game.sizeBytes)
                 put("addedAt", game.addedAt)
+                game.folderUri?.let { put("folderUri", it) }
+                put("companionUris", JSONArray(game.companionUris))
             })
         }
         prefs.edit().putString(KEY, array.toString()).apply()
