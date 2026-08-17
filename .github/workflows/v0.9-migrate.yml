@@ -1,0 +1,48 @@
+name: OmniCore v0.9 Migration
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tools/apply_v09.py"
+      - "tools/v09-trigger.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone repository
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin main
+          git checkout -B main origin/main
+
+      - name: Apply v0.9 migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/apply_v09.py
+          grep -q 'versionName = "0.9.0"' app/build.gradle.kts
+          grep -q 'enum class AnalogMode' app/src/main/java/com/omnicore/emulator/settings/InputSettings.kt
+          grep -q 'dpadProjection' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
+          grep -q 'onGenericMotionEvent' app/src/main/java/com/omnicore/emulator/emulation/EmulationActivity.kt
+          grep -q 'Buscar na biblioteca' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
+
+      - name: Commit migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app
+          git diff --cached --check
+          git commit -m "Build OmniCore 0.9 input and frontend polish"
+          git push origin main
