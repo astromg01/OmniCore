@@ -1,0 +1,96 @@
+name: OmniCore 0.9.4 Multitouch Validation
+
+on:
+  push:
+    branches:
+      - agent/0.9.4-multitouch-scaling-smoothness
+
+permissions:
+  contents: write
+
+concurrency:
+  group: omnicore-094-multitouch
+  cancel-in-progress: true
+
+jobs:
+  migrate-and-build:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone fix branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin agent/0.9.4-multitouch-scaling-smoothness
+          git checkout -B agent/0.9.4-multitouch-scaling-smoothness origin/agent/0.9.4-multitouch-scaling-smoothness
+
+      - name: Apply 0.9.4 fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/agent_094_migrate.py
+
+      - name: Validate generated sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'versionName = "0.9.4"' app/build.gradle.kts
+          grep -q 'SparseIntArray' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
+          grep -q 'buttonPointerTargets' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
+          grep -q 'syncPressedButtonsFromPointers' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
+          grep -q 'TAM −' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
+          grep -q 'resolveControlScale' app/src/main/java/com/omnicore/emulator/settings/InputSettings.kt
+          grep -q 'withContext(Dispatchers.IO)' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
+          ! grep -q '3 dedos: menu' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
+          ! grep -A3 'override fun onDraw' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt | grep -q 'resolveForGame'
+          git diff --check
+
+      - name: Verify Android toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
+          java -version
+          gradle --version
+          test -d "$ANDROID_SDK_ROOT/platforms/android-36"
+          test -x "$ANDROID_NDK_HOME/ndk-build"
+          test -x "$ANDROID_SDK_ROOT/cmake/3.31.5/bin/cmake"
+
+      - name: Fetch pinned PCSX-ReARMed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x tools/fetch_ps1_core.sh tools/build_ps1_core_android.sh
+          ./tools/fetch_ps1_core.sh
+
+      - name: Build pinned PS1 core
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./tools/build_ps1_core_android.sh
+
+      - name: Compile OmniCore 0.9.4 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Commit validated app changes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "Mauricio.dev"
+          git config user.email "antoniomauriciorodriguesalves@gmail.com"
+          git add app
+          git diff --cached --check
+          git commit -m "Fix multitouch, per-control sizing and frontend smoothness [skip ci]"
+          git push origin HEAD:agent/0.9.4-multitouch-scaling-smoothness
