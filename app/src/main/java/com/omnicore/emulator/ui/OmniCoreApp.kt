@@ -1,8 +1,6 @@
 package com.omnicore.emulator.ui
 
 import android.content.Intent
-import android.database.Cursor
-import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -48,12 +46,14 @@ import androidx.compose.ui.unit.dp
 import com.omnicore.emulator.core.CoreRegistry
 import com.omnicore.emulator.core.CoreState
 import com.omnicore.emulator.core.nativebridge.NativeBridge
+import com.omnicore.emulator.core.ps1.Ps1Core
 import com.omnicore.emulator.library.RomDetector
 import com.omnicore.emulator.model.ConsoleSystem
 import com.omnicore.emulator.model.GameEntry
 import com.omnicore.emulator.performance.PerformanceManager
 import com.omnicore.emulator.storage.GameLibraryStore
 import com.omnicore.emulator.storage.Ps1Files
+import com.omnicore.emulator.storage.SafGameSource
 import java.util.UUID
 
 private enum class Screen { LIBRARY, CORES, SETTINGS }
@@ -67,35 +67,121 @@ fun OmniCoreApp() {
     var systemFilter by remember { mutableStateOf<ConsoleSystem?>(null) }
     var screen by remember { mutableStateOf(Screen.LIBRARY) }
     var message by remember { mutableStateOf<String?>(null) }
+    var showImportDialog by remember { mutableStateOf(false) }
     var biosCount by remember { mutableIntStateOf(Ps1Files.biosFiles(context).size) }
+
+    fun addGames(additions: List<GameEntry>, successMessage: String) {
+        if (additions.isEmpty()) return
+        games = (games + additions).distinctBy { "${it.uri}|${it.folderUri.orEmpty()}" }
+        store.save(games)
+        message = successMessage
+    }
 
     val gamePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
-        val additions = uris.mapNotNull { uri ->
+        uris.forEach { uri ->
             runCatching {
                 context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            val meta = queryFileMeta(context.contentResolver.query(uri, null, null, null, null))
-            val fileName = meta.first ?: uri.lastPathSegment ?: "Jogo"
-            val detected = systemFilter ?: RomDetector.detect(fileName)
-            if (detected == null) {
-                message = "Não consegui identificar $fileName. Selecione o console antes de importar formatos ambíguos."
-                null
-            } else {
-                GameEntry(
+        }
+
+        val docs = uris.map { SafGameSource.metadata(context, it) }
+        val cueDocs = docs.filter { it.extension == "cue" }
+        val additions = mutableListOf<GameEntry>()
+
+        if (cueDocs.isNotEmpty()) {
+            val companions = docs.map { it.uri.toString() }
+            cueDocs.forEach { cue ->
+                additions += GameEntry(
                     id = UUID.randomUUID().toString(),
-                    title = fileName.substringBeforeLast('.', fileName),
-                    fileName = fileName,
-                    uri = uri.toString(),
+                    title = cue.name.substringBeforeLast('.', cue.name),
+                    fileName = cue.name,
+                    uri = cue.uri.toString(),
+                    system = ConsoleSystem.PLAYSTATION_1,
+                    sizeBytes = docs.sumOf { it.sizeBytes },
+                    companionUris = companions
+                )
+            }
+            addGames(additions, "${additions.size} jogo(s) CUE/BIN adicionado(s).")
+            return@rememberLauncherForActivityResult
+        }
+
+        val bins = docs.filter { it.extension == "bin" }
+        if (systemFilter == ConsoleSystem.PLAYSTATION_1 && bins.size > 1) {
+            message = "Foram encontrados vários BIN sem CUE. Use Importar pasta PS1 ou selecione o CUE junto com todas as faixas BIN."
+            return@rememberLauncherForActivityResult
+        }
+
+        docs.forEach { doc ->
+            val detected = systemFilter ?: RomDetector.detect(doc.name)
+            if (detected == null) {
+                message = "Não consegui identificar ${doc.name}. Selecione o console antes de importar formatos ambíguos."
+            } else {
+                additions += GameEntry(
+                    id = UUID.randomUUID().toString(),
+                    title = doc.name.substringBeforeLast('.', doc.name),
+                    fileName = doc.name,
+                    uri = doc.uri.toString(),
                     system = detected,
-                    sizeBytes = meta.second
+                    sizeBytes = doc.sizeBytes
                 )
             }
         }
-        if (additions.isNotEmpty()) {
-            games = (games + additions).distinctBy { it.uri }
-            store.save(games)
-            message = "${additions.size} jogo(s) adicionado(s)."
+        addGames(additions, "${additions.size} jogo(s) adicionado(s).")
+    }
+
+    val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
+        if (treeUri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        val docs = runCatching { SafGameSource.listDirectChildren(context, treeUri).filterNot { it.isDirectory } }
+            .getOrElse { error ->
+                message = error.message ?: "Não consegui ler a pasta selecionada."
+                return@rememberLauncherForActivityResult
+            }
+        val cueDocs = docs.filter { it.extension == "cue" }
+        val additions = mutableListOf<GameEntry>()
+
+        if (cueDocs.isNotEmpty()) {
+            cueDocs.forEach { cue ->
+                additions += GameEntry(
+                    id = UUID.randomUUID().toString(),
+                    title = cue.name.substringBeforeLast('.', cue.name),
+                    fileName = cue.name,
+                    uri = cue.uri.toString(),
+                    system = ConsoleSystem.PLAYSTATION_1,
+                    sizeBytes = docs.sumOf { it.sizeBytes },
+                    folderUri = treeUri.toString()
+                )
+            }
+            addGames(additions, "Pasta PS1 importada: ${additions.size} CUE encontrado(s).")
+            return@rememberLauncherForActivityResult
+        }
+
+        val singleFiles = docs.filter { it.extension in Ps1Core.SINGLE_FILE_EXTENSIONS }
+        val bins = singleFiles.filter { it.extension == "bin" }
+        if (bins.size > 1) {
+            message = "Essa pasta tem várias faixas BIN, mas nenhum CUE. O CUE é necessário para saber a ordem das faixas."
+            return@rememberLauncherForActivityResult
+        }
+
+        singleFiles.forEach { doc ->
+            additions += GameEntry(
+                id = UUID.randomUUID().toString(),
+                title = doc.name.substringBeforeLast('.', doc.name),
+                fileName = doc.name,
+                uri = doc.uri.toString(),
+                system = ConsoleSystem.PLAYSTATION_1,
+                sizeBytes = doc.sizeBytes,
+                folderUri = treeUri.toString()
+            )
+        }
+        if (additions.isEmpty()) {
+            message = "Não encontrei CUE, BIN, CHD ou outra imagem PS1 compatível na raiz dessa pasta."
+        } else {
+            addGames(additions, "${additions.size} jogo(s) PS1 adicionado(s) pela pasta.")
         }
     }
 
@@ -118,12 +204,12 @@ fun OmniCoreApp() {
                 title = {
                     Column {
                         Text("OmniCore", fontWeight = FontWeight.Black)
-                        Text("Universal Emulator Hub • PS1 milestone", style = MaterialTheme.typography.labelSmall)
+                        Text("Universal Emulator Hub • PS1 CUE/BIN", style = MaterialTheme.typography.labelSmall)
                     }
                 },
                 actions = {
                     if (screen == Screen.LIBRARY) {
-                        TextButton(onClick = { gamePicker.launch(arrayOf("*/*")) }) { Text("+ Importar") }
+                        TextButton(onClick = { showImportDialog = true }) { Text("+ Importar") }
                     }
                 }
             )
@@ -157,7 +243,7 @@ fun OmniCoreApp() {
                     games = games,
                     selectedSystem = systemFilter,
                     onSystemSelected = { systemFilter = it },
-                    onImport = { gamePicker.launch(arrayOf("*/*")) },
+                    onImport = { showImportDialog = true },
                     onPlay = { game ->
                         val core = CoreRegistry.forSystem(game.system)
                         if (core == null || !core.isAvailable()) {
@@ -184,6 +270,40 @@ fun OmniCoreApp() {
                     gameCount = games.size,
                     biosCount = biosCount,
                     onImportBios = { biosPicker.launch(arrayOf("application/octet-stream", "*/*")) }
+                )
+            }
+
+            if (showImportDialog) {
+                AlertDialog(
+                    onDismissRequest = { showImportDialog = false },
+                    confirmButton = {},
+                    dismissButton = {
+                        TextButton(onClick = { showImportDialog = false }) { Text("Cancelar") }
+                    },
+                    title = { Text("Importar jogo") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("Para jogos PS1 em CUE/BIN, importar a pasta é o método recomendado.")
+                            Button(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    showImportDialog = false
+                                    folderPicker.launch(null)
+                                }
+                            ) { Text("Importar pasta PS1") }
+                            Button(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    showImportDialog = false
+                                    gamePicker.launch(arrayOf("*/*"))
+                                }
+                            ) { Text("Selecionar arquivos") }
+                            Text(
+                                "Se usar arquivos, selecione o .CUE e todas as faixas .BIN juntos.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
                 )
             }
 
@@ -245,7 +365,7 @@ private fun LibraryScreen(
                         if (selectedSystem == null) {
                             "Escolha um console acima ou importe seus próprios arquivos de jogo."
                         } else {
-                            "Importe um arquivo de ${selectedSystem.displayName}. Selecionar o console evita confusão em formatos como ISO."
+                            "Importe um jogo de ${selectedSystem.displayName}. CUE/BIN do PS1 pode ser adicionado escolhendo a pasta completa."
                         },
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -276,6 +396,7 @@ private fun LibraryScreen(
                                 Text(game.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
                                 Text(game.system.displayName, style = MaterialTheme.typography.bodySmall)
                                 Text(game.fileName, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall)
+                                if (game.folderUri != null) Text("Pasta vinculada", style = MaterialTheme.typography.labelSmall)
                                 if (game.sizeBytes > 0) Text(formatBytes(game.sizeBytes), style = MaterialTheme.typography.labelSmall)
                             }
                             TextButton(onClick = { onRemove(game) }) { Text("Remover") }
@@ -297,7 +418,7 @@ private fun CoresScreen() {
     ) {
         item {
             Text("Núcleos de emulação", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
-            Text("O PS1 já usa um backend libretro real; os demais continuam isolados atrás da mesma API.")
+            Text("PS1 já suporta arquivos únicos e conjuntos CUE/BIN por pasta; os demais cores continuam isolados atrás da mesma API.")
             Spacer(Modifier.height(8.dp))
         }
         items(CoreRegistry.all()) { info ->
@@ -351,10 +472,11 @@ private fun SettingsScreen(
         item {
             ElevatedCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("OmniCore 0.2.0", fontWeight = FontWeight.Bold)
+                    Text("OmniCore 0.2.1", fontWeight = FontWeight.Bold)
                     Text("Biblioteca: $gameCount jogo(s)")
                     Text("Runtime nativo: ${NativeBridge.runtimeVersion()}")
                     Text("PS1: ${if (NativeBridge.hasPs1Core()) "PCSX-ReARMed pronto" else "core não empacotado"}")
+                    Text("PS1 multi-track: CUE/BIN + pasta SAF")
                     Text("Arquitetura: Kotlin/Compose + C++/JNI + frontend libretro")
                 }
             }
@@ -405,17 +527,6 @@ private fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall
             )
         }
-    }
-}
-
-private fun queryFileMeta(cursor: Cursor?): Pair<String?, Long> {
-    cursor.use { c ->
-        if (c == null || !c.moveToFirst()) return null to 0L
-        val nameIndex = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-        val sizeIndex = c.getColumnIndex(OpenableColumns.SIZE)
-        val name = if (nameIndex >= 0) c.getString(nameIndex) else null
-        val size = if (sizeIndex >= 0 && !c.isNull(sizeIndex)) c.getLong(sizeIndex) else 0L
-        return name to size
     }
 }
 
