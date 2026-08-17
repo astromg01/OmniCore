@@ -5,7 +5,8 @@ add_library(
     omnicore_runtime
     SHARED
     native_bridge.cpp
-    libretro_host_v6.cpp
+    gl_presenter.cpp
+    libretro_host_v7.cpp
 )
 
 target_compile_features(omnicore_runtime PRIVATE cxx_std_20)
@@ -36,6 +37,8 @@ find_library(android-lib android)
 find_library(log-lib log)
 find_library(aaudio-lib aaudio)
 find_library(dl-lib dl)
+find_library(egl-lib EGL)
+find_library(glesv2-lib GLESv2)
 
 target_link_libraries(
     omnicore_runtime
@@ -43,4 +46,6 @@ target_link_libraries(
     ${log-lib}
     ${aaudio-lib}
     ${dl-lib}
+    ${egl-lib}
+    ${glesv2-lib}
 )
