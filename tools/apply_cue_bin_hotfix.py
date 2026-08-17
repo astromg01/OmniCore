@@ -163,15 +163,3 @@ g = gradle.read_text()
 g = g.replace("versionCode = 4", "versionCode = 5")
 g = g.replace('versionName = "0.3.0"', 'versionName = "0.3.1"')
 gradle.write_text(g)
-
-workflow = Path(".github/workflows/android.yml")
-w = workflow.read_text()
-w = w.replace('TAG="v0.3.0-dev"', 'TAG="v0.3.1-dev"')
-w = w.replace('TITLE="OmniCore v0.3.0 Development Build"', 'TITLE="OmniCore v0.3.1 Development Build"')
-w = w.replace("OmniCore-v0.3.0-debug.apk", "OmniCore-v0.3.1-debug.apk")
-w = w.replace("OmniCore-v0.3.0-debug.sha256", "OmniCore-v0.3.1-debug.sha256")
-w = w.replace(
-    "Major PS1 runtime revision: boot diagnostics, real DualShock analog input, redesigned touch controls, PS1 graphics/performance presets, advanced core options, direct software framebuffer path, SmartPerf 3 and the new immersive OmniCore interface.",
-    "PS1 CUE/BIN compatibility hotfix: materializes CD tracks as real local random-access files before boot, validates every CUE reference and preserves runtime v4, DualShock controls, graphics presets and SmartPerf 3."
-)
-workflow.write_text(w)
