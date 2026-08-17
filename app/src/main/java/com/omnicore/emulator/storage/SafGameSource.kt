@@ -76,7 +76,8 @@ object SafGameSource {
             input.readBytes()
         }
         val utf8 = bytes.toString(Charsets.UTF_8)
-        return if ('\uFFFD' in utf8) bytes.toString(Charsets.ISO_8859_1) else utf8
+        val decoded = if ('\uFFFD' in utf8) bytes.toString(Charsets.ISO_8859_1) else utf8
+        return decoded.removePrefix("\uFEFF").replace("\r\n", "\n").replace('\r', '\n')
     }
 
     fun cueReferences(cueText: String): List<String> =

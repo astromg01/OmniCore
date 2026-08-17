@@ -305,15 +305,18 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
                     ?: error("Faixa '$baseName' citada no CUE não encontrada. Importe a pasta completa.")
                 val safeName = safeFileName(source.name)
                 resolvedNames[baseName.lowercase()] = safeName
-                if (stagedUris.add(source.uri.toString())) stageDocument(source.uri, File(dir, safeName), descriptors)
+                if (stagedUris.add(source.uri.toString())) stageDocument(source.uri, File(dir, safeName), descriptors, forceCopy = true)
             }
 
             sources.filter { it.extension == "sbi" }.forEach { source ->
-                if (stagedUris.add(source.uri.toString())) stageDocument(source.uri, File(dir, safeFileName(source.name)), descriptors)
+                if (stagedUris.add(source.uri.toString())) stageDocument(source.uri, File(dir, safeFileName(source.name)), descriptors, forceCopy = true)
             }
 
             val localCue = File(dir, "game.cue")
-            localCue.writeText(SafGameSource.rewriteCueReferences(cueText, resolvedNames), Charsets.UTF_8)
+            val rewrittenCue = SafGameSource.rewriteCueReferences(cueText, resolvedNames)
+                .removePrefix("\uFEFF")
+            localCue.writeText(rewrittenCue, Charsets.UTF_8)
+            validateCueSession(localCue)
             ensurePreparationActive()
             PreparedContent(localCue.absolutePath, descriptors.toList(), dir)
         } catch (error: Throwable) {
@@ -331,26 +334,39 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         return dir
     }
 
-    private fun stageDocument(uri: Uri, target: File, retainedDescriptors: MutableList<ParcelFileDescriptor>) {
+    private fun stageDocument(
+        uri: Uri,
+        target: File,
+        retainedDescriptors: MutableList<ParcelFileDescriptor>,
+        forceCopy: Boolean = false
+    ) {
         ensurePreparationActive()
         target.parentFile?.mkdirs()
         target.delete()
         val descriptor = requireNotNull(contentResolver.openFileDescriptor(uri, "r")) {
             "O Android não forneceu acesso a ${target.name}."
         }
-        val procPath = "/proc/self/fd/${descriptor.fd}"
-        val seekable = runCatching {
-            Os.lseek(descriptor.fileDescriptor, 0L, OsConstants.SEEK_CUR)
-            true
-        }.getOrDefault(false)
-        val linked = seekable && runCatching {
-            Os.symlink(procPath, target.absolutePath)
-            true
-        }.getOrDefault(false)
-        if (linked) {
-            retainedDescriptors += descriptor
-            return
+
+        if (!forceCopy) {
+            val procPath = "/proc/self/fd/${descriptor.fd}"
+            val seekable = runCatching {
+                Os.lseek(descriptor.fileDescriptor, 0L, OsConstants.SEEK_CUR)
+                true
+            }.getOrDefault(false)
+            val linked = seekable && runCatching {
+                Os.symlink(procPath, target.absolutePath)
+                true
+            }.getOrDefault(false)
+            if (linked) {
+                retainedDescriptors += descriptor
+                return
+            }
         }
+
+        // CUE/BIN tracks are materialized as real local files because the core
+        // re-opens every track with stdio/fstat/seek. Some Android providers
+        // expose seekable descriptors that cannot safely be reopened through
+        // a /proc/self/fd symlink.
         runCatching { descriptor.close() }
         contentResolver.openInputStream(uri).use { input ->
             requireNotNull(input) { "Não consegui ler ${target.name}." }
@@ -362,6 +378,37 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
                     if (count < 0) break
                     output.write(buffer, 0, count)
                 }
+            }
+        }
+        require(target.isFile && target.length() > 0L) {
+            "A faixa ${target.name} foi copiada vazia ou ficou inacessível."
+        }
+    }
+
+    private fun validateCueSession(cueFile: File) {
+        val cueText = cueFile.readText(Charsets.UTF_8)
+        val references = SafGameSource.cueReferences(cueText)
+        require(references.isNotEmpty()) { "O CUE local ficou sem referências FILE válidas." }
+
+        references.forEach { reference ->
+            ensurePreparationActive()
+            val name = SafGameSource.normalizeReference(reference)
+            val track = File(cueFile.parentFile, name)
+            require(track.parentFile?.canonicalFile == cueFile.parentFile?.canonicalFile) {
+                "Referência insegura no CUE: $name"
+            }
+            require(track.isFile && track.length() > 0L) {
+                "A faixa '$name' não ficou disponível na sessão local."
+            }
+            runCatching {
+                java.io.RandomAccessFile(track, "r").use { file ->
+                    val length = file.length()
+                    require(length > 0L)
+                    file.seek((length - 1L).coerceAtLeast(0L))
+                    require(file.read() >= 0)
+                }
+            }.getOrElse {
+                error("A faixa '$name' não aceita leitura aleatória necessária para emulação de CD.")
             }
         }
     }
