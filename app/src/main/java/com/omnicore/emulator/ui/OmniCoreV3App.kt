@@ -717,6 +717,14 @@ private fun HubTuning(biosCount: Int, gameCount: Int, onImportBios: () -> Unit) 
                     }
                 }
                 Text(inputConfig.analogMode.subtitle, color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                SettingSwitch(
+                    "Mostrar setas do D-pad",
+                    "No modo Inteligente elas podem ficar ocultas: o analógico continua enviando direções digitais para jogos antigos.",
+                    inputConfig.showDpad
+                ) {
+                    InputSettings.saveShowDpad(context, it)
+                    refreshInput()
+                }
                 Text("Tamanho do touch", fontWeight = FontWeight.Bold)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(listOf(0.85f to "85%", 1f to "100%", 1.15f to "115%")) { option ->
@@ -741,7 +749,11 @@ private fun HubTuning(biosCount: Int, gameCount: Int, onImportBios: () -> Unit) 
                     InputSettings.saveHaptics(context, it)
                     refreshInput()
                 }
-                Text("Alterações de tamanho/opacidade entram na próxima sessão de jogo.", color = Color(0xFF737C98), style = MaterialTheme.typography.labelSmall)
+                Text(
+                    "Dentro do jogo, use EDITAR CONTROLES para reposicionar botões, ocultar/mostrar as setas ou restaurar o layout. Tamanho e opacidade entram na próxima sessão.",
+                    color = Color(0xFF737C98),
+                    style = MaterialTheme.typography.labelSmall
+                )
             }
         }
         item {
@@ -778,10 +790,56 @@ private fun HubTuning(biosCount: Int, gameCount: Int, onImportBios: () -> Unit) 
             }
         }
         item {
-            HubSection("Sistema", "OmniCore ${BuildConfig.VERSION_NAME} • $gameCount jogo(s) na biblioteca") {
-                Text("Runtime: ${NativeBridge.runtimeVersion()}", color = HubSoft, style = MaterialTheme.typography.bodySmall)
-                Text("PS1: ${if (NativeBridge.hasPs1Core()) "PCSX-ReARMed pronto" else "core indisponível"}", color = HubSoft, style = MaterialTheme.typography.bodySmall)
-                Text("BIOS: $biosCount arquivo(s) .bin", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+            HubSection(
+                "Informações do OmniCore",
+                "Build DEV ${BuildConfig.VERSION_NAME} • Runtime v7 • estado real do app e do aparelho"
+            ) {
+                val ps1Ready = NativeBridge.hasPs1Core()
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { AssistChip(onClick = {}, label = { Text(if (ps1Ready) "PS1 ONLINE" else "PS1 OFFLINE") }) }
+                    item { AssistChip(onClick = {}, label = { Text("DEV") }) }
+                    item { AssistChip(onClick = {}, label = { Text("API ${Build.VERSION.SDK_INT}") }) }
+                }
+
+                Text("Versão do app", fontWeight = FontWeight.Bold)
+                Text(
+                    "OmniCore ${BuildConfig.VERSION_NAME} • build ${BuildConfig.VERSION_CODE}",
+                    color = HubSoft,
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Text("Runtime e engine", fontWeight = FontWeight.Bold)
+                Text("Runtime nativo: ${NativeBridge.runtimeVersion()}", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "PlayStation 1: ${if (ps1Ready) "PCSX-ReARMed pinned da2cb8e pronto" else "core não carregado neste APK"}",
+                    color = HubSoft,
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Text("Aparelho", fontWeight = FontWeight.Bold)
+                Text(
+                    "Android ${Build.VERSION.RELEASE} • API ${Build.VERSION.SDK_INT} • ${Build.SUPPORTED_ABIS.joinToString(" / ")}",
+                    color = HubSoft,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text("Perfil SmartPerf: ${device.summary}", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+
+                Text("Biblioteca e BIOS", fontWeight = FontWeight.Bold)
+                Text("$gameCount jogo(s) cadastrados • $biosCount BIOS .bin importada(s)", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+
+                Text("Novidades da linha 0.9.1", fontWeight = FontWeight.Bold)
+                Text("• Editor de overlay dentro do jogo com reposicionamento e restauração do layout.", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Text("• Analógico Inteligente com D-pad visual opcional e projeção digital para jogos antigos.", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Text("• Touch com seleção do controle mais próximo por dedo e multitouch mais previsível.", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Text("• Pré-aquecimento de caches do app e prefetch de save state antes do unserialize.", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+
+                Text("Estado do projeto", fontWeight = FontWeight.Bold)
+                Text(
+                    "PS1 é o backend funcional atual. Os demais sistemas continuam separados como planejados até cada core passar por integração e validação própria.",
+                    color = HubSoft,
+                    style = MaterialTheme.typography.bodySmall
+                )
+
                 Text("Desenvolvido por Mauricio.gamedev • @mauricio-gamedev", color = HubCyan, style = MaterialTheme.typography.bodySmall)
                 Button(onClick = onImportBios) { Text("Importar BIOS próprio") }
             }
