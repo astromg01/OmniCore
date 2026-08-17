@@ -20,10 +20,8 @@
 
 namespace omnicore::n64 {
 namespace {
-
 constexpr const char* kLogTag = "OmniCoreN64";
 constexpr const char* kCoreSoname = "libmupen64plus_next_libretro.so";
-constexpr std::size_t kFrameWindowCapacity = 120;
 
 #ifndef EGL_OPENGL_ES3_BIT_KHR
 #define EGL_OPENGL_ES3_BIT_KHR 0x0040
@@ -43,7 +41,6 @@ void coreLog(enum retro_log_level level, const char* fmt, ...) {
     if (level == RETRO_LOG_DEBUG) priority = ANDROID_LOG_DEBUG;
     if (level == RETRO_LOG_WARN) priority = ANDROID_LOG_WARN;
     if (level == RETRO_LOG_ERROR) priority = ANDROID_LOG_ERROR;
-
     char buffer[1024]{};
     va_list args;
     va_start(args, fmt);
@@ -101,7 +98,6 @@ private:
         fd_ = -1;
         size_ = 0;
     }
-
     int fd_ = -1;
     void* data_ = nullptr;
     std::size_t size_ = 0;
@@ -200,7 +196,6 @@ struct CoreApi final {
 
     ~CoreApi() { close(); }
 };
-
 }  // namespace
 
 struct LibretroHost::Impl {
@@ -225,23 +220,16 @@ struct LibretroHost::Impl {
         display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
         if (display == EGL_NO_DISPLAY || !eglInitialize(display, nullptr, nullptr)) return false;
         if (!eglBindAPI(EGL_OPENGL_ES_API)) return false;
-
         const EGLint attrs[] = {
             EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
             EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT_KHR,
-            EGL_RED_SIZE, 8,
-            EGL_GREEN_SIZE, 8,
-            EGL_BLUE_SIZE, 8,
-            EGL_ALPHA_SIZE, 8,
-            EGL_DEPTH_SIZE, 24,
-            EGL_STENCIL_SIZE, 0,
-            EGL_NONE
+            EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
+            EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 0, EGL_NONE
         };
         EGLint count = 0;
         if (!eglChooseConfig(display, attrs, &eglConfig, 1, &count) || count < 1) return false;
         surface = eglCreateWindowSurface(display, eglConfig, window, nullptr);
         if (surface == EGL_NO_SURFACE) return false;
-
         const EGLint contextAttrs[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
         context = eglCreateContext(display, eglConfig, EGL_NO_CONTEXT, contextAttrs);
         if (context == EGL_NO_CONTEXT || !eglMakeCurrent(display, surface, surface, context)) return false;
@@ -254,20 +242,16 @@ struct LibretroHost::Impl {
     bool createFrontendFramebuffer(int width, int height) {
         renderWidth = std::max(320, width);
         renderHeight = std::max(240, height);
-
         glGenTextures(1, &colorTexture);
         glBindTexture(GL_TEXTURE_2D, colorTexture);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, renderWidth, renderHeight, 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, renderWidth, renderHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         glGenRenderbuffers(1, &depthBuffer);
         glBindRenderbuffer(GL_RENDERBUFFER, depthBuffer);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, renderWidth, renderHeight);
-
         glGenFramebuffers(1, &frontFbo);
         glBindFramebuffer(GL_FRAMEBUFFER, frontFbo);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTexture, 0);
@@ -311,13 +295,11 @@ LibretroHost& LibretroHost::instance() {
     static LibretroHost host;
     return host;
 }
-
 LibretroHost::~LibretroHost() { stop(); }
 
 bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     if (!window || running_.exchange(true, std::memory_order_acq_rel)) return false;
     if (thread_.joinable()) thread_.join();
-
     ANativeWindow_acquire(window);
     window_ = window;
     config_ = std::move(config);
@@ -327,13 +309,15 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     setAnalog(0.0f, 0.0f, 0.0f, 0.0f);
     {
         std::lock_guard<std::mutex> lock(telemetryMutex_);
-        frameWindow_.clear();
+        frameWindow_.fill(0.0f);
+        frameWindowCount_ = 0;
+        frameWindowWrite_ = 0;
         audioUnderruns_ = 0;
     }
+    targetFrameMs_.store(1000.0f / 60.0f, std::memory_order_release);
     hwRenderRequested_ = false;
     hwRender_ = {};
     setMessage("N64 BOOT 1/6 • iniciando runtime isolado…");
-
     try {
         thread_ = std::thread(&LibretroHost::run, this);
     } catch (...) {
@@ -350,16 +334,12 @@ void LibretroHost::stop() {
     paused_.store(false, std::memory_order_release);
     if (thread_.joinable() && thread_.get_id() != std::this_thread::get_id()) thread_.join();
 }
-
-void LibretroHost::setPaused(bool paused) {
-    paused_.store(paused, std::memory_order_release);
-}
+void LibretroHost::setPaused(bool paused) { paused_.store(paused, std::memory_order_release); }
 
 std::string LibretroHost::lastMessage() const {
     std::lock_guard<std::mutex> lock(messageMutex_);
     return message_;
 }
-
 void LibretroHost::setMessage(std::string message) {
     std::lock_guard<std::mutex> lock(messageMutex_);
     message_ = std::move(message);
@@ -371,7 +351,6 @@ void LibretroHost::setButton(unsigned retroPadId, bool pressed) {
     if (pressed) buttonMask_.fetch_or(bit, std::memory_order_acq_rel);
     else buttonMask_.fetch_and(static_cast<std::uint16_t>(~bit), std::memory_order_acq_rel);
 }
-
 void LibretroHost::setAnalog(float x, float y, float cX, float cY) {
     analogX_.store(axisFromFloat(x), std::memory_order_release);
     analogY_.store(axisFromFloat(y), std::memory_order_release);
@@ -383,13 +362,9 @@ void LibretroHost::buildCoreOptions() {
     std::lock_guard<std::mutex> lock(optionMutex_);
     options_.clear();
     options_["mupen64plus-rdp-plugin"] = "gliden64";
-    // The current Android core intentionally ships without LLE/ParaLLEl RSP.
-    // Auto-correct an unsupported custom request rather than failing to boot.
-    options_["mupen64plus-rsp-plugin"] = "hle";
-    options_["mupen64plus-cpucore"] = config_.cpuMode == "cached_interpreter"
-        ? "cached_interpreter" : "dynamic_recompiler";
-    options_["mupen64plus-43screensize"] = config_.internalResolution >= 2
-        ? "1280x960" : "640x480";
+    options_["mupen64plus-rsp-plugin"] = "hle"; // LLE is not compiled in this Android core yet.
+    options_["mupen64plus-cpucore"] = config_.cpuMode == "cached_interpreter" ? "cached_interpreter" : "dynamic_recompiler";
+    options_["mupen64plus-43screensize"] = config_.internalResolution >= 2 ? "1280x960" : "640x480";
     options_["mupen64plus-aspect"] = "4:3";
     options_["mupen64plus-ThreadedRenderer"] = boolOption(config_.threadedRenderer);
     options_["mupen64plus-EnableFBEmulation"] = boolOption(config_.framebufferEmulation);
@@ -398,10 +373,8 @@ void LibretroHost::buildCoreOptions() {
     options_["mupen64plus-HybridFilter"] = "False";
     options_["mupen64plus-txHiresEnable"] = "False";
     options_["mupen64plus-alt-map"] = "True";
-    options_["mupen64plus-astick-deadzone"] = std::to_string(
-        std::clamp(config_.analogDeadzonePercent, 4, 30));
-    options_["mupen64plus-astick-sensitivity"] = std::to_string(
-        std::clamp(config_.analogSensitivityPercent, 70, 130));
+    options_["mupen64plus-astick-deadzone"] = std::to_string(std::clamp(config_.analogDeadzonePercent, 4, 30));
+    options_["mupen64plus-astick-sensitivity"] = std::to_string(std::clamp(config_.analogSensitivityPercent, 70, 130));
     if (config_.pakMode == "rumble") options_["mupen64plus-pak1"] = "rumble";
     else if (config_.pakMode == "none") options_["mupen64plus-pak1"] = "none";
     else options_["mupen64plus-pak1"] = "memory";
@@ -477,7 +450,7 @@ bool LibretroHost::environment(unsigned cmd, void* data) {
             if (data) static_cast<retro_log_callback*>(data)->log = coreLog;
             return true;
         case RETRO_ENVIRONMENT_GET_LANGUAGE:
-            if (data) *static_cast<unsigned*>(data) = 7u; // Portuguese (Brazil)
+            if (data) *static_cast<unsigned*>(data) = 7u;
             return true;
         case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
             return true;
@@ -499,8 +472,7 @@ bool LibretroHost::environment(unsigned cmd, void* data) {
             if (!data || !impl_ || impl_->context == EGL_NO_CONTEXT) return false;
             auto* requested = static_cast<abi::retro_hw_render_callback*>(data);
             const bool supported = requested->context_type == abi::RETRO_HW_CONTEXT_OPENGLES3 ||
-                (requested->context_type == abi::RETRO_HW_CONTEXT_OPENGLES_VERSION &&
-                 requested->version_major == 3u && requested->version_minor <= 1u);
+                (requested->context_type == abi::RETRO_HW_CONTEXT_OPENGLES_VERSION && requested->version_major == 3u && requested->version_minor <= 1u);
             if (!supported) {
                 setMessage("N64 BOOT E03 • core pediu contexto gráfico não suportado");
                 return false;
@@ -527,22 +499,16 @@ bool LibretroHost::environment(unsigned cmd, void* data) {
 void LibretroHost::videoRefresh(const void* data, unsigned, unsigned, std::size_t) {
     if (!impl_ || impl_->display == EGL_NO_DISPLAY || impl_->frontFbo == 0) return;
     if (data != abi::RETRO_HW_FRAME_BUFFER_VALID) return;
-
     glBindFramebuffer(GL_READ_FRAMEBUFFER, impl_->frontFbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-    glBlitFramebuffer(
-        0, 0, impl_->renderWidth, impl_->renderHeight,
-        0, 0, impl_->surfaceWidth, impl_->surfaceHeight,
-        GL_COLOR_BUFFER_BIT, GL_LINEAR);
-
+    glBlitFramebuffer(0, 0, impl_->renderWidth, impl_->renderHeight,
+                      0, 0, impl_->surfaceWidth, impl_->surfaceHeight,
+                      GL_COLOR_BUFFER_BIT, GL_LINEAR);
     if (!eglSwapBuffers(impl_->display, impl_->surface)) {
         setMessage("N64 RUNTIME E04 • falha ao apresentar frame GLES3");
         stopRequested_.store(true, std::memory_order_release);
         return;
     }
-
-    // Leave the frontend-owned FBO ready for the next core bind. This keeps the
-    // default framebuffer contract stable even if the Android surface is larger.
     glBindFramebuffer(GL_FRAMEBUFFER, impl_->frontFbo);
     glViewport(0, 0, impl_->renderWidth, impl_->renderHeight);
     ++impl_->presentedFrames;
@@ -550,9 +516,7 @@ void LibretroHost::videoRefresh(const void* data, unsigned, unsigned, std::size_
 }
 
 std::size_t LibretroHost::audioBatch(const std::int16_t*, std::size_t frames) {
-    // First-frame milestone: never block the emulation thread on audio. The N64
-    // AAudio ring/resampler is the next isolated layer after video boot is green.
-    return frames;
+    return frames; // Non-blocking bootstrap; dedicated N64 AAudio comes next.
 }
 
 std::int16_t LibretroHost::inputState(unsigned port, unsigned device, unsigned index, unsigned id) const {
@@ -576,36 +540,42 @@ std::int16_t LibretroHost::inputState(unsigned port, unsigned device, unsigned i
     return 0;
 }
 
-void LibretroHost::recordFrame(float frameMs, float) {
+void LibretroHost::recordFrame(float frameMs, float targetMs) {
+    targetFrameMs_.store(targetMs, std::memory_order_release);
     std::lock_guard<std::mutex> lock(telemetryMutex_);
-    if (frameWindow_.size() == kFrameWindowCapacity) frameWindow_.erase(frameWindow_.begin());
-    frameWindow_.push_back(frameMs);
+    frameWindow_[frameWindowWrite_] = frameMs;
+    frameWindowWrite_ = (frameWindowWrite_ + 1) % kTelemetryCapacity;
+    frameWindowCount_ = std::min(frameWindowCount_ + 1, kTelemetryCapacity);
 }
 
 Telemetry LibretroHost::telemetry() const {
-    std::lock_guard<std::mutex> lock(telemetryMutex_);
+    std::array<float, kTelemetryCapacity> snapshot{};
+    std::size_t count = 0;
+    int audioUnderruns = 0;
+    {
+        std::lock_guard<std::mutex> lock(telemetryMutex_);
+        count = frameWindowCount_;
+        audioUnderruns = audioUnderruns_;
+        for (std::size_t i = 0; i < count; ++i) snapshot[i] = frameWindow_[i];
+    }
     Telemetry out;
-    out.sampleWindowFrames = static_cast<int>(frameWindow_.size());
-    out.audioUnderruns = audioUnderruns_;
-    if (frameWindow_.empty()) return out;
-
-    out.averageFrameMs = std::accumulate(frameWindow_.begin(), frameWindow_.end(), 0.0f) /
-        static_cast<float>(frameWindow_.size());
-    std::vector<float> sorted = frameWindow_;
-    std::sort(sorted.begin(), sorted.end());
-    const auto p95Index = std::min(sorted.size() - 1,
-        static_cast<std::size_t>(std::floor((sorted.size() - 1) * 0.95)));
-    out.p95FrameMs = sorted[p95Index];
-    const float targetMs = static_cast<float>(1000.0 / (impl_ ? impl_->targetFps : 60.0));
-    out.droppedFrames = static_cast<int>(std::count_if(sorted.begin(), sorted.end(),
-        [targetMs](float value) { return value > targetMs * 1.35f; }));
+    out.sampleWindowFrames = static_cast<int>(count);
+    out.audioUnderruns = audioUnderruns;
+    if (count == 0) return out;
+    float total = 0.0f;
+    for (std::size_t i = 0; i < count; ++i) total += snapshot[i];
+    out.averageFrameMs = total / static_cast<float>(count);
+    std::sort(snapshot.begin(), snapshot.begin() + static_cast<std::ptrdiff_t>(count));
+    const std::size_t p95Index = std::min(count - 1, static_cast<std::size_t>(std::floor((count - 1) * 0.95)));
+    out.p95FrameMs = snapshot[p95Index];
+    const float targetMs = targetFrameMs_.load(std::memory_order_acquire);
+    for (std::size_t i = 0; i < count; ++i) if (snapshot[i] > targetMs * 1.35f) ++out.droppedFrames;
     return out;
 }
 
 void LibretroHost::run() {
     impl_ = std::make_unique<Impl>();
     bool callContextDestroy = false;
-
     auto cleanup = [&]() {
         if (impl_) {
             if (impl_->gameLoaded && impl_->core.unloadGame) {
@@ -633,7 +603,6 @@ void LibretroHost::run() {
         cleanup();
         return;
     }
-
     const int renderWidth = config_.internalResolution >= 2 ? 1280 : 640;
     const int renderHeight = config_.internalResolution >= 2 ? 960 : 480;
     if (!impl_->createFrontendFramebuffer(renderWidth, renderHeight)) {
@@ -642,7 +611,6 @@ void LibretroHost::run() {
         return;
     }
     setMessage("N64 BOOT 2/6 • GLES3 pronto, carregando Mupen64Plus-Next…");
-
     if (!impl_->core.load()) {
         setMessage("N64 BOOT E03 • Mupen64Plus-Next não carregou");
         cleanup();
@@ -656,7 +624,6 @@ void LibretroHost::run() {
     impl_->core.setAudioSampleBatch(audioBatchCallback);
     impl_->core.setInputPoll(inputPollCallback);
     impl_->core.setInputState(inputStateCallback);
-
     setMessage("N64 BOOT 3/6 • inicializando core isolado…");
     impl_->core.init();
     impl_->coreInitialized = true;
@@ -684,8 +651,6 @@ void LibretroHost::run() {
         gameInfo.data = rom.data();
         gameInfo.size = rom.size();
         loadOk = impl_->core.loadGame(&gameInfo);
-        // Mupen copies the cartridge synchronously, so the file mapping can be
-        // released immediately instead of occupying address space all session.
     }
     if (!loadOk) {
         setMessage("N64 BOOT E06 • Mupen recusou a ROM/contexto gráfico");
@@ -693,7 +658,6 @@ void LibretroHost::run() {
         return;
     }
     impl_->gameLoaded = true;
-
     if (!hwRenderRequested_ || !hwRender_.context_reset) {
         setMessage("N64 BOOT E07 • GLideN64 não negociou contexto GLES3");
         cleanup();
@@ -704,12 +668,12 @@ void LibretroHost::run() {
     callContextDestroy = true;
     retro_system_av_info avInfo{};
     impl_->core.getSystemAvInfo(&avInfo);
-    impl_->targetFps = (avInfo.timing.fps >= 40.0 && avInfo.timing.fps <= 75.0)
-        ? avInfo.timing.fps : 60.0;
+    impl_->targetFps = (avInfo.timing.fps >= 40.0 && avInfo.timing.fps <= 75.0) ? avInfo.timing.fps : 60.0;
     const auto target = std::chrono::duration<double>(1.0 / impl_->targetFps);
     const float targetMs = static_cast<float>(1000.0 / impl_->targetFps);
-
+    targetFrameMs_.store(targetMs, std::memory_order_release);
     setMessage("N64 BOOT 5/6 • GLideN64 inicializado, aguardando primeiro frame…");
+
     auto nextFrame = std::chrono::steady_clock::now();
     while (!stopRequested_.load(std::memory_order_acquire)) {
         if (paused_.load(std::memory_order_acquire)) {
@@ -717,49 +681,30 @@ void LibretroHost::run() {
             nextFrame = std::chrono::steady_clock::now();
             continue;
         }
-
         const auto begin = std::chrono::steady_clock::now();
         impl_->core.run();
         const auto afterRun = std::chrono::steady_clock::now();
         recordFrame(std::chrono::duration<float, std::milli>(afterRun - begin).count(), targetMs);
-
         nextFrame += std::chrono::duration_cast<std::chrono::steady_clock::duration>(target);
         const auto now = std::chrono::steady_clock::now();
         if (nextFrame > now) std::this_thread::sleep_until(nextFrame);
         else if (now - nextFrame > std::chrono::milliseconds(80)) nextFrame = now;
     }
-
     setMessage("N64 STOP • encerrando sessão…");
     cleanup();
 }
 
-bool LibretroHost::environmentCallback(unsigned cmd, void* data) {
-    return instance().environment(cmd, data);
-}
-
-void LibretroHost::videoCallback(const void* data, unsigned width, unsigned height, std::size_t pitch) {
-    instance().videoRefresh(data, width, height, pitch);
-}
-
+bool LibretroHost::environmentCallback(unsigned cmd, void* data) { return instance().environment(cmd, data); }
+void LibretroHost::videoCallback(const void* data, unsigned width, unsigned height, std::size_t pitch) { instance().videoRefresh(data, width, height, pitch); }
 void LibretroHost::audioSampleCallback(std::int16_t, std::int16_t) {}
-
-std::size_t LibretroHost::audioBatchCallback(const std::int16_t* data, std::size_t frames) {
-    return instance().audioBatch(data, frames);
-}
-
+std::size_t LibretroHost::audioBatchCallback(const std::int16_t* data, std::size_t frames) { return instance().audioBatch(data, frames); }
 void LibretroHost::inputPollCallback() {}
-
-std::int16_t LibretroHost::inputStateCallback(unsigned port, unsigned device, unsigned index, unsigned id) {
-    return instance().inputState(port, device, index, id);
-}
-
+std::int16_t LibretroHost::inputStateCallback(unsigned port, unsigned device, unsigned index, unsigned id) { return instance().inputState(port, device, index, id); }
 bool LibretroHost::clearThreadWaitsCallback(unsigned, void*) { return true; }
-
 std::uintptr_t LibretroHost::currentFramebufferCallback() {
     const auto& host = instance();
     return host.impl_ ? static_cast<std::uintptr_t>(host.impl_->frontFbo) : 0u;
 }
-
 abi::retro_proc_address_t LibretroHost::procAddressCallback(const char* symbol) {
     if (!symbol || !*symbol) return nullptr;
     const auto eglProc = eglGetProcAddress(symbol);
