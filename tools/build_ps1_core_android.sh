@@ -25,9 +25,9 @@ for ABI in arm64-v8a armeabi-v7a; do
   (
     cd "$CORE"
     "$NDK/ndk-build" \
-      NDK_PROJECT_PATH=. \
-      APP_BUILD_SCRIPT=jni/Android.mk \
-      NDK_APPLICATION_MK=jni/Application.mk \
+      NDK_PROJECT_PATH="$CORE" \
+      APP_BUILD_SCRIPT="$CORE/jni/Android.mk" \
+      NDK_APPLICATION_MK="$CORE/jni/Application.mk" \
       APP_ABI="$ABI" \
       APP_PLATFORM=android-26 \
       NDK_OUT="$BUILD_ROOT/obj" \
