@@ -29,7 +29,9 @@ jobs:
           test -f extracted/OmniCore/settings.gradle.kts
           cp -a extracted/OmniCore/. .
           rm -rf extracted source.zip .bootstrap
-          rm -f .github/workflows/bootstrap.yml
+          # GITHUB_TOKEN cannot create/update workflow files. The final
+          # android.yml is installed separately after this bootstrap succeeds.
+          rm -f .github/workflows/android.yml
 
       - name: Commit source tree
         shell: bash
