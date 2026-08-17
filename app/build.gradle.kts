@@ -3,6 +3,8 @@ plugins {
     alias(libs.plugins.compose.compiler)
 }
 
+val devKeystorePath = System.getenv("OMNICORE_DEV_KEYSTORE")
+
 android {
     namespace = "com.omnicore.emulator"
     compileSdk = 36
@@ -12,11 +14,33 @@ android {
         applicationId = "com.omnicore.emulator"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.5.0"
+        versionCode = 8
+        versionName = "0.6.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+    }
+
+    signingConfigs {
+        // DEV-ONLY signing. CI injects the public development keystore so
+        // sideloaded development builds can update in-place across runners.
+        // Production / Play builds must use a private production key instead.
+        if (!devKeystorePath.isNullOrBlank()) {
+            create("development") {
+                storeFile = file(devKeystorePath)
+                storePassword = System.getenv("OMNICORE_DEV_STORE_PASSWORD")
+                keyAlias = System.getenv("OMNICORE_DEV_KEY_ALIAS")
+                keyPassword = System.getenv("OMNICORE_DEV_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            if (!devKeystorePath.isNullOrBlank()) {
+                signingConfig = signingConfigs.getByName("development")
+            }
         }
     }
 
