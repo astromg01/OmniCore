@@ -14,7 +14,7 @@ if [[ ! -f "$CORE/jni/Android.mk" ]]; then
   exit 1
 fi
 
-rm -rf "$ROOT/app/src/main/jniLibs/arm64-v8a" "$ROOT/app/src/main/jniLibs/armeabi-v7a"
+# Never erase another console core from jniLibs. Each backend owns only its SONAME.
 mkdir -p "$ROOT/app/src/main/jniLibs"
 
 for ABI in arm64-v8a armeabi-v7a; do
@@ -47,6 +47,7 @@ for ABI in arm64-v8a armeabi-v7a; do
     exit 1
   fi
   mkdir -p "$TARGET_DIR"
+  rm -f "$TARGET_DIR/libpcsx_rearmed_libretro.so"
   cp "$SOURCE" "$TARGET_DIR/libpcsx_rearmed_libretro.so"
   echo "Packaged PS1 core for $ABI"
 done
