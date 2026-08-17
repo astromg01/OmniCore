@@ -2,6 +2,7 @@
 
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
+#include <aaudio/AAudio.h>
 #include <android/log.h>
 #include <android/native_window.h>
 #include <dlfcn.h>
@@ -11,17 +12,19 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
-#include <numeric>
+#include <limits>
 
 namespace omnicore::n64 {
 namespace {
 constexpr const char* kLogTag = "OmniCoreN64";
 constexpr const char* kCoreSoname = "libmupen64plus_next_libretro.so";
+constexpr std::size_t kAudioRingSamples = 32768;
 
 #ifndef EGL_OPENGL_ES3_BIT_KHR
 #define EGL_OPENGL_ES3_BIT_KHR 0x0040
@@ -61,6 +64,81 @@ std::string boolOption(bool value) { return value ? "True" : "False"; }
 std::int16_t axisFromFloat(float value) {
     return static_cast<std::int16_t>(std::lround(std::clamp(value, -1.0f, 1.0f) * 32767.0f));
 }
+
+class AudioRing final {
+public:
+    void clear() {
+        read_.store(0, std::memory_order_release);
+        write_.store(0, std::memory_order_release);
+        underruns_.store(0, std::memory_order_release);
+        overruns_.store(0, std::memory_order_release);
+        data_.fill(0);
+    }
+
+    std::size_t push(const std::int16_t* input, std::size_t samples) {
+        if (!input || samples < 2) return 0;
+        samples &= ~static_cast<std::size_t>(1);
+        const std::uint64_t read = read_.load(std::memory_order_acquire);
+        const std::uint64_t write = write_.load(std::memory_order_relaxed);
+        const std::uint64_t used = write - read;
+        if (used >= data_.size()) {
+            overruns_.fetch_add(1, std::memory_order_relaxed);
+            return 0;
+        }
+        std::size_t count = std::min(samples, data_.size() - static_cast<std::size_t>(used));
+        count &= ~static_cast<std::size_t>(1);
+        if (count < samples) overruns_.fetch_add(1, std::memory_order_relaxed);
+        if (count == 0) return 0;
+        const std::size_t start = static_cast<std::size_t>(write % data_.size());
+        const std::size_t first = std::min(count, data_.size() - start);
+        std::memcpy(data_.data() + start, input, first * sizeof(std::int16_t));
+        if (first < count) {
+            std::memcpy(data_.data(), input + first, (count - first) * sizeof(std::int16_t));
+        }
+        write_.store(write + count, std::memory_order_release);
+        return count;
+    }
+
+    std::size_t pop(std::int16_t* output, std::size_t samples) {
+        if (!output || samples == 0) return 0;
+        const std::uint64_t read = read_.load(std::memory_order_relaxed);
+        const std::uint64_t write = write_.load(std::memory_order_acquire);
+        const std::size_t count = static_cast<std::size_t>(
+            std::min<std::uint64_t>(samples, write - read));
+        if (count > 0) {
+            const std::size_t start = static_cast<std::size_t>(read % data_.size());
+            const std::size_t first = std::min(count, data_.size() - start);
+            std::memcpy(output, data_.data() + start, first * sizeof(std::int16_t));
+            if (first < count) {
+                std::memcpy(output + first, data_.data(), (count - first) * sizeof(std::int16_t));
+            }
+        }
+        if (count < samples) {
+            std::fill(output + count, output + samples, 0);
+            underruns_.fetch_add(1, std::memory_order_relaxed);
+        }
+        read_.store(read + count, std::memory_order_release);
+        return count;
+    }
+
+    std::size_t availableSamples() const {
+        const std::uint64_t read = read_.load(std::memory_order_acquire);
+        const std::uint64_t write = write_.load(std::memory_order_acquire);
+        return static_cast<std::size_t>(
+            std::min<std::uint64_t>(data_.size(), write - read));
+    }
+
+    std::uint64_t underruns() const { return underruns_.load(std::memory_order_acquire); }
+    std::uint64_t overruns() const { return overruns_.load(std::memory_order_acquire); }
+    constexpr std::size_t capacitySamples() const { return kAudioRingSamples; }
+
+private:
+    std::array<std::int16_t, kAudioRingSamples> data_{};
+    std::atomic<std::uint64_t> read_{0};
+    std::atomic<std::uint64_t> write_{0};
+    std::atomic<std::uint64_t> underruns_{0};
+    std::atomic<std::uint64_t> overruns_{0};
+};
 
 class MappedFile final {
 public:
@@ -199,6 +277,9 @@ struct CoreApi final {
 }  // namespace
 
 struct LibretroHost::Impl {
+    explicit Impl(LibretroHost* owner) : owner(owner) {}
+
+    LibretroHost* owner = nullptr;
     CoreApi core;
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLContext context = EGL_NO_CONTEXT;
@@ -215,6 +296,33 @@ struct LibretroHost::Impl {
     bool coreInitialized = false;
     bool gameLoaded = false;
     double targetFps = 60.0;
+
+    AudioRing audioRing;
+    AAudioStream* audioStream = nullptr;
+    bool audioStarted = false;
+    double coreSampleRate = 44100.0;
+    int outputSampleRate = 44100;
+    int framesPerBurst = 0;
+    int appliedAudioBursts = 3;
+    int audioPrimeFrames = 0;
+    int minimumAudioLatencyMs = 0;
+    int lastXRunCount = 0;
+    int stableAudioChecks = 0;
+    std::uint64_t lastRingUnderruns = 0;
+    double resampleAccumulator = 0.0;
+    std::array<std::int16_t, 8192> resampleScratch{};
+
+    static aaudio_data_callback_result_t audioCallback(
+        AAudioStream*, void* userData, void* audioData, std::int32_t numFrames) {
+        auto* self = static_cast<Impl*>(userData);
+        if (!self || !audioData || numFrames <= 0) return AAUDIO_CALLBACK_RESULT_CONTINUE;
+        const std::size_t requested = static_cast<std::size_t>(numFrames) * 2u;
+        const std::size_t read = self->audioRing.pop(static_cast<std::int16_t*>(audioData), requested);
+        if (read < requested && self->owner) {
+            self->owner->audioUnderruns_.fetch_add(1, std::memory_order_relaxed);
+        }
+        return AAUDIO_CALLBACK_RESULT_CONTINUE;
+    }
 
     bool createEgl(ANativeWindow* window) {
         display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
@@ -289,12 +397,130 @@ struct LibretroHost::Impl {
         display = EGL_NO_DISPLAY;
         eglConfig = nullptr;
     }
+
+    bool openAudio(double sampleRate, int requestedBursts) {
+        closeAudio();
+        audioRing.clear();
+        coreSampleRate = sampleRate > 1000.0 ? sampleRate : 44100.0;
+        requestedBursts = std::clamp(requestedBursts, 2, 7);
+        resampleAccumulator = 0.0;
+
+        auto tryMode = [&](aaudio_sharing_mode_t sharing) -> bool {
+            AAudioStreamBuilder* builder = nullptr;
+            if (AAudio_createStreamBuilder(&builder) != AAUDIO_OK || !builder) return false;
+            AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
+            AAudioStreamBuilder_setSharingMode(builder, sharing);
+            AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+            AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_I16);
+            AAudioStreamBuilder_setChannelCount(builder, 2);
+            AAudioStreamBuilder_setSampleRate(builder, static_cast<std::int32_t>(std::lround(coreSampleRate)));
+            AAudioStreamBuilder_setDataCallback(builder, audioCallback, this);
+            const aaudio_result_t result = AAudioStreamBuilder_openStream(builder, &audioStream);
+            AAudioStreamBuilder_delete(builder);
+            if (result != AAUDIO_OK || !audioStream) {
+                audioStream = nullptr;
+                return false;
+            }
+            outputSampleRate = std::max(1, AAudioStream_getSampleRate(audioStream));
+            framesPerBurst = std::max(1, AAudioStream_getFramesPerBurst(audioStream));
+            int minBursts = requestedBursts;
+            if (minimumAudioLatencyMs > 0) {
+                const int latencyFrames = outputSampleRate * minimumAudioLatencyMs / 1000;
+                minBursts = std::max(minBursts, (latencyFrames + framesPerBurst - 1) / framesPerBurst);
+            }
+            appliedAudioBursts = std::clamp(minBursts, 2, 7);
+            AAudioStream_setBufferSizeInFrames(audioStream, framesPerBurst * appliedAudioBursts);
+            audioPrimeFrames = std::min<int>(
+                static_cast<int>(audioRing.capacitySamples() / 4u),
+                std::max(framesPerBurst * 2, outputSampleRate / 50));
+            lastXRunCount = std::max(0, AAudioStream_getXRunCount(audioStream));
+            lastRingUnderruns = audioRing.underruns();
+            stableAudioChecks = 0;
+            audioStarted = false;
+            return true;
+        };
+
+        if (tryMode(AAUDIO_SHARING_MODE_EXCLUSIVE)) return true;
+        return tryMode(AAUDIO_SHARING_MODE_SHARED);
+    }
+
+    void closeAudio() {
+        if (audioStream) {
+            if (audioStarted) AAudioStream_requestStop(audioStream);
+            AAudioStream_close(audioStream);
+            audioStream = nullptr;
+        }
+        audioStarted = false;
+        framesPerBurst = 0;
+        audioPrimeFrames = 0;
+        resampleAccumulator = 0.0;
+        audioRing.clear();
+    }
+
+    void startAudioIfReady() {
+        if (!audioStream || audioStarted) return;
+        if (audioRing.availableSamples() / 2u < static_cast<std::size_t>(std::max(1, audioPrimeFrames))) return;
+        if (AAudioStream_requestStart(audioStream) == AAUDIO_OK) {
+            audioStarted = true;
+        }
+    }
+
+    void pushAudio(const std::int16_t* data, std::size_t frames) {
+        if (!data || frames == 0 || !audioStream) return;
+        const double outRate = static_cast<double>(std::max(1, outputSampleRate));
+        if (std::abs(outRate - coreSampleRate) < 1.0) {
+            audioRing.push(data, frames * 2u);
+            startAudioIfReady();
+            return;
+        }
+
+        std::size_t scratchCount = 0;
+        auto flush = [&]() {
+            if (scratchCount > 0) {
+                audioRing.push(resampleScratch.data(), scratchCount);
+                scratchCount = 0;
+            }
+        };
+        for (std::size_t i = 0; i < frames; ++i) {
+            resampleAccumulator += outRate;
+            while (resampleAccumulator >= coreSampleRate) {
+                if (scratchCount + 2 > resampleScratch.size()) flush();
+                resampleScratch[scratchCount++] = data[i * 2u];
+                resampleScratch[scratchCount++] = data[i * 2u + 1u];
+                resampleAccumulator -= coreSampleRate;
+            }
+        }
+        flush();
+        startAudioIfReady();
+    }
+
+    void adaptAudio(int requestedBursts) {
+        if (!audioStream || framesPerBurst <= 0) return;
+        requestedBursts = std::clamp(requestedBursts, 2, 7);
+        const int xruns = std::max(0, AAudioStream_getXRunCount(audioStream));
+        const auto underruns = audioRing.underruns();
+        int next = appliedAudioBursts;
+        if (xruns > lastXRunCount || underruns > lastRingUnderruns) {
+            next = std::min(7, std::max(requestedBursts, appliedAudioBursts + 1));
+            stableAudioChecks = 0;
+        } else if (next > requestedBursts && ++stableAudioChecks >= 8) {
+            --next;
+            stableAudioChecks = 0;
+        }
+        if (next != appliedAudioBursts) {
+            AAudioStream_setBufferSizeInFrames(audioStream, framesPerBurst * next);
+            appliedAudioBursts = next;
+        }
+        lastXRunCount = xruns;
+        lastRingUnderruns = underruns;
+    }
 };
 
 LibretroHost& LibretroHost::instance() {
     static LibretroHost host;
     return host;
 }
+
 LibretroHost::~LibretroHost() { stop(); }
 
 bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
@@ -303,6 +529,7 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     ANativeWindow_acquire(window);
     window_ = window;
     config_ = std::move(config);
+    config_.audioBufferBursts = std::clamp(config_.audioBufferBursts, 2, 7);
     stopRequested_.store(false, std::memory_order_release);
     paused_.store(false, std::memory_order_release);
     buttonMask_.store(0, std::memory_order_release);
@@ -312,8 +539,8 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
         frameWindow_.fill(0.0f);
         frameWindowCount_ = 0;
         frameWindowWrite_ = 0;
-        audioUnderruns_ = 0;
     }
+    audioUnderruns_.store(0, std::memory_order_release);
     targetFrameMs_.store(1000.0f / 60.0f, std::memory_order_release);
     hwRenderRequested_ = false;
     hwRender_ = {};
@@ -334,12 +561,14 @@ void LibretroHost::stop() {
     paused_.store(false, std::memory_order_release);
     if (thread_.joinable() && thread_.get_id() != std::this_thread::get_id()) thread_.join();
 }
+
 void LibretroHost::setPaused(bool paused) { paused_.store(paused, std::memory_order_release); }
 
 std::string LibretroHost::lastMessage() const {
     std::lock_guard<std::mutex> lock(messageMutex_);
     return message_;
 }
+
 void LibretroHost::setMessage(std::string message) {
     std::lock_guard<std::mutex> lock(messageMutex_);
     message_ = std::move(message);
@@ -351,6 +580,7 @@ void LibretroHost::setButton(unsigned retroPadId, bool pressed) {
     if (pressed) buttonMask_.fetch_or(bit, std::memory_order_acq_rel);
     else buttonMask_.fetch_and(static_cast<std::uint16_t>(~bit), std::memory_order_acq_rel);
 }
+
 void LibretroHost::setAnalog(float x, float y, float cX, float cY) {
     analogX_.store(axisFromFloat(x), std::memory_order_release);
     analogY_.store(axisFromFloat(y), std::memory_order_release);
@@ -362,7 +592,7 @@ void LibretroHost::buildCoreOptions() {
     std::lock_guard<std::mutex> lock(optionMutex_);
     options_.clear();
     options_["mupen64plus-rdp-plugin"] = "gliden64";
-    options_["mupen64plus-rsp-plugin"] = "hle"; // LLE is not compiled in this Android core yet.
+    options_["mupen64plus-rsp-plugin"] = "hle";
     options_["mupen64plus-cpucore"] = config_.cpuMode == "cached_interpreter" ? "cached_interpreter" : "dynamic_recompiler";
     options_["mupen64plus-43screensize"] = config_.internalResolution >= 2 ? "1280x960" : "640x480";
     options_["mupen64plus-aspect"] = "4:3";
@@ -384,7 +614,7 @@ bool LibretroHost::environment(unsigned cmd, void* data) {
     switch (cmd) {
         case RETRO_ENVIRONMENT_GET_CAN_DUPE:
             if (data) *static_cast<bool*>(data) = true;
-            return true;
+            return data != nullptr;
         case RETRO_ENVIRONMENT_SET_MESSAGE:
             if (data) {
                 const auto* message = static_cast<const retro_message*>(data);
@@ -397,17 +627,17 @@ bool LibretroHost::environment(unsigned cmd, void* data) {
         case RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL:
             return true;
         case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
-            if (data) *reinterpret_cast<char**>(data) = const_cast<char*>(config_.systemDir.c_str());
-            return true;
+            if (data) *static_cast<const char**>(data) = config_.systemDir.c_str();
+            return data != nullptr;
         case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
-            if (data) *reinterpret_cast<const char**>(data) = config_.saveDir.c_str();
-            return true;
+            if (data) *static_cast<const char**>(data) = config_.saveDir.c_str();
+            return data != nullptr;
         case RETRO_ENVIRONMENT_GET_CONTENT_DIRECTORY: {
             static thread_local std::string contentDir;
             const auto slash = config_.romPath.find_last_of('/');
             contentDir = slash == std::string::npos ? config_.romPath : config_.romPath.substr(0, slash);
-            if (data) *reinterpret_cast<const char**>(data) = contentDir.c_str();
-            return true;
+            if (data) *static_cast<const char**>(data) = contentDir.c_str();
+            return data != nullptr;
         }
         case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
             return data && *static_cast<retro_pixel_format*>(data) == RETRO_PIXEL_FORMAT_XRGB8888;
@@ -415,8 +645,14 @@ bool LibretroHost::environment(unsigned cmd, void* data) {
         case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
         case RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO:
         case RETRO_ENVIRONMENT_SET_GEOMETRY:
-        case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
         case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY:
+            return true;
+        case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
+            if (data && impl_) {
+                const auto* info = static_cast<const retro_system_av_info*>(data);
+                if (info->timing.fps > 1.0) impl_->targetFps = info->timing.fps;
+                if (info->timing.sample_rate > 1000.0) impl_->coreSampleRate = info->timing.sample_rate;
+            }
             return true;
         case RETRO_ENVIRONMENT_GET_VARIABLE: {
             if (!data) return false;
@@ -445,34 +681,36 @@ bool LibretroHost::environment(unsigned cmd, void* data) {
         }
         case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
             if (data) *static_cast<bool*>(data) = false;
-            return true;
+            return data != nullptr;
         case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
             if (data) static_cast<retro_log_callback*>(data)->log = coreLog;
-            return true;
+            return data != nullptr;
         case RETRO_ENVIRONMENT_GET_LANGUAGE:
-            if (data) *static_cast<unsigned*>(data) = 7u;
-            return true;
+            if (data) *static_cast<unsigned*>(data) = RETRO_LANGUAGE_ENGLISH;
+            return data != nullptr;
         case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
             return true;
         case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
             if (data) *static_cast<unsigned*>(data) = 0u;
-            return true;
+            return data != nullptr;
         case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE:
             if (data) *static_cast<unsigned*>(data) = RETRO_AV_ENABLE_VIDEO | RETRO_AV_ENABLE_AUDIO;
-            return true;
+            return data != nullptr;
         case RETRO_ENVIRONMENT_GET_TARGET_REFRESH_RATE:
-            if (data) *static_cast<float*>(data) = 60.0f;
-            return true;
+            if (data) *static_cast<float*>(data) = impl_ ? static_cast<float>(impl_->targetFps) : 60.0f;
+            return data != nullptr;
         case RETRO_ENVIRONMENT_GET_INPUT_MAX_USERS:
             if (data) *static_cast<unsigned*>(data) = 1u;
-            return true;
+            return data != nullptr;
         case RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY:
+            if (data && impl_) impl_->minimumAudioLatencyMs = static_cast<int>(*static_cast<unsigned*>(data));
             return true;
         case abi::RETRO_ENVIRONMENT_SET_HW_RENDER: {
             if (!data || !impl_ || impl_->context == EGL_NO_CONTEXT) return false;
             auto* requested = static_cast<abi::retro_hw_render_callback*>(data);
             const bool supported = requested->context_type == abi::RETRO_HW_CONTEXT_OPENGLES3 ||
-                (requested->context_type == abi::RETRO_HW_CONTEXT_OPENGLES_VERSION && requested->version_major == 3u && requested->version_minor <= 1u);
+                (requested->context_type == abi::RETRO_HW_CONTEXT_OPENGLES_VERSION &&
+                 requested->version_major == 3u && requested->version_minor <= 1u);
             if (!supported) {
                 setMessage("N64 BOOT E03 • core pediu contexto gráfico não suportado");
                 return false;
@@ -488,7 +726,7 @@ bool LibretroHost::environment(unsigned cmd, void* data) {
             return false;
         case abi::RETRO_ENVIRONMENT_GET_CLEAR_ALL_THREAD_WAITS_CB:
             if (data) *reinterpret_cast<retro_environment_t*>(data) = clearThreadWaitsCallback;
-            return true;
+            return data != nullptr;
         case abi::RETRO_ENVIRONMENT_POLL_TYPE_OVERRIDE:
             return true;
         default:
@@ -512,11 +750,22 @@ void LibretroHost::videoRefresh(const void* data, unsigned, unsigned, std::size_
     glBindFramebuffer(GL_FRAMEBUFFER, impl_->frontFbo);
     glViewport(0, 0, impl_->renderWidth, impl_->renderHeight);
     ++impl_->presentedFrames;
-    if (impl_->presentedFrames == 1) setMessage("N64 RUN OK • primeiro frame GLES3 recebido");
+    if (impl_->presentedFrames == 1) {
+        setMessage(impl_->audioStream
+            ? "N64 RUN OK • primeiro frame GLES3 • AAudio pronto"
+            : "N64 RUN OK • primeiro frame GLES3 • áudio indisponível");
+    }
 }
 
-std::size_t LibretroHost::audioBatch(const std::int16_t*, std::size_t frames) {
-    return frames; // Non-blocking bootstrap; dedicated N64 AAudio comes next.
+void LibretroHost::audioSample(std::int16_t left, std::int16_t right) {
+    if (!impl_) return;
+    const std::int16_t stereo[2] = {left, right};
+    impl_->pushAudio(stereo, 1);
+}
+
+std::size_t LibretroHost::audioBatch(const std::int16_t* data, std::size_t frames) {
+    if (impl_) impl_->pushAudio(data, frames);
+    return frames;
 }
 
 std::int16_t LibretroHost::inputState(unsigned port, unsigned device, unsigned index, unsigned id) const {
@@ -551,33 +800,36 @@ void LibretroHost::recordFrame(float frameMs, float targetMs) {
 Telemetry LibretroHost::telemetry() const {
     std::array<float, kTelemetryCapacity> snapshot{};
     std::size_t count = 0;
-    int audioUnderruns = 0;
     {
         std::lock_guard<std::mutex> lock(telemetryMutex_);
         count = frameWindowCount_;
-        audioUnderruns = audioUnderruns_;
         for (std::size_t i = 0; i < count; ++i) snapshot[i] = frameWindow_[i];
     }
     Telemetry out;
     out.sampleWindowFrames = static_cast<int>(count);
-    out.audioUnderruns = audioUnderruns;
+    out.audioUnderruns = audioUnderruns_.load(std::memory_order_acquire);
     if (count == 0) return out;
     float total = 0.0f;
     for (std::size_t i = 0; i < count; ++i) total += snapshot[i];
     out.averageFrameMs = total / static_cast<float>(count);
     std::sort(snapshot.begin(), snapshot.begin() + static_cast<std::ptrdiff_t>(count));
-    const std::size_t p95Index = std::min(count - 1, static_cast<std::size_t>(std::floor((count - 1) * 0.95)));
+    const std::size_t p95Index = std::min(
+        count - 1,
+        static_cast<std::size_t>(std::floor((count - 1) * 0.95)));
     out.p95FrameMs = snapshot[p95Index];
     const float targetMs = targetFrameMs_.load(std::memory_order_acquire);
-    for (std::size_t i = 0; i < count; ++i) if (snapshot[i] > targetMs * 1.35f) ++out.droppedFrames;
+    for (std::size_t i = 0; i < count; ++i) {
+        if (snapshot[i] > targetMs * 1.35f) ++out.droppedFrames;
+    }
     return out;
 }
 
 void LibretroHost::run() {
-    impl_ = std::make_unique<Impl>();
+    impl_ = std::make_unique<Impl>(this);
     bool callContextDestroy = false;
     auto cleanup = [&]() {
         if (impl_) {
+            impl_->closeAudio();
             if (impl_->gameLoaded && impl_->core.unloadGame) {
                 impl_->core.unloadGame();
                 impl_->gameLoaded = false;
@@ -638,20 +890,22 @@ void LibretroHost::run() {
     }
 
     bool loadOk = false;
-    {
-        MappedFile rom;
+    MappedFile rom;
+    retro_game_info gameInfo{};
+    gameInfo.path = config_.romPath.c_str();
+    if (!systemInfo.need_fullpath) {
         if (!rom.openReadOnly(config_.romPath)) {
             setMessage("N64 BOOT E05 • não consegui mapear a ROM preparada");
             cleanup();
             return;
         }
-        setMessage("N64 BOOT 4/6 • ROM mapeada sem cópia extra do frontend…");
-        retro_game_info gameInfo{};
-        gameInfo.path = config_.romPath.c_str();
         gameInfo.data = rom.data();
         gameInfo.size = rom.size();
-        loadOk = impl_->core.loadGame(&gameInfo);
+        setMessage("N64 BOOT 4/6 • ROM mapeada sem cópia extra do frontend…");
+    } else {
+        setMessage("N64 BOOT 4/6 • core usando ROM preparada por caminho…");
     }
+    loadOk = impl_->core.loadGame(&gameInfo);
     if (!loadOk) {
         setMessage("N64 BOOT E06 • Mupen recusou a ROM/contexto gráfico");
         cleanup();
@@ -668,13 +922,21 @@ void LibretroHost::run() {
     callContextDestroy = true;
     retro_system_av_info avInfo{};
     impl_->core.getSystemAvInfo(&avInfo);
-    impl_->targetFps = (avInfo.timing.fps >= 40.0 && avInfo.timing.fps <= 75.0) ? avInfo.timing.fps : 60.0;
+    impl_->targetFps = (avInfo.timing.fps >= 40.0 && avInfo.timing.fps <= 75.0)
+        ? avInfo.timing.fps : 60.0;
+    impl_->coreSampleRate = avInfo.timing.sample_rate > 1000.0 ? avInfo.timing.sample_rate : 44100.0;
+    const bool audioReady = impl_->openAudio(impl_->coreSampleRate, config_.audioBufferBursts);
+    if (!audioReady) logPrint(ANDROID_LOG_WARN, "N64 AAudio unavailable; continuing without audio output");
+
     const auto target = std::chrono::duration<double>(1.0 / impl_->targetFps);
     const float targetMs = static_cast<float>(1000.0 / impl_->targetFps);
     targetFrameMs_.store(targetMs, std::memory_order_release);
-    setMessage("N64 BOOT 5/6 • GLideN64 inicializado, aguardando primeiro frame…");
+    setMessage(audioReady
+        ? "N64 BOOT 5/6 • GLideN64 + AAudio prontos, aguardando primeiro frame…"
+        : "N64 BOOT 5/6 • GLideN64 pronto, aguardando primeiro frame…");
 
     auto nextFrame = std::chrono::steady_clock::now();
+    std::uint32_t adaptationCounter = 0;
     while (!stopRequested_.load(std::memory_order_acquire)) {
         if (paused_.load(std::memory_order_acquire)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(8));
@@ -685,21 +947,38 @@ void LibretroHost::run() {
         impl_->core.run();
         const auto afterRun = std::chrono::steady_clock::now();
         recordFrame(std::chrono::duration<float, std::milli>(afterRun - begin).count(), targetMs);
+        if (++adaptationCounter >= 120u) {
+            adaptationCounter = 0;
+            impl_->adaptAudio(config_.audioBufferBursts);
+        }
         nextFrame += std::chrono::duration_cast<std::chrono::steady_clock::duration>(target);
         const auto now = std::chrono::steady_clock::now();
-        if (nextFrame > now) std::this_thread::sleep_until(nextFrame);
-        else if (now - nextFrame > std::chrono::milliseconds(80)) nextFrame = now;
+        if (nextFrame > now) {
+            std::this_thread::sleep_until(nextFrame);
+        } else if (now - nextFrame > std::chrono::milliseconds(80)) {
+            nextFrame = now;
+        }
     }
     setMessage("N64 STOP • encerrando sessão…");
     cleanup();
 }
 
-bool LibretroHost::environmentCallback(unsigned cmd, void* data) { return instance().environment(cmd, data); }
-void LibretroHost::videoCallback(const void* data, unsigned width, unsigned height, std::size_t pitch) { instance().videoRefresh(data, width, height, pitch); }
-void LibretroHost::audioSampleCallback(std::int16_t, std::int16_t) {}
-std::size_t LibretroHost::audioBatchCallback(const std::int16_t* data, std::size_t frames) { return instance().audioBatch(data, frames); }
+bool LibretroHost::environmentCallback(unsigned cmd, void* data) {
+    return instance().environment(cmd, data);
+}
+void LibretroHost::videoCallback(const void* data, unsigned width, unsigned height, std::size_t pitch) {
+    instance().videoRefresh(data, width, height, pitch);
+}
+void LibretroHost::audioSampleCallback(std::int16_t left, std::int16_t right) {
+    instance().audioSample(left, right);
+}
+std::size_t LibretroHost::audioBatchCallback(const std::int16_t* data, std::size_t frames) {
+    return instance().audioBatch(data, frames);
+}
 void LibretroHost::inputPollCallback() {}
-std::int16_t LibretroHost::inputStateCallback(unsigned port, unsigned device, unsigned index, unsigned id) { return instance().inputState(port, device, index, id); }
+std::int16_t LibretroHost::inputStateCallback(unsigned port, unsigned device, unsigned index, unsigned id) {
+    return instance().inputState(port, device, index, id);
+}
 bool LibretroHost::clearThreadWaitsCallback(unsigned, void*) { return true; }
 std::uintptr_t LibretroHost::currentFramebufferCallback() {
     const auto& host = instance();
