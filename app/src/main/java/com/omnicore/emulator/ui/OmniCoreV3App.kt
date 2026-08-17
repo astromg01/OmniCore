@@ -70,6 +70,7 @@ import com.omnicore.emulator.storage.GameLibraryStore
 import com.omnicore.emulator.storage.Ps1Files
 import com.omnicore.emulator.storage.SafGameSource
 import com.omnicore.emulator.update.UpdateManager
+import com.omnicore.emulator.ui.n64.N64SettingsDialog
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -304,7 +305,7 @@ fun OmniCoreV3App() {
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            "Para PS1 em CUE/BIN, escolha a pasta inteira. O OmniCore valida as faixas e mantém o conjunto unido.",
+                            "PS1 CUE/BIN: escolha a pasta inteira. Nintendo 64: use Selecionar arquivos para .z64, .n64 ou .v64.",
                             color = HubSoft
                         )
                         Button(
@@ -521,6 +522,8 @@ private fun EngineHero(ps1Ready: Boolean?) {
 
 @Composable
 private fun HubCores() {
+    var showN64Settings by remember { mutableStateOf(false) }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -528,13 +531,14 @@ private fun HubCores() {
     ) {
         item {
             Text("Cores", fontWeight = FontWeight.Black, style = MaterialTheme.typography.headlineMedium)
-            Text("Arquitetura multi-core isolada: cada console ganha seu próprio backend e perfil de otimização.", color = HubSoft)
+            Text("Cada console usa backend, armazenamento, perfil de performance e configuração próprios.", color = HubSoft)
         }
         items(CoreRegistry.all()) { info ->
-            val ready = remember(info.id) { CoreRegistry.forSystem(info.system)?.isAvailable() == true }
+            val ready = CoreRegistry.forSystem(info.system)?.isAvailable() == true
             val status = when {
                 info.state == CoreState.READY && ready -> "Pronto"
                 info.state == CoreState.READY -> "Core ausente"
+                info.state == CoreState.EXPERIMENTAL && ready -> "Core integrado"
                 info.state == CoreState.EXPERIMENTAL -> "Experimental"
                 else -> "Planejado"
             }
@@ -543,12 +547,26 @@ private fun HubCores() {
                     Column(Modifier.weight(1f)) {
                         Text(info.name, fontWeight = FontWeight.Bold)
                         Text(info.system.displayName, color = HubSoft, style = MaterialTheme.typography.bodySmall)
-                        if (info.state == CoreState.READY) Text(info.version, color = Color(0xFF737C98), style = MaterialTheme.typography.labelSmall)
+                        if (info.state != CoreState.PLANNED) {
+                            Text(info.version, color = Color(0xFF737C98), style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                     AssistChip(onClick = {}, label = { Text(status) })
                 }
+                if (info.system == ConsoleSystem.NINTENDO_64) {
+                    Text(
+                        "Núcleo e runtime independentes do PS1. O primeiro alvo é GLES3 + GLideN64 com perfil conservador.",
+                        color = HubSoft,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Button(onClick = { showN64Settings = true }) { Text("Configurar N64") }
+                }
             }
         }
+    }
+
+    if (showN64Settings) {
+        N64SettingsDialog(onDismiss = { showN64Settings = false })
     }
 }
 
@@ -608,8 +626,8 @@ private fun HubTuning(biosCount: Int, gameCount: Int, onImportBios: () -> Unit) 
         verticalArrangement = Arrangement.spacedBy(13.dp)
     ) {
         item {
-            Text("Tuning Center", fontWeight = FontWeight.Black, style = MaterialTheme.typography.headlineMedium)
-            Text("Opções reais do core PS1, além do SmartPerf do frontend.", color = HubSoft)
+            Text("PlayStation Tuning", fontWeight = FontWeight.Black, style = MaterialTheme.typography.headlineMedium)
+            Text("Configurações exclusivas do backend PS1. Nintendo 64 é configurado separadamente em Cores.", color = HubSoft)
         }
         item {
             HubSection("Presets PS1", config.preset.subtitle) {
