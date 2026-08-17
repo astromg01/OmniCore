@@ -27,15 +27,23 @@ jobs:
           git fetch --no-tags origin agent/0.10.0-n64-foundation
           git checkout -B agent/0.10.0-n64-foundation origin/agent/0.10.0-n64-foundation
 
-      - name: Validate N64 architecture
+      - name: Validate N64 first-frame architecture
         shell: bash
         run: |
           set -euo pipefail
           grep -q 'versionName = "0.10.0"' app/build.gradle.kts
           grep -q 'ConsoleSystem.NINTENDO_64 -> N64Core()' app/src/main/java/com/omnicore/emulator/core/CoreRegistry.kt
           grep -q 'omnicore_n64_runtime' app/src/main/cpp/CMakeLists.txt
-          grep -q 'N64RomPreparer' app/src/main/java/com/omnicore/emulator/core/n64/N64Core.kt
-          grep -q 'N64SmartPerf.initial' app/src/main/java/com/omnicore/emulator/core/n64/N64Core.kt
+          grep -q 'n64_libretro_host.cpp' app/src/main/cpp/CMakeLists.txt
+          grep -q 'N64EmulationActivity.intent' app/src/main/java/com/omnicore/emulator/core/n64/N64Core.kt
+          grep -q 'N64RomPreparer.prepare' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
+          grep -q 'N64SmartPerf.initial' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
+          grep -q 'N64SmartPerf.adapt' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
+          grep -q 'N64NativeBridge.start' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
+          grep -q 'N64 RUN OK' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'RETRO_ENVIRONMENT_SET_HW_RENDER' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'glBlitFramebuffer' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'android:name=".emulation.N64EmulationActivity"' app/src/main/AndroidManifest.xml
           grep -q 'object N64SmartPerf' app/src/main/java/com/omnicore/emulator/performance/N64SmartPerf.kt
           grep -q 'N64InputSettings' app/src/main/java/com/omnicore/emulator/settings/N64InputSettings.kt
           grep -q 'Configurar N64' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
@@ -80,7 +88,7 @@ jobs:
             test -f "app/src/main/jniLibs/$ABI/libmupen64plus_next_libretro.so"
           done
 
-      - name: Build 0.10.0 foundation APK
+      - name: Build 0.10.0 first-frame APK
         shell: bash
         run: |
           set -euo pipefail
@@ -98,7 +106,7 @@ jobs:
           git config user.name "Mauricio.dev"
           git config user.email "antoniomauriciorodriguesalves@gmail.com"
           git add .ci
-          git commit -m "Record N64 foundation validation success [skip ci]" || true
+          git commit -m "Record N64 first-frame validation success [skip ci]" || true
           git push origin HEAD:agent/0.10.0-n64-foundation || true
 
       - name: Record validation failure
@@ -115,5 +123,5 @@ jobs:
           git config user.name "Mauricio.dev"
           git config user.email "antoniomauriciorodriguesalves@gmail.com"
           git add .ci
-          git commit -m "Record N64 foundation validation failure [skip ci]" || true
+          git commit -m "Record N64 first-frame validation failure [skip ci]" || true
           git push origin HEAD:agent/0.10.0-n64-foundation || true
