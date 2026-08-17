@@ -50,7 +50,7 @@ constexpr unsigned RETRO_ENVIRONMENT_GET_CLEAR_ALL_THREAD_WAITS_CB =
 constexpr unsigned RETRO_ENVIRONMENT_POLL_TYPE_OVERRIDE =
     4u | RETRO_ENVIRONMENT_RETROARCH_START_BLOCK;
 
-constexpr const void* RETRO_HW_FRAME_BUFFER_VALID =
+inline const void* const RETRO_HW_FRAME_BUFFER_VALID =
     reinterpret_cast<const void*>(static_cast<std::intptr_t>(-1));
 
 }  // namespace omnicore::n64::abi
