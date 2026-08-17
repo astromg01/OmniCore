@@ -1,0 +1,84 @@
+name: OmniCore 0.10 N64 Foundation Validation
+
+on:
+  push:
+    branches:
+      - agent/0.10.0-n64-foundation
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omnicore-010-n64-foundation
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone N64 foundation branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin agent/0.10.0-n64-foundation
+          git checkout -B agent/0.10.0-n64-foundation origin/agent/0.10.0-n64-foundation
+
+      - name: Validate isolated architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f app/src/main/java/com/omnicore/emulator/core/n64/N64Core.kt
+          test -f app/src/main/java/com/omnicore/emulator/settings/N64Settings.kt
+          test -f app/src/main/java/com/omnicore/emulator/storage/N64Storage.kt
+          test -f app/src/main/cpp/n64/n64_native_bridge.cpp
+          grep -q 'omnicore_n64_runtime' app/src/main/cpp/CMakeLists.txt
+          grep -q 'ConsoleSystem.NINTENDO_64 -> N64Core()' app/src/main/java/com/omnicore/emulator/core/CoreRegistry.kt
+          grep -q 'mupen64plus_next_libretro' tools/fetch_n64_core.sh
+
+      - name: Verify Android toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
+          java -version
+          gradle --version
+          test -x "$ANDROID_NDK_HOME/ndk-build"
+          test -x "$ANDROID_SDK_ROOT/cmake/3.31.5/bin/cmake"
+
+      - name: Build PS1 core without touching N64 namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x tools/fetch_ps1_core.sh tools/build_ps1_core_android.sh
+          ./tools/fetch_ps1_core.sh
+          ./tools/build_ps1_core_android.sh
+
+      - name: Build pinned Mupen64Plus-Next core
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x tools/fetch_n64_core.sh tools/build_n64_core_android.sh
+          ./tools/fetch_n64_core.sh
+          ./tools/build_n64_core_android.sh
+
+      - name: Verify both console cores coexist
+        shell: bash
+        run: |
+          set -euo pipefail
+          for ABI in arm64-v8a armeabi-v7a; do
+            test -f "app/src/main/jniLibs/$ABI/libpcsx_rearmed_libretro.so"
+            test -f "app/src/main/jniLibs/$ABI/libmupen64plus_next_libretro.so"
+          done
+
+      - name: Compile OmniCore N64 foundation APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:assembleDebug --stacktrace --no-daemon
