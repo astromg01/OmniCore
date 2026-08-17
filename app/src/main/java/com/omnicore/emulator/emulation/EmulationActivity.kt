@@ -122,7 +122,11 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         setContentView(root)
 
         surfaceView = SurfaceView(this).apply {
-            setBackgroundColor(Color.BLACK)
+            // SurfaceView must remain a no-draw view. Giving it an opaque View
+            // background clears PFLAG_SKIP_DRAW and can paint over the hole that
+            // exposes the separate EGL surface. Letterboxing/background belongs
+            // to the parent FrameLayout instead.
+            setWillNotDraw(true)
             holder.addCallback(this@EmulationActivity)
         }
         root.addView(surfaceView, FrameLayout.LayoutParams(
