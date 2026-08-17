@@ -1,0 +1,31 @@
+package com.omnicore.emulator.storage
+
+import android.content.Context
+import java.io.File
+
+/** Files owned only by the Nintendo 64 backend. */
+object N64Storage {
+    data class Paths(
+        val root: File,
+        val saves: File,
+        val states: File,
+        val system: File,
+        val cache: File
+    )
+
+    fun prepare(context: Context): Paths {
+        val root = File(context.filesDir, "n64")
+        val saves = File(root, "saves")
+        val states = File(root, "states")
+        val system = File(root, "system")
+        val cache = File(context.cacheDir, "n64")
+        listOf(root, saves, states, system, cache).forEach { directory ->
+            check(directory.exists() || directory.mkdirs()) { "Não foi possível preparar ${directory.absolutePath}" }
+        }
+        return Paths(root, saves, states, system, cache)
+    }
+
+    fun safeGameKey(value: String): String = buildString(value.length) {
+        value.forEach { char -> append(if (char.isLetterOrDigit() || char == '-' || char == '_') char else '_') }
+    }.ifBlank { "n64-game" }
+}
