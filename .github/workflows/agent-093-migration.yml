@@ -28,6 +28,10 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/agent_093_migrate.py
+          # GitHub Actions tokens may not edit workflow files. Restore them here;
+          # the app/core implementation is committed by this job, while workflow
+          # publication metadata is updated separately through the repo connector.
+          git checkout HEAD -- .github/workflows/android.yml .github/workflows/agent-093-migration.yml
 
       - name: Validate generated sources
         shell: bash
@@ -40,7 +44,7 @@ jobs:
           grep -q 'nativeSetCheat' app/src/main/java/com/omnicore/emulator/core/nativebridge/NativeBridge.kt
           grep -q 'retro_cheat_set' app/src/main/cpp/libretro_host_v7.cpp
           test ! -f tools/agent_093_migrate.py
-          test ! -f .github/workflows/agent-093-migration.yml
+          test -f .github/workflows/agent-093-migration.yml
 
       - name: Commit generated implementation
         shell: bash
