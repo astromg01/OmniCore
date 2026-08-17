@@ -38,7 +38,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeHasCore(JNIEnv*, jobje
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeRuntimeInfo(JNIEnv* env, jobject) {
-    const std::string value = std::string("OmniCore N64 Runtime 0.10.0 • Mupen64Plus-Next • GLES3 host v1 • ") +
+    const std::string value = std::string("OmniCore N64 Runtime 0.10.0 • Mupen64Plus-Next • GLES3 + AAudio host v2 • ") +
         (hasLibretroCore() ? "core ready" : "core missing");
     return env->NewStringUTF(value.c_str());
 }
@@ -58,7 +58,8 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     jboolean threadedRenderer,
     jint internalResolution,
     jint analogDeadzonePercent,
-    jint analogSensitivityPercent) {
+    jint analogSensitivityPercent,
+    jint audioBufferBursts) {
     if (!surface) return JNI_FALSE;
     ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
     if (!window) return JNI_FALSE;
@@ -75,6 +76,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     config.internalResolution = internalResolution;
     config.analogDeadzonePercent = analogDeadzonePercent;
     config.analogSensitivityPercent = analogSensitivityPercent;
+    config.audioBufferBursts = audioBufferBursts;
 
     const bool valid = !config.romPath.empty() && !config.systemDir.empty() && !config.saveDir.empty();
     const bool started = valid && omnicore::n64::LibretroHost::instance().start(window, std::move(config));
