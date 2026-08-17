@@ -1,6 +1,7 @@
 package com.omnicore.emulator.core
 
 import android.content.Context
+import com.omnicore.emulator.core.n64.N64Core
 import com.omnicore.emulator.core.ps1.Ps1Core
 import com.omnicore.emulator.model.ConsoleSystem
 import com.omnicore.emulator.model.GameEntry
@@ -16,10 +17,10 @@ private class PlannedCore(
 
 object CoreRegistry {
     private val cores: List<EmulatorCore> = ConsoleSystem.entries.map { system ->
-        if (system == ConsoleSystem.PLAYSTATION_1) {
-            Ps1Core()
-        } else {
-            PlannedCore(
+        when (system) {
+            ConsoleSystem.PLAYSTATION_1 -> Ps1Core()
+            ConsoleSystem.NINTENDO_64 -> N64Core()
+            else -> PlannedCore(
                 CoreInfo(
                     id = "${system.shortName.lowercase()}-core",
                     name = "${system.displayName} Core",
