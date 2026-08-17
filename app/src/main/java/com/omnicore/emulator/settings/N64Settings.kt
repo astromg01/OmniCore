@@ -66,7 +66,8 @@ object N64Settings {
         if (preset != Preset.CUSTOM) return presetConfig(preset, N64PerformanceProfile.detect(context))
 
         val storage = prefs(context)
-        val fallback = presetConfig(Preset.AUTO, N64PerformanceProfile.detect(context))
+        val device = N64PerformanceProfile.detect(context)
+        val fallback = presetConfig(Preset.AUTO, device)
         return Config(
             preset = Preset.CUSTOM,
             cpuMode = CpuMode.entries.firstOrNull { it.storage == storage.getString(KEY_CPU, fallback.cpuMode.storage) } ?: fallback.cpuMode,
@@ -79,7 +80,7 @@ object N64Settings {
                 it.storage == storage.getString(KEY_EXPANSION, fallback.expansionPak.storage)
             } ?: fallback.expansionPak,
             threadedRenderer = storage.getBoolean(KEY_THREADED_RENDERER, fallback.threadedRenderer)
-        ).sanitized(N64PerformanceProfile.detect(context))
+        ).sanitized(device)
     }
 
     fun saveCustom(context: Context, config: Config) {
@@ -135,12 +136,18 @@ object N64Settings {
     }.sanitized(device)
 
     private fun Config.sanitized(device: N64PerformanceProfile.Profile): Config {
-        // N64 corrections are intentionally local to this backend.
-        // Constrained hardware never receives 2x as an automatic/saved unsafe default.
-        val safeResolution = if (device.tier == N64PerformanceProfile.Tier.LOW && internalResolution == InternalResolution.X2) {
+        // Corrections remain local to the N64 backend. The current Android
+        // Mupen build intentionally excludes LLE RSP, so custom LLE requests
+        // are converted to HLE instead of producing a misleading/broken boot.
+        val safeRsp = if (rspMode == RspMode.LLE) RspMode.HLE else rspMode
+        val safeResolution = if (
+            device.tier == N64PerformanceProfile.Tier.LOW && internalResolution == InternalResolution.X2
+        ) {
             InternalResolution.NATIVE
-        } else internalResolution
-        return copy(internalResolution = safeResolution)
+        } else {
+            internalResolution
+        }
+        return copy(rspMode = safeRsp, internalResolution = safeResolution)
     }
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
