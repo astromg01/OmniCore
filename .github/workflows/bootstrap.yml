@@ -1,4 +1,4 @@
-name: Bootstrap OmniCore v0.2.0
+name: Android Build
 
 on:
   workflow_dispatch:
@@ -9,10 +9,10 @@ permissions:
   contents: write
 
 jobs:
-  bootstrap-and-build:
+  build:
     runs-on: ubuntu-24.04
     steps:
-      - name: Clone repository without external actions
+      - name: Clone repository
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -23,38 +23,7 @@ jobs:
           git fetch --no-tags origin main
           git checkout -B main origin/main
 
-      - name: Reconstruct OmniCore source
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat .bootstrap/part* > source.b64
-          base64 -d source.b64 > source.zip
-          rm source.b64
-          mkdir extracted
-          unzip -q source.zip -d extracted
-          test -f extracted/OmniCore/settings.gradle.kts
-          cp -a extracted/OmniCore/. .
-          rm -rf extracted source.zip .bootstrap
-
-          # Use the CMake already installed on the GitHub Ubuntu runner.
-          sed -i 's/version = "3.22.1"/version = "3.31.5"/' app/build.gradle.kts
-          sed -i 's/CMake 3.22.1/CMake 3.31.5/' README.md
-
-          # GITHUB_TOKEN cannot create/update workflow files. The final
-          # android.yml is installed separately after this bootstrap succeeds.
-          rm -f .github/workflows/android.yml
-
-      - name: Commit source tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Import OmniCore v0.2.0 source"
-          git push origin HEAD:main
-
-      - name: Verify preinstalled Android toolchain
+      - name: Verify Android toolchain
         shell: bash
         run: |
           set -euo pipefail
