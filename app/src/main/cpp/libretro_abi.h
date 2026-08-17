@@ -34,9 +34,7 @@ enum retro_log_level {
 
 using retro_log_printf_t = void (*)(enum retro_log_level level, const char* fmt, ...);
 
-struct retro_log_callback {
-    retro_log_printf_t log;
-};
+struct retro_log_callback { retro_log_printf_t log; };
 
 struct retro_game_info {
     const char* path;
@@ -61,29 +59,12 @@ struct retro_game_geometry {
     float aspect_ratio;
 };
 
-struct retro_system_timing {
-    double fps;
-    double sample_rate;
-};
+struct retro_system_timing { double fps; double sample_rate; };
+struct retro_system_av_info { retro_game_geometry geometry; retro_system_timing timing; };
+struct retro_variable { const char* key; const char* value; };
+struct retro_message { const char* msg; unsigned frames; };
 
-struct retro_system_av_info {
-    retro_game_geometry geometry;
-    retro_system_timing timing;
-};
-
-struct retro_variable {
-    const char* key;
-    const char* value;
-};
-
-struct retro_message {
-    const char* msg;
-    unsigned frames;
-};
-
-// Stable environment command IDs from libretro API v1.
 constexpr unsigned RETRO_ENVIRONMENT_EXPERIMENTAL = 0x10000u;
-
 constexpr unsigned RETRO_ENVIRONMENT_GET_CAN_DUPE = 3;
 constexpr unsigned RETRO_ENVIRONMENT_SET_MESSAGE = 6;
 constexpr unsigned RETRO_ENVIRONMENT_SHUTDOWN = 7;
@@ -125,6 +106,14 @@ constexpr unsigned RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL = 68;
 constexpr unsigned RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK = 69;
 
 constexpr unsigned RETRO_DEVICE_JOYPAD = 1;
+constexpr unsigned RETRO_DEVICE_ANALOG = 5;
+constexpr unsigned RETRO_DEVICE_INDEX_ANALOG_LEFT = 0;
+constexpr unsigned RETRO_DEVICE_INDEX_ANALOG_RIGHT = 1;
+constexpr unsigned RETRO_DEVICE_ID_ANALOG_X = 0;
+constexpr unsigned RETRO_DEVICE_ID_ANALOG_Y = 1;
+constexpr unsigned RETRO_DEVICE_TYPE_SHIFT = 8;
+constexpr unsigned RETRO_DEVICE_PSE_DUALSHOCK = ((1u + 1u) << RETRO_DEVICE_TYPE_SHIFT) | RETRO_DEVICE_ANALOG;
+
 constexpr unsigned RETRO_DEVICE_ID_JOYPAD_B = 0;
 constexpr unsigned RETRO_DEVICE_ID_JOYPAD_Y = 1;
 constexpr unsigned RETRO_DEVICE_ID_JOYPAD_SELECT = 2;
