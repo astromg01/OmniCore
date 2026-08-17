@@ -27,11 +27,11 @@ jobs:
           git fetch --no-tags origin main
           git checkout -B main origin/main
 
-      - name: Validate 0.7 video foundation
+      - name: Validate 0.8 compatibility foundation
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'versionName = "0.7.0"' app/build.gradle.kts
+          grep -q 'versionName = "0.8.0"' app/build.gradle.kts
           grep -q 'libretro_host_v7.cpp' app/src/main/cpp/CMakeLists.txt
           grep -q 'gl_presenter.cpp' app/src/main/cpp/CMakeLists.txt
           grep -q 'GLESv2' app/src/main/cpp/CMakeLists.txt
@@ -41,8 +41,11 @@ jobs:
           test -f app/src/main/java/com/omnicore/emulator/update/UpdateInstallReceiver.kt
           grep -q 'EGL-GLES presenter' app/src/main/cpp/native_bridge.cpp
           grep -q 'setWillNotDraw(true)' app/src/main/java/com/omnicore/emulator/emulation/EmulationActivity.kt
-          ! grep -q 'surfaceView = SurfaceView(this).*setBackgroundColor' app/src/main/java/com/omnicore/emulator/emulation/EmulationActivity.kt || true
           grep -q 'pcsx_rearmed_rgb32_output=enabled' app/src/main/java/com/omnicore/emulator/settings/Ps1Settings.kt
+          grep -q 'pcsx_rearmed_show_bios_bootlogo' app/src/main/java/com/omnicore/emulator/settings/Ps1Settings.kt
+          grep -q 'ps1-disc-cache' app/src/main/java/com/omnicore/emulator/emulation/EmulationActivity.kt
+          grep -q 'AspectMode.WIDE_16_9' app/src/main/java/com/omnicore/emulator/emulation/EmulationActivity.kt
+          grep -q 'lastModifiedMillis' app/src/main/java/com/omnicore/emulator/storage/SafGameSource.kt
           ! grep -q 'libretro_host_v6.cpp' app/src/main/cpp/CMakeLists.txt
 
       - name: Verify Android toolchain
@@ -144,15 +147,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v0.7.0-dev"
-          TITLE="OmniCore v0.7.0 Video Composition Fix"
-          NOTES="PS1 video composition revision based on real-device testing where emulation and audio were healthy but the display remained black. The emulation SurfaceView is now kept explicitly in its no-draw state instead of assigning it an opaque Android View background, preserving the SurfaceView hole/composition path for the independent EGL surface. The parent container owns letterboxing/background instead. PCSX-ReARMed is also forced to its documented XRGB8888 output path, which the existing GLES presenter converts explicitly to RGBA, removing RGB565/native-surface ambiguity during compatibility validation. Runtime v7 decoupled audio/video, EGL/GLES presenter, CUE/BIN handling, BIOS support, saves, touch input, SmartPerf and the in-app updater remain intact. This build uses the same stable DEV signing certificate as v0.6.0, so it can update in place. ROMs, BIOS, firmware and console keys are not included."
+          TAG="v0.8.0-dev"
+          TITLE="OmniCore v0.8.0 Compatibility & UX"
+          NOTES="Stability-first PS1 revision built on the working v0.7 EGL/GLES pipeline. CUE/BIN sessions now use a validated persistent cache keyed by source fingerprint so unchanged multi-track games do not need to copy their BIN tracks on every launch; the first preparation remains compatibility-safe and later launches can reuse it. The copy buffer is increased for faster first-time staging and users can clear the PS1 disc cache from Tuning. A configurable classic PlayStation BIOS boot/logo option is enabled by default for users with a valid real BIOS and can be disabled for maximum compatibility. Presentation modes now include original 4:3, 16:9 expansion and fullscreen; 16:9 is a frontend presentation mode, not a per-game geometry patch. Runtime v7, XRGB8888, no-draw SurfaceView composition, AAudio, saves, touch input, SmartPerf, CUE validation and the in-app updater remain intact. Uses the same stable DEV signing certificate as v0.6+ so this release can update in place. ROMs, BIOS, firmware and console keys are not included."
           APK="app/build/outputs/apk/debug/app-debug.apk"
           SOURCE="build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz"
           TARGET="$(git rev-parse HEAD)"
 
-          cp "$APK" build/OmniCore-v0.7.0-debug.apk
-          sha256sum build/OmniCore-v0.7.0-debug.apk > build/OmniCore-v0.7.0-debug.sha256
+          cp "$APK" build/OmniCore-v0.8.0-debug.apk
+          sha256sum build/OmniCore-v0.8.0-debug.apk > build/OmniCore-v0.8.0-debug.sha256
 
           backoff_sleep() {
             local attempt="$1"
@@ -182,8 +185,8 @@ jobs:
             local attempt
             for attempt in 1 2 3 4 5 6 7; do
               if gh release upload "$TAG" \
-                build/OmniCore-v0.7.0-debug.apk \
-                build/OmniCore-v0.7.0-debug.sha256 \
+                build/OmniCore-v0.8.0-debug.apk \
+                build/OmniCore-v0.8.0-debug.sha256 \
                 "$SOURCE" --clobber; then return 0; fi
               if (( attempt < 7 )); then backoff_sleep "$attempt"; fi
             done
