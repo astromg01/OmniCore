@@ -1,47 +1,14 @@
-name: OmniCore v0.8 Migration
+name: OmniCore v0.8 Migration (retired)
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "tools/apply_v08.py"
-      - "tools/v08-trigger.txt"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  migrate:
+  retired:
     runs-on: ubuntu-24.04
     steps:
-      - name: Clone repository
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          git init .
-          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git fetch --no-tags origin main
-          git checkout -B main origin/main
-
-      - name: Apply v0.8 migration
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/apply_v08.py
-          grep -q 'versionName = "0.8.0"' app/build.gradle.kts
-          grep -q 'pcsx_rearmed_show_bios_bootlogo' app/src/main/java/com/omnicore/emulator/settings/Ps1Settings.kt
-          grep -q 'ps1-disc-cache' app/src/main/java/com/omnicore/emulator/emulation/EmulationActivity.kt
-          grep -q 'AspectMode.WIDE_16_9' app/src/main/java/com/omnicore/emulator/emulation/EmulationActivity.kt
-
-      - name: Commit migration
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app
-          git diff --cached --check
-          git commit -m "Build OmniCore 0.8 compatibility and UX revision"
-          git push origin main
+      - name: Retired
+        run: echo "Migration completed; the production source now lives directly on main."
