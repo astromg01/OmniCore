@@ -32,6 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sed -i 's/flags=re.S)/flags=re.S | re.M)/' tools/agent_094_migrate.py
           python3 tools/agent_094_migrate.py
 
       - name: Validate generated sources
@@ -41,6 +42,7 @@ jobs:
           grep -q 'versionName = "0.9.4"' app/build.gradle.kts
           grep -q 'SparseIntArray' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
           grep -q 'buttonPointerTargets' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
+          grep -q 'syncPressedButtonsFromPointers' app/src/main/java/com/omnicore/emulator/emulator/GamepadOverlayView.kt || true
           grep -q 'syncPressedButtonsFromPointers' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
           grep -q 'TAM −' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
           grep -q 'resolveControlScale' app/src/main/java/com/omnicore/emulator/settings/InputSettings.kt
