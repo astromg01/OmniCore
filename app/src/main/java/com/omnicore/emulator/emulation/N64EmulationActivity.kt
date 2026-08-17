@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
-import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -236,17 +235,12 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         return GameEntry(
             id = id,
             title = title.ifBlank { fileName.substringBeforeLast('.') },
-            system = ConsoleSystem.NINTENDO_64,
-            uri = uri,
-            folderUri = null,
             fileName = fileName,
-            displayPath = fileName,
-            extension = extension,
+            uri = uri,
+            system = ConsoleSystem.NINTENDO_64,
             sizeBytes = intent.getLongExtra(EXTRA_SIZE_BYTES, 0L),
-            modifiedAt = 0L,
-            companionUris = emptyList(),
-            launchable = true,
-            warning = null
+            folderUri = null,
+            companionUris = emptyList()
         )
     }
 
