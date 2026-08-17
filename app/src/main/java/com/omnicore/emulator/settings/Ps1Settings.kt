@@ -91,9 +91,9 @@ object Ps1Settings {
 
     private fun presetConfig(preset: Preset, dualShock: Boolean): Config = when (preset) {
         Preset.PERFORMANCE -> Config(preset, false, false, false, false, true, true, true, 32, "simple", dualShock)
-        Preset.BALANCED -> Config(preset, false, false, true, true, true, false, false, 16, "gaussian", dualShock)
-        Preset.QUALITY -> Config(preset, true, false, true, true, true, false, false, 16, "gaussian", dualShock)
-        else -> Config(Preset.SMART, false, false, true, true, true, false, false, 16, "simple", dualShock)
+        Preset.BALANCED -> Config(preset, false, false, true, true, false, false, false, 8, "simple", dualShock)
+        Preset.QUALITY -> Config(preset, true, false, true, true, false, false, false, 8, "gaussian", dualShock)
+        else -> Config(Preset.SMART, false, false, false, true, false, false, false, 8, "simple", dualShock)
     }
 
     fun resolve(context: Context): Config {

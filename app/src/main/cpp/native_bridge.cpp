@@ -23,7 +23,7 @@ std::string toString(JNIEnv* env, jstring value) {
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_omnicore_emulator_core_nativebridge_NativeBridge_nativeRuntimeVersion(
         JNIEnv* env, jobject /* thiz */) {
-    return env->NewStringUTF("OmniCore Native Runtime 0.3.0 / libretro host v4 / SmartPerf 3");
+    return env->NewStringUTF("OmniCore Native Runtime 0.5.0 / libretro host v6 / decoupled A/V");
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
