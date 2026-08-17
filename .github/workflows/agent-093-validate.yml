@@ -1,0 +1,72 @@
+name: OmniCore 0.9.3 Validation
+
+on:
+  push:
+    branches:
+      - agent/0.9.3-clean-overlay-cheats
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omnicore-093-validation
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone validation branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin agent/0.9.3-clean-overlay-cheats
+          git checkout -B agent/0.9.3-clean-overlay-cheats origin/agent/0.9.3-clean-overlay-cheats
+
+      - name: Validate 0.9.3 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'versionName = "0.9.3"' app/build.gradle.kts
+          grep -q 'OmniCore Native Runtime 0.9.3' app/src/main/cpp/native_bridge.cpp
+          grep -q 'CheatStore' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
+          grep -q 'nativeSetCheat' app/src/main/java/com/omnicore/emulator/core/nativebridge/NativeBridge.kt
+          grep -q 'retro_cheat_set' app/src/main/cpp/libretro_host_v7.cpp
+          grep -q 'OverlayPreset.TABLET' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
+
+      - name: Verify Android toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
+          java -version
+          gradle --version
+          test -d "$ANDROID_SDK_ROOT/platforms/android-36"
+          test -x "$ANDROID_NDK_HOME/ndk-build"
+          test -x "$ANDROID_SDK_ROOT/cmake/3.31.5/bin/cmake"
+
+      - name: Fetch pinned PCSX-ReARMed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x tools/fetch_ps1_core.sh tools/build_ps1_core_android.sh
+          ./tools/fetch_ps1_core.sh
+
+      - name: Build pinned PS1 core
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./tools/build_ps1_core_android.sh
+
+      - name: Compile OmniCore 0.9.3 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:assembleDebug --stacktrace --no-daemon
