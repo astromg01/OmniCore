@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(omnicore_runtime LANGUAGES CXX)
 
+# PlayStation runtime. Keep PS1 sources and lifecycle isolated from other consoles.
 add_library(
     omnicore_runtime
     SHARED
@@ -48,4 +49,36 @@ target_link_libraries(
     ${dl-lib}
     ${egl-lib}
     ${glesv2-lib}
+)
+
+# Nintendo 64 runtime. This is a separate shared object on purpose: no PS1 host
+# state, callbacks or console-specific settings are linked into the N64 backend.
+add_library(
+    omnicore_n64_runtime
+    SHARED
+    n64/n64_native_bridge.cpp
+)
+
+target_compile_features(omnicore_n64_runtime PRIVATE cxx_std_20)
+target_compile_options(
+    omnicore_n64_runtime
+    PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -O2
+    -ffunction-sections
+    -fdata-sections
+    -fvisibility=hidden
+)
+target_link_options(
+    omnicore_n64_runtime
+    PRIVATE
+    -Wl,--gc-sections
+    -Wl,-z,max-page-size=16384
+)
+target_link_libraries(
+    omnicore_n64_runtime
+    ${log-lib}
+    ${dl-lib}
 )
