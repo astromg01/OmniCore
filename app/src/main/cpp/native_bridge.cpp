@@ -23,7 +23,7 @@ std::string toString(JNIEnv* env, jstring value) {
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_omnicore_emulator_core_nativebridge_NativeBridge_nativeRuntimeVersion(
         JNIEnv* env, jobject /* thiz */) {
-    return env->NewStringUTF("OmniCore Native Runtime 0.9.2 / libretro host v7 / EGL-GLES presenter");
+    return env->NewStringUTF("OmniCore Native Runtime 0.9.3 / libretro host v7 / EGL-GLES presenter");
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -159,6 +159,21 @@ Java_com_omnicore_emulator_core_nativebridge_NativeBridge_nativeLoadState(
         JNIEnv* /* env */, jobject /* thiz */, jint slot) {
     std::lock_guard<std::mutex> lock(gSessionMutex);
     if (gSession) gSession->requestLoadState(slot);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_omnicore_emulator_core_nativebridge_NativeBridge_nativeResetCheats(
+        JNIEnv* /* env */, jobject /* thiz */) {
+    std::lock_guard<std::mutex> lock(gSessionMutex);
+    if (gSession) gSession->requestCheatReset();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_omnicore_emulator_core_nativebridge_NativeBridge_nativeSetCheat(
+        JNIEnv* env, jobject /* thiz */, jint index, jboolean enabled, jstring code) {
+    std::lock_guard<std::mutex> lock(gSessionMutex);
+    if (!gSession || index < 0 || index > 127 || !code) return;
+    gSession->requestCheatSet(static_cast<unsigned>(index), enabled == JNI_TRUE, toString(env, code));
 }
 
 extern "C" JNIEXPORT jstring JNICALL

@@ -750,7 +750,7 @@ private fun HubTuning(biosCount: Int, gameCount: Int, onImportBios: () -> Unit) 
                     refreshInput()
                 }
                 Text(
-                    "Dentro do jogo, use EDITAR CONTROLES para reposicionar botões, ocultar/mostrar as setas ou restaurar o layout. Tamanho e opacidade entram na próxima sessão.",
+                    "No jogo, o botão ⋮ abre o Quick Menu com save/load, status, editor, visual, presets, cheats e saída. Perfis visuais e posições ficam salvos por jogo.",
                     color = Color(0xFF737C98),
                     style = MaterialTheme.typography.labelSmall
                 )
@@ -827,11 +827,13 @@ private fun HubTuning(biosCount: Int, gameCount: Int, onImportBios: () -> Unit) 
                 Text("Biblioteca e BIOS", fontWeight = FontWeight.Bold)
                 Text("$gameCount jogo(s) cadastrados • $biosCount BIOS .bin importada(s)", color = HubSoft, style = MaterialTheme.typography.bodySmall)
 
-                Text("Novidades da linha 0.9.1", fontWeight = FontWeight.Bold)
-                Text("• Editor de overlay dentro do jogo com reposicionamento e restauração do layout.", color = HubSoft, style = MaterialTheme.typography.bodySmall)
-                Text("• Analógico Inteligente com D-pad visual opcional e projeção digital para jogos antigos.", color = HubSoft, style = MaterialTheme.typography.bodySmall)
-                Text("• Touch com seleção do controle mais próximo por dedo e multitouch mais previsível.", color = HubSoft, style = MaterialTheme.typography.bodySmall)
-                Text("• Pré-aquecimento de caches do app e prefetch de save state antes do unserialize.", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Text("Novidades da linha 0.9.3", fontWeight = FontWeight.Bold)
+                Text("• Clean Overlay com Quick Menu compacto e HUD de performance oculto por padrão.", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Text("• Presets Limpo, Compacto, Padrão, Mão esquerda, Mão direita e Tablet com perfil por jogo.", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Text("• Labels, ombros, START/SELECT, D-pad e overlay completo podem ser ocultados por jogo.", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Text("• Gestos de 3 dedos abrem o menu; 4 dedos alternam o modo ultra imersivo.", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Text("• Cheat Manager por jogo integrado ao retro_cheat_set/reset do PCSX-ReARMed.", color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Text("• Pré-aquecimento de caches e prefetch de save state da linha 0.9.1 continuam ativos.", color = HubSoft, style = MaterialTheme.typography.bodySmall)
 
                 Text("Estado do projeto", fontWeight = FontWeight.Bold)
                 Text(

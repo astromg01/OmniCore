@@ -41,6 +41,8 @@ public:
     void setAnalog(unsigned stick, std::int16_t x, std::int16_t y);
     void requestSaveState(int slot);
     void requestLoadState(int slot);
+    void requestCheatReset();
+    void requestCheatSet(unsigned index, bool enabled, std::string code);
     void updatePerformanceConfig(RuntimePerformanceConfig performance);
     std::string status() const;
 

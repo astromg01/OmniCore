@@ -301,6 +301,8 @@ struct CoreApi {
     using unload_game_t = void (*)();
     using get_memory_data_t = void* (*)(unsigned);
     using get_memory_size_t = std::size_t (*)(unsigned);
+    using cheat_reset_t = void (*)();
+    using cheat_set_t = void (*)(unsigned, bool, const char*);
 
     set_environment_t setEnvironment = nullptr;
     set_video_refresh_t setVideoRefresh = nullptr;
@@ -322,6 +324,8 @@ struct CoreApi {
     unload_game_t unloadGame = nullptr;
     get_memory_data_t getMemoryData = nullptr;
     get_memory_size_t getMemorySize = nullptr;
+    cheat_reset_t cheatReset = nullptr;
+    cheat_set_t cheatSet = nullptr;
 };
 
 template <typename T>
@@ -363,6 +367,10 @@ bool loadCore(const std::string& library, CoreApi& api) {
         symbol(api.handle, "retro_unload_game", api.unloadGame) &&
         symbol(api.handle, "retro_get_memory_data", api.getMemoryData) &&
         symbol(api.handle, "retro_get_memory_size", api.getMemorySize);
+    if (ok) {
+        api.cheatReset = reinterpret_cast<CoreApi::cheat_reset_t>(dlsym(api.handle, "retro_cheat_reset"));
+        api.cheatSet = reinterpret_cast<CoreApi::cheat_set_t>(dlsym(api.handle, "retro_cheat_set"));
+    }
     if (!ok) {
         dlclose(api.handle);
         api.handle = nullptr;
@@ -377,6 +385,11 @@ void unloadCore(CoreApi& api) {
 } // namespace
 
 class LibretroSession::Impl {
+    struct CheatCommand {
+        unsigned index = 0;
+        bool enabled = false;
+        std::string code;
+    };
 public:
     Impl(std::string coreLibrary,
          std::string gamePath,
@@ -454,6 +467,17 @@ public:
 
     void requestSaveState(int slot) { saveStateRequest_.store(std::clamp(slot, 0, 9), std::memory_order_release); }
     void requestLoadState(int slot) { loadStateRequest_.store(std::clamp(slot, 0, 9), std::memory_order_release); }
+    void requestCheatReset() {
+        std::lock_guard<std::mutex> lock(cheatMutex_);
+        cheatResetPending_ = true;
+        cheatCommands_.clear();
+    }
+    void requestCheatSet(unsigned index, bool enabled, std::string code) {
+        if (code.empty()) return;
+        if (code.size() > 8192) code.resize(8192);
+        std::lock_guard<std::mutex> lock(cheatMutex_);
+        cheatCommands_.push_back(CheatCommand{std::min(index, 127u), enabled, std::move(code)});
+    }
 
     void updatePerformanceConfig(RuntimePerformanceConfig config) {
         {
@@ -1016,6 +1040,22 @@ private:
         setStatus("SAVE • slot " + std::to_string(slot) + " carregado");
     }
 
+    void applyCheatRequests(CoreApi& api) {
+        bool reset = false;
+        std::vector<CheatCommand> commands;
+        {
+            std::lock_guard<std::mutex> lock(cheatMutex_);
+            reset = cheatResetPending_;
+            cheatResetPending_ = false;
+            commands.swap(cheatCommands_);
+        }
+        if (reset && api.cheatReset) api.cheatReset();
+        if (!api.cheatSet) return;
+        for (const auto& command : commands) {
+            api.cheatSet(command.index, command.enabled, command.code.c_str());
+        }
+    }
+
     void runLoop() {
         active_ = this;
         clearCoreLog();
@@ -1123,6 +1163,7 @@ private:
                 if (loadSlot >= 0) loadState(api, loadSlot);
                 const int saveSlot = saveStateRequest_.exchange(-1, std::memory_order_acq_rel);
                 if (saveSlot >= 0) saveState(api, saveSlot);
+                applyCheatRequests(api);
 
                 if (audioReconfigureRequested_.exchange(false, std::memory_order_acq_rel)) {
                     const auto changed = performanceSnapshot();
@@ -1251,6 +1292,9 @@ private:
     std::atomic<int> rightY_{0};
     std::atomic<int> saveStateRequest_{-1};
     std::atomic<int> loadStateRequest_{-1};
+    std::mutex cheatMutex_;
+    bool cheatResetPending_ = false;
+    std::vector<CheatCommand> cheatCommands_;
     std::atomic<bool> audioReconfigureRequested_{false};
 
     retro_pixel_format pixelFormat_ = RETRO_PIXEL_FORMAT_0RGB1555;
@@ -1325,6 +1369,8 @@ void LibretroSession::setButton(unsigned id, bool pressed) { impl_->setButton(id
 void LibretroSession::setAnalog(unsigned stick, std::int16_t x, std::int16_t y) { impl_->setAnalog(stick, x, y); }
 void LibretroSession::requestSaveState(int slot) { impl_->requestSaveState(slot); }
 void LibretroSession::requestLoadState(int slot) { impl_->requestLoadState(slot); }
+void LibretroSession::requestCheatReset() { impl_->requestCheatReset(); }
+void LibretroSession::requestCheatSet(unsigned index, bool enabled, std::string code) { impl_->requestCheatSet(index, enabled, std::move(code)); }
 void LibretroSession::updatePerformanceConfig(RuntimePerformanceConfig performance) { impl_->updatePerformanceConfig(performance); }
 std::string LibretroSession::status() const { return impl_->status(); }
 

@@ -79,8 +79,7 @@ object NativeBridge {
         if (loaded) runCatching { nativeStop() }
     }
 
-    fun isRunning(): Boolean =
-        loaded && runCatching { nativeIsRunning() }.getOrDefault(false)
+    fun isRunning(): Boolean = loaded && runCatching { nativeIsRunning() }.getOrDefault(false)
 
     fun setButton(id: Int, pressed: Boolean) {
         if (loaded) runCatching { nativeSetButton(id, pressed) }
@@ -111,10 +110,17 @@ object NativeBridge {
         stateLoadExecutor.execute {
             if (generation != stateLoadGeneration.get()) return@execute
             warmStateFile(File(stateDir, "${safeGameKey(gameKey)}.state$safeSlot"))
-            if (generation == stateLoadGeneration.get()) {
-                runCatching { nativeLoadState(safeSlot) }
-            }
+            if (generation == stateLoadGeneration.get()) runCatching { nativeLoadState(safeSlot) }
         }
+    }
+
+    fun resetCheats() {
+        if (loaded) runCatching { nativeResetCheats() }
+    }
+
+    fun setCheat(index: Int, enabled: Boolean, code: String) {
+        if (!loaded || code.isBlank()) return
+        runCatching { nativeSetCheat(index.coerceIn(0, 127), enabled, code.take(8192)) }
     }
 
     private fun warmStateFile(file: File) {
@@ -122,19 +128,13 @@ object NativeBridge {
         runCatching {
             FileInputStream(file).use { input ->
                 val buffer = ByteArray(256 * 1024)
-                while (input.read(buffer) >= 0) {
-                    // Sequentially touching the state on a background thread warms the
-                    // kernel page cache. The native core can then unserialize without
-                    // paying the storage read latency on the emulation thread.
-                }
+                while (input.read(buffer) >= 0) Unit
             }
         }
     }
 
     private fun safeGameKey(value: String): String = buildString(value.length) {
-        value.forEach { char ->
-            append(if (char.isLetterOrDigit() || char == '-' || char == '_') char else '_')
-        }
+        value.forEach { char -> append(if (char.isLetterOrDigit() || char == '-' || char == '_') char else '_') }
     }.ifBlank { "game" }
 
     fun lastMessage(): String =
@@ -186,5 +186,7 @@ object NativeBridge {
     private external fun nativeSetAnalog(stick: Int, x: Int, y: Int)
     private external fun nativeSaveState(slot: Int)
     private external fun nativeLoadState(slot: Int)
+    private external fun nativeResetCheats()
+    private external fun nativeSetCheat(index: Int, enabled: Boolean, code: String)
     private external fun nativeLastMessage(): String
 }

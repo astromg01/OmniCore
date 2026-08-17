@@ -9,12 +9,29 @@ object InputSettings {
         DPAD("dpad", "D-pad", "Stick touch funciona como direcional digital")
     }
 
+    enum class OverlayPreset(val storage: String, val label: String, val subtitle: String) {
+        CLEAN("clean", "Limpo", "Pouca informação na tela e controles discretos"),
+        COMPACT("compact", "Compacto", "Controles menores e próximos das bordas"),
+        STANDARD("standard", "Padrão", "Layout clássico com labels visíveis"),
+        LEFT("left", "Mão esquerda", "Ações aproximadas do lado esquerdo"),
+        RIGHT("right", "Mão direita", "Analógico aproximado do lado direito"),
+        TABLET("tablet", "Tablet", "Controles espalhados para telas maiores")
+    }
+
     data class Config(
         val analogMode: AnalogMode,
         val touchOpacity: Float,
         val touchScale: Float,
         val haptics: Boolean,
-        val showDpad: Boolean
+        val showDpad: Boolean,
+        val overlayPreset: OverlayPreset,
+        val cleanOverlay: Boolean,
+        val dynamicOpacity: Boolean,
+        val showLabels: Boolean,
+        val showShoulders: Boolean,
+        val showStartSelect: Boolean,
+        val showPerformanceHud: Boolean,
+        val controlsVisible: Boolean
     )
 
     data class ControlPosition(val x: Float, val y: Float)
@@ -25,74 +42,158 @@ object InputSettings {
     private const val KEY_TOUCH_SCALE = "touch_scale"
     private const val KEY_HAPTICS = "haptics"
     private const val KEY_SHOW_DPAD = "show_dpad"
+    private const val KEY_OVERLAY_PRESET = "overlay_preset"
+    private const val KEY_CLEAN_OVERLAY = "clean_overlay"
+    private const val KEY_DYNAMIC_OPACITY = "dynamic_opacity"
+    private const val KEY_SHOW_LABELS = "show_labels"
+    private const val KEY_SHOW_SHOULDERS = "show_shoulders"
+    private const val KEY_SHOW_START_SELECT = "show_start_select"
+    private const val KEY_SHOW_PERFORMANCE_HUD = "show_performance_hud"
+    private const val KEY_CONTROLS_VISIBLE = "controls_visible"
     private const val POSITION_PREFIX = "control_position_"
+    private const val GAME_PREFIX = "game_"
 
     fun resolve(context: Context): Config {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val modeRaw = prefs.getString(KEY_ANALOG_MODE, AnalogMode.SMART.storage)
         val analogMode = AnalogMode.entries.firstOrNull { it.storage == modeRaw } ?: AnalogMode.SMART
+        val presetRaw = prefs.getString(KEY_OVERLAY_PRESET, OverlayPreset.CLEAN.storage)
+        val preset = OverlayPreset.entries.firstOrNull { it.storage == presetRaw } ?: OverlayPreset.CLEAN
         val defaultShowDpad = analogMode == AnalogMode.DPAD
         return Config(
             analogMode = analogMode,
-            touchOpacity = prefs.getFloat(KEY_TOUCH_OPACITY, 0.82f).coerceIn(0.35f, 1f),
+            touchOpacity = prefs.getFloat(KEY_TOUCH_OPACITY, 0.78f).coerceIn(0.35f, 1f),
             touchScale = prefs.getFloat(KEY_TOUCH_SCALE, 1f).coerceIn(0.80f, 1.20f),
             haptics = prefs.getBoolean(KEY_HAPTICS, false),
-            showDpad = if (prefs.contains(KEY_SHOW_DPAD)) {
-                prefs.getBoolean(KEY_SHOW_DPAD, defaultShowDpad)
-            } else {
-                defaultShowDpad
-            }
+            showDpad = if (prefs.contains(KEY_SHOW_DPAD)) prefs.getBoolean(KEY_SHOW_DPAD, defaultShowDpad) else defaultShowDpad,
+            overlayPreset = preset,
+            cleanOverlay = prefs.getBoolean(KEY_CLEAN_OVERLAY, preset != OverlayPreset.STANDARD),
+            dynamicOpacity = prefs.getBoolean(KEY_DYNAMIC_OPACITY, true),
+            showLabels = prefs.getBoolean(KEY_SHOW_LABELS, preset == OverlayPreset.STANDARD),
+            showShoulders = prefs.getBoolean(KEY_SHOW_SHOULDERS, true),
+            showStartSelect = prefs.getBoolean(KEY_SHOW_START_SELECT, true),
+            showPerformanceHud = prefs.getBoolean(KEY_SHOW_PERFORMANCE_HUD, false),
+            controlsVisible = prefs.getBoolean(KEY_CONTROLS_VISIBLE, true)
         )
     }
 
-    fun saveAnalogMode(context: Context, mode: AnalogMode) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_ANALOG_MODE, mode.storage).apply()
+    fun resolveForGame(context: Context, gameKey: String): Config {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val base = resolve(context)
+        val prefix = gamePrefix(gameKey)
+        if (!prefs.all.keys.any { it.startsWith(prefix) }) return base
+
+        fun string(key: String, fallback: String): String = prefs.getString(prefix + key, fallback) ?: fallback
+        fun bool(key: String, fallback: Boolean): Boolean = if (prefs.contains(prefix + key)) prefs.getBoolean(prefix + key, fallback) else fallback
+        fun number(key: String, fallback: Float): Float = if (prefs.contains(prefix + key)) prefs.getFloat(prefix + key, fallback) else fallback
+
+        val analog = AnalogMode.entries.firstOrNull { it.storage == string(KEY_ANALOG_MODE, base.analogMode.storage) } ?: base.analogMode
+        val preset = OverlayPreset.entries.firstOrNull { it.storage == string(KEY_OVERLAY_PRESET, base.overlayPreset.storage) } ?: base.overlayPreset
+        return base.copy(
+            analogMode = analog,
+            touchOpacity = number(KEY_TOUCH_OPACITY, base.touchOpacity).coerceIn(0.35f, 1f),
+            touchScale = number(KEY_TOUCH_SCALE, base.touchScale).coerceIn(0.80f, 1.20f),
+            haptics = bool(KEY_HAPTICS, base.haptics),
+            showDpad = bool(KEY_SHOW_DPAD, base.showDpad),
+            overlayPreset = preset,
+            cleanOverlay = bool(KEY_CLEAN_OVERLAY, base.cleanOverlay),
+            dynamicOpacity = bool(KEY_DYNAMIC_OPACITY, base.dynamicOpacity),
+            showLabels = bool(KEY_SHOW_LABELS, base.showLabels),
+            showShoulders = bool(KEY_SHOW_SHOULDERS, base.showShoulders),
+            showStartSelect = bool(KEY_SHOW_START_SELECT, base.showStartSelect),
+            showPerformanceHud = bool(KEY_SHOW_PERFORMANCE_HUD, base.showPerformanceHud),
+            controlsVisible = bool(KEY_CONTROLS_VISIBLE, base.controlsVisible)
+        )
     }
 
-    fun saveTouchOpacity(context: Context, value: Float) {
+    fun saveGameConfig(context: Context, gameKey: String, config: Config) {
+        val prefix = gamePrefix(gameKey)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putFloat(KEY_TOUCH_OPACITY, value.coerceIn(0.35f, 1f)).apply()
+            .putString(prefix + KEY_ANALOG_MODE, config.analogMode.storage)
+            .putFloat(prefix + KEY_TOUCH_OPACITY, config.touchOpacity.coerceIn(0.35f, 1f))
+            .putFloat(prefix + KEY_TOUCH_SCALE, config.touchScale.coerceIn(0.80f, 1.20f))
+            .putBoolean(prefix + KEY_HAPTICS, config.haptics)
+            .putBoolean(prefix + KEY_SHOW_DPAD, config.showDpad)
+            .putString(prefix + KEY_OVERLAY_PRESET, config.overlayPreset.storage)
+            .putBoolean(prefix + KEY_CLEAN_OVERLAY, config.cleanOverlay)
+            .putBoolean(prefix + KEY_DYNAMIC_OPACITY, config.dynamicOpacity)
+            .putBoolean(prefix + KEY_SHOW_LABELS, config.showLabels)
+            .putBoolean(prefix + KEY_SHOW_SHOULDERS, config.showShoulders)
+            .putBoolean(prefix + KEY_SHOW_START_SELECT, config.showStartSelect)
+            .putBoolean(prefix + KEY_SHOW_PERFORMANCE_HUD, config.showPerformanceHud)
+            .putBoolean(prefix + KEY_CONTROLS_VISIBLE, config.controlsVisible)
+            .apply()
     }
 
-    fun saveTouchScale(context: Context, value: Float) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putFloat(KEY_TOUCH_SCALE, value.coerceIn(0.80f, 1.20f)).apply()
+    fun clearGameProfile(context: Context, gameKey: String) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefix = gamePrefix(gameKey)
+        val editor = prefs.edit()
+        prefs.all.keys.filter { it.startsWith(prefix) }.forEach(editor::remove)
+        editor.apply()
     }
 
-    fun saveHaptics(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putBoolean(KEY_HAPTICS, enabled).apply()
-    }
-
-    fun saveShowDpad(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putBoolean(KEY_SHOW_DPAD, enabled).apply()
-    }
+    fun saveAnalogMode(context: Context, mode: AnalogMode) = edit(context).putString(KEY_ANALOG_MODE, mode.storage).apply()
+    fun saveTouchOpacity(context: Context, value: Float) = edit(context).putFloat(KEY_TOUCH_OPACITY, value.coerceIn(0.35f, 1f)).apply()
+    fun saveTouchScale(context: Context, value: Float) = edit(context).putFloat(KEY_TOUCH_SCALE, value.coerceIn(0.80f, 1.20f)).apply()
+    fun saveHaptics(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_HAPTICS, enabled).apply()
+    fun saveShowDpad(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_SHOW_DPAD, enabled).apply()
+    fun saveOverlayPreset(context: Context, preset: OverlayPreset) = edit(context).putString(KEY_OVERLAY_PRESET, preset.storage).apply()
+    fun saveCleanOverlay(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_CLEAN_OVERLAY, enabled).apply()
+    fun saveDynamicOpacity(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_DYNAMIC_OPACITY, enabled).apply()
+    fun saveShowLabels(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_SHOW_LABELS, enabled).apply()
+    fun saveShowShoulders(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_SHOW_SHOULDERS, enabled).apply()
+    fun saveShowStartSelect(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_SHOW_START_SELECT, enabled).apply()
+    fun saveShowPerformanceHud(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_SHOW_PERFORMANCE_HUD, enabled).apply()
+    fun saveControlsVisible(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_CONTROLS_VISIBLE, enabled).apply()
 
     fun resolveControlPosition(
         context: Context,
         key: String,
         defaultX: Float,
-        defaultY: Float
+        defaultY: Float,
+        gameKey: String? = null
     ): ControlPosition {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val x = prefs.getFloat("${POSITION_PREFIX}${key}_x", defaultX).coerceIn(0.04f, 0.96f)
-        val y = prefs.getFloat("${POSITION_PREFIX}${key}_y", defaultY).coerceIn(0.08f, 0.94f)
+        val globalX = "${POSITION_PREFIX}${key}_x"
+        val globalY = "${POSITION_PREFIX}${key}_y"
+        val gamePrefix = gameKey?.let(::gamePrefix)
+        val xKey = gamePrefix?.let { it + globalX }
+        val yKey = gamePrefix?.let { it + globalY }
+        val x = when {
+            xKey != null && prefs.contains(xKey) -> prefs.getFloat(xKey, defaultX)
+            prefs.contains(globalX) -> prefs.getFloat(globalX, defaultX)
+            else -> defaultX
+        }.coerceIn(0.04f, 0.96f)
+        val y = when {
+            yKey != null && prefs.contains(yKey) -> prefs.getFloat(yKey, defaultY)
+            prefs.contains(globalY) -> prefs.getFloat(globalY, defaultY)
+            else -> defaultY
+        }.coerceIn(0.06f, 0.95f)
         return ControlPosition(x, y)
     }
 
-    fun saveControlPosition(context: Context, key: String, x: Float, y: Float) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putFloat("${POSITION_PREFIX}${key}_x", x.coerceIn(0.04f, 0.96f))
-            .putFloat("${POSITION_PREFIX}${key}_y", y.coerceIn(0.08f, 0.94f))
+    fun saveControlPosition(context: Context, key: String, x: Float, y: Float, gameKey: String? = null) {
+        val prefix = gameKey?.let(::gamePrefix).orEmpty()
+        edit(context)
+            .putFloat("$prefix${POSITION_PREFIX}${key}_x", x.coerceIn(0.04f, 0.96f))
+            .putFloat("$prefix${POSITION_PREFIX}${key}_y", y.coerceIn(0.06f, 0.95f))
             .apply()
     }
 
-    fun resetControlPositions(context: Context) {
+    fun resetControlPositions(context: Context, gameKey: String? = null) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefix = gameKey?.let { gamePrefix(it) + POSITION_PREFIX } ?: POSITION_PREFIX
         val editor = prefs.edit()
-        prefs.all.keys.filter { it.startsWith(POSITION_PREFIX) }.forEach { key -> editor.remove(key) }
+        prefs.all.keys.filter { it.startsWith(prefix) }.forEach(editor::remove)
         editor.apply()
     }
+
+    private fun edit(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+
+    private fun gamePrefix(value: String): String = GAME_PREFIX + safeGameKey(value) + "_"
+
+    private fun safeGameKey(value: String): String = buildString(value.length) {
+        value.forEach { char -> append(if (char.isLetterOrDigit() || char == '-' || char == '_') char else '_') }
+    }.ifBlank { "game" }
 }
