@@ -30,6 +30,7 @@ import com.omnicore.emulator.core.nativebridge.NativeBridge
 import com.omnicore.emulator.core.ps1.Ps1Core
 import com.omnicore.emulator.model.GameEntry
 import com.omnicore.emulator.performance.PerformanceManager
+import com.omnicore.emulator.settings.Ps1Settings
 import com.omnicore.emulator.storage.Ps1Files
 import com.omnicore.emulator.storage.SafGameSource
 import java.io.File
@@ -39,6 +40,7 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var surfaceView: SurfaceView
     private lateinit var controls: GamepadOverlayView
     private lateinit var statusView: TextView
+    private lateinit var presetView: TextView
 
     private val handler = Handler(Looper.getMainLooper())
     private var sessionDescriptors: List<ParcelFileDescriptor> = emptyList()
@@ -51,15 +53,32 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
     private var gameTitle: String = "PlayStation"
     private lateinit var deviceProfile: PerformanceManager.DeviceProfile
     private lateinit var performanceConfig: PerformanceManager.RuntimeConfig
+    private lateinit var ps1Config: Ps1Settings.Config
     private var thermalMonitor: ThermalMonitor? = null
+    private var successfulPolls = 0
+    private var lastRuntimeMessage = ""
 
     private val statusPoll = object : Runnable {
         override fun run() {
             if (started) {
                 val text = NativeBridge.lastMessage()
-                if (text.isNotBlank() && statusView.text.toString() != text) statusView.text = text
+                if (text.isNotBlank()) {
+                    if (text != lastRuntimeMessage) {
+                        lastRuntimeMessage = text
+                        statusView.text = text
+                        statusView.visibility = View.VISIBLE
+                        successfulPolls = 0
+                    }
+                    if (text.startsWith("BOOT 6/6")) {
+                        successfulPolls++
+                        if (successfulPolls >= 7) statusView.visibility = View.GONE
+                    } else if (text.startsWith("BOOT E")) {
+                        statusView.visibility = View.VISIBLE
+                        statusView.setBackgroundColor(Color.argb(225, 90, 15, 28))
+                    }
+                }
             }
-            handler.postDelayed(this, 500)
+            handler.postDelayed(this, 450)
         }
     }
 
@@ -70,6 +89,7 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
 
         deviceProfile = PerformanceManager.profile(this)
         performanceConfig = PerformanceManager.initialConfig(this)
+        ps1Config = Ps1Settings.resolve(this)
         registerThermalAdaptation()
 
         gameKey = intent.getStringExtra(EXTRA_GAME_ID).orEmpty().ifBlank { "game" }
@@ -77,9 +97,7 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         val uriString = intent.getStringExtra(EXTRA_GAME_URI)
         val extension = intent.getStringExtra(EXTRA_EXTENSION).orEmpty().lowercase()
         val folderUri = intent.getStringExtra(EXTRA_FOLDER_URI)?.takeIf { it.isNotBlank() }?.let(Uri::parse)
-        val companionUris = intent.getStringArrayListExtra(EXTRA_COMPANION_URIS)
-            .orEmpty()
-            .map(Uri::parse)
+        val companionUris = intent.getStringArrayListExtra(EXTRA_COMPANION_URIS).orEmpty().map(Uri::parse)
 
         if (uriString.isNullOrBlank() || extension !in Ps1Core.SUPPORTED_EXTENSIONS) {
             Toast.makeText(this, "Arquivo de PS1 não suportado nesta versão.", Toast.LENGTH_LONG).show()
@@ -93,65 +111,76 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun buildUi() {
-        root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        root = FrameLayout(this).apply { setBackgroundColor(Color.rgb(4, 5, 11)) }
         setContentView(root)
 
         surfaceView = SurfaceView(this).apply {
             setBackgroundColor(Color.BLACK)
             holder.addCallback(this@EmulationActivity)
         }
-        root.addView(
-            surfaceView,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER)
-        )
+        root.addView(surfaceView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            Gravity.CENTER
+        ))
 
         controls = GamepadOverlayView(this)
-        root.addView(
-            controls,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-        )
+        root.addView(controls, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
 
         statusView = TextView(this).apply {
             text = "Preparando $gameTitle…"
             setTextColor(Color.WHITE)
             textSize = 12f
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-            setBackgroundColor(Color.argb(145, 0, 0, 0))
-            maxLines = 2
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            setBackgroundColor(Color.argb(190, 14, 15, 28))
+            maxLines = 3
         }
-        root.addView(
-            statusView,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
-                topMargin = dp(8)
-            }
-        )
+        root.addView(statusView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        ).apply { topMargin = dp(10) })
 
-        val save = actionButton("SALVAR") { NativeBridge.saveState(0) }
-        root.addView(
-            save,
-            FrameLayout.LayoutParams(dp(92), dp(42), Gravity.TOP or Gravity.LEFT).apply {
-                leftMargin = dp(10)
-                topMargin = dp(10)
-            }
-        )
+        presetView = TextView(this).apply {
+            text = "${ps1Config.preset.label} • ${if (ps1Config.dualShock) "DualShock" else "Digital"}"
+            setTextColor(Color.argb(210, 226, 224, 255))
+            textSize = 10f
+            setPadding(dp(9), dp(5), dp(9), dp(5))
+            setBackgroundColor(Color.argb(120, 35, 32, 65))
+        }
+        root.addView(presetView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        ).apply { bottomMargin = dp(8) })
 
-        val load = actionButton("CARREGAR") { NativeBridge.loadState(0) }
-        root.addView(
-            load,
-            FrameLayout.LayoutParams(dp(108), dp(42), Gravity.TOP or Gravity.LEFT).apply {
-                leftMargin = dp(108)
-                topMargin = dp(10)
-            }
-        )
+        val save = actionButton("SALVAR") { NativeBridge.saveState(0); showTransientStatus("Solicitando save state…") }
+        root.addView(save, FrameLayout.LayoutParams(dp(88), dp(38), Gravity.TOP or Gravity.LEFT).apply {
+            leftMargin = dp(10); topMargin = dp(10)
+        })
+
+        val load = actionButton("CARREGAR") { NativeBridge.loadState(0); showTransientStatus("Carregando save state…") }
+        root.addView(load, FrameLayout.LayoutParams(dp(104), dp(38), Gravity.TOP or Gravity.LEFT).apply {
+            leftMargin = dp(104); topMargin = dp(10)
+        })
+
+        val diag = actionButton("STATUS") {
+            statusView.text = NativeBridge.lastMessage()
+            statusView.visibility = View.VISIBLE
+            successfulPolls = 0
+        }
+        root.addView(diag, FrameLayout.LayoutParams(dp(88), dp(38), Gravity.TOP or Gravity.RIGHT).apply {
+            rightMargin = dp(98); topMargin = dp(10)
+        })
 
         val exit = actionButton("SAIR") { finish() }
-        root.addView(
-            exit,
-            FrameLayout.LayoutParams(dp(82), dp(42), Gravity.TOP or Gravity.RIGHT).apply {
-                rightMargin = dp(10)
-                topMargin = dp(10)
-            }
-        )
+        root.addView(exit, FrameLayout.LayoutParams(dp(80), dp(38), Gravity.TOP or Gravity.RIGHT).apply {
+            rightMargin = dp(10); topMargin = dp(10)
+        })
 
         root.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
             val width = right - left
@@ -169,11 +198,21 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         }
     }
 
+    private fun showTransientStatus(text: String) {
+        statusView.text = text
+        statusView.visibility = View.VISIBLE
+        statusView.setBackgroundColor(Color.argb(190, 14, 15, 28))
+        successfulPolls = 0
+    }
+
     private fun actionButton(label: String, action: () -> Unit): Button = Button(this).apply {
         text = label
-        textSize = 10f
+        textSize = 9f
+        minWidth = 0
+        minHeight = 0
+        setPadding(dp(6), 0, dp(6), 0)
         setTextColor(Color.WHITE)
-        backgroundTintList = ColorStateList.valueOf(Color.argb(165, 25, 25, 35))
+        backgroundTintList = ColorStateList.valueOf(Color.argb(150, 28, 28, 48))
         alpha = 0.88f
         setOnClickListener { action() }
     }
@@ -189,13 +228,8 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         }
     }
 
-    private fun prepareGameAsync(
-        uri: Uri,
-        extension: String,
-        folderUri: Uri?,
-        companionUris: List<Uri>
-    ) {
-        statusView.text = if (extension == "cue") "Preparando faixas de $gameTitle…" else "Preparando $gameTitle…"
+    private fun prepareGameAsync(uri: Uri, extension: String, folderUri: Uri?, companionUris: List<Uri>) {
+        statusView.text = if (extension == "cue") "PREP 1/3 • lendo CUE e faixas…" else "PREP 1/3 • abrindo $gameTitle…"
         preparationThread = Thread({
             val result = prepareSessionPath(uri, extension, folderUri, companionUris)
             handler.post {
@@ -204,22 +238,16 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
                     result.getOrNull()?.close()
                     return@post
                 }
-
                 result.onSuccess { prepared ->
                     sessionDescriptors = prepared.descriptors
                     sessionDir = prepared.sessionDir
                     gamePath = prepared.path
-                    statusView.text = "Iniciando $gameTitle…"
-                    if (surfaceView.holder.surface.isValid) {
-                        tryStart(surfaceView.holder.surface)
-                    }
+                    statusView.text = "PREP 3/3 • conteúdo pronto, iniciando core…"
+                    if (surfaceView.holder.surface.isValid) tryStart(surfaceView.holder.surface)
                 }.onFailure { error ->
-                    Toast.makeText(
-                        this,
-                        error.message ?: "Não consegui abrir o jogo.",
-                        Toast.LENGTH_LONG
-                    ).show()
-                    finish()
+                    statusView.text = "PREP E01 • ${error.message ?: "não consegui preparar o jogo"}"
+                    statusView.setBackgroundColor(Color.argb(225, 90, 15, 28))
+                    Toast.makeText(this, statusView.text, Toast.LENGTH_LONG).show()
                 }
             }
         }, "OmniCore-ContentPrep").apply {
@@ -228,39 +256,29 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         }
     }
 
-    private fun prepareSessionPath(
-        uri: Uri,
-        extension: String,
-        folderUri: Uri?,
-        companionUris: List<Uri>
-    ): Result<PreparedContent> = runCatching {
-        if (extension == "cue") {
-            prepareCueSession(uri, folderUri, companionUris)
-        } else {
-            prepareSingleFileSession(uri, extension)
+    private fun prepareSessionPath(uri: Uri, extension: String, folderUri: Uri?, companionUris: List<Uri>): Result<PreparedContent> =
+        runCatching {
+            if (extension == "cue") prepareCueSession(uri, folderUri, companionUris)
+            else prepareSingleFileSession(uri, extension)
         }
-    }
 
     private fun prepareSingleFileSession(uri: Uri, extension: String): PreparedContent {
         val dir = freshSessionDir()
         val descriptors = mutableListOf<ParcelFileDescriptor>()
         return try {
+            statusView.post { statusView.text = "PREP 2/3 • preparando acesso ao arquivo…" }
             val target = File(dir, "game.$extension")
             stageDocument(uri, target, descriptors)
             ensurePreparationActive()
             PreparedContent(target.absolutePath, descriptors.toList(), dir)
         } catch (error: Throwable) {
-            descriptors.forEach { descriptor -> runCatching { descriptor.close() } }
+            descriptors.forEach { runCatching { it.close() } }
             runCatching { dir.deleteRecursively() }
             throw error
         }
     }
 
-    private fun prepareCueSession(
-        cueUri: Uri,
-        folderUri: Uri?,
-        companionUris: List<Uri>
-    ): PreparedContent {
+    private fun prepareCueSession(cueUri: Uri, folderUri: Uri?, companionUris: List<Uri>): PreparedContent {
         val dir = freshSessionDir()
         val descriptors = mutableListOf<ParcelFileDescriptor>()
         return try {
@@ -268,16 +286,13 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
             val sources = if (folderUri != null) {
                 SafGameSource.listDirectChildren(this, folderUri).filterNot { it.isDirectory }
             } else {
-                (companionUris + cueUri)
-                    .distinctBy(Uri::toString)
-                    .map { SafGameSource.metadata(this, it) }
+                (companionUris + cueUri).distinctBy(Uri::toString).map { SafGameSource.metadata(this, it) }
             }
 
             val cueText = SafGameSource.readCueText(this, cueUri)
             val references = SafGameSource.cueReferences(cueText)
-            require(references.isNotEmpty()) {
-                "O arquivo CUE não contém nenhuma faixa FILE reconhecível."
-            }
+            require(references.isNotEmpty()) { "O CUE não contém nenhuma linha FILE reconhecível." }
+            statusView.post { statusView.text = "PREP 2/3 • vinculando ${references.size} faixa(s)…" }
 
             val byName = sources.associateBy { it.name.lowercase() }
             val resolvedNames = mutableMapOf<String, String>()
@@ -287,28 +302,22 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
                 ensurePreparationActive()
                 val baseName = SafGameSource.normalizeReference(reference)
                 val source = byName[baseName.lowercase()]
-                    ?: error("A faixa '$baseName' citada no CUE não foi encontrada. Importe a pasta completa do jogo.")
+                    ?: error("Faixa '$baseName' citada no CUE não encontrada. Importe a pasta completa.")
                 val safeName = safeFileName(source.name)
                 resolvedNames[baseName.lowercase()] = safeName
-                if (stagedUris.add(source.uri.toString())) {
-                    stageDocument(source.uri, File(dir, safeName), descriptors)
-                }
+                if (stagedUris.add(source.uri.toString())) stageDocument(source.uri, File(dir, safeName), descriptors)
             }
 
-            // Optional SBI files are tiny and improve compatibility for protected discs.
             sources.filter { it.extension == "sbi" }.forEach { source ->
-                if (stagedUris.add(source.uri.toString())) {
-                    stageDocument(source.uri, File(dir, safeFileName(source.name)), descriptors)
-                }
+                if (stagedUris.add(source.uri.toString())) stageDocument(source.uri, File(dir, safeFileName(source.name)), descriptors)
             }
 
-            val rewrittenCue = SafGameSource.rewriteCueReferences(cueText, resolvedNames)
             val localCue = File(dir, "game.cue")
-            localCue.writeText(rewrittenCue, Charsets.UTF_8)
+            localCue.writeText(SafGameSource.rewriteCueReferences(cueText, resolvedNames), Charsets.UTF_8)
             ensurePreparationActive()
             PreparedContent(localCue.absolutePath, descriptors.toList(), dir)
         } catch (error: Throwable) {
-            descriptors.forEach { descriptor -> runCatching { descriptor.close() } }
+            descriptors.forEach { runCatching { it.close() } }
             runCatching { dir.deleteRecursively() }
             throw error
         }
@@ -318,19 +327,14 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         val safeKey = gameKey.replace(Regex("[^A-Za-z0-9_-]"), "_")
         val dir = File(cacheDir, "ps1-session/$safeKey")
         dir.deleteRecursively()
-        require(dir.mkdirs() || dir.isDirectory) { "Não consegui criar a sessão temporária do jogo." }
+        require(dir.mkdirs() || dir.isDirectory) { "Não consegui criar a sessão temporária." }
         return dir
     }
 
-    private fun stageDocument(
-        uri: Uri,
-        target: File,
-        retainedDescriptors: MutableList<ParcelFileDescriptor>
-    ) {
+    private fun stageDocument(uri: Uri, target: File, retainedDescriptors: MutableList<ParcelFileDescriptor>) {
         ensurePreparationActive()
         target.parentFile?.mkdirs()
         target.delete()
-
         val descriptor = requireNotNull(contentResolver.openFileDescriptor(uri, "r")) {
             "O Android não forneceu acesso a ${target.name}."
         }
@@ -343,12 +347,10 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
             Os.symlink(procPath, target.absolutePath)
             true
         }.getOrDefault(false)
-
         if (linked) {
             retainedDescriptors += descriptor
             return
         }
-
         runCatching { descriptor.close() }
         contentResolver.openInputStream(uri).use { input ->
             requireNotNull(input) { "Não consegui ler ${target.name}." }
@@ -364,13 +366,10 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         }
     }
 
-    private fun safeFileName(name: String): String =
-        name.replace('\\', '_').replace('/', '_').ifBlank { "track.bin" }
+    private fun safeFileName(name: String): String = name.replace('\\', '_').replace('/', '_').ifBlank { "track.bin" }
 
     private fun ensurePreparationActive() {
-        if (destroyed || Thread.currentThread().isInterrupted) {
-            error("Preparação cancelada.")
-        }
+        if (destroyed || Thread.currentThread().isInterrupted) error("Preparação cancelada.")
     }
 
     private fun tryStart(surface: Surface) {
@@ -387,28 +386,25 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
             audioBufferBursts = performanceConfig.audioBufferBursts,
             tryExclusiveAudio = performanceConfig.tryExclusiveAudio,
             preferPowerEfficiency = performanceConfig.preferPowerEfficiency,
-            aggressiveFramePacing = performanceConfig.aggressiveFramePacing
+            aggressiveFramePacing = performanceConfig.aggressiveFramePacing,
+            coreOptions = ps1Config.toCoreOptions(),
+            dualShock = ps1Config.dualShock
         )
         started = ok
-        if (!ok) statusView.text = "Falha ao iniciar o core PS1."
+        if (!ok) {
+            statusView.text = "BOOT E00 • o runtime nativo recusou iniciar a sessão"
+            statusView.setBackgroundColor(Color.argb(225, 90, 15, 28))
+        }
     }
 
-    override fun surfaceCreated(holder: SurfaceHolder) {
-        tryStart(holder.surface)
-    }
-
+    override fun surfaceCreated(holder: SurfaceHolder) { tryStart(holder.surface) }
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
-
-    override fun surfaceDestroyed(holder: SurfaceHolder) {
-        stopSession()
-    }
+    override fun surfaceDestroyed(holder: SurfaceHolder) { stopSession() }
 
     override fun onResume() {
         super.onResume()
         enterImmersiveMode()
-        if (::surfaceView.isInitialized && surfaceView.holder.surface.isValid) {
-            tryStart(surfaceView.holder.surface)
-        }
+        if (::surfaceView.isInitialized && surfaceView.holder.surface.isValid) tryStart(surfaceView.holder.surface)
     }
 
     override fun onPause() {
@@ -423,7 +419,7 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         handler.removeCallbacks(statusPoll)
         unregisterThermalAdaptation()
         stopSession()
-        sessionDescriptors.forEach { descriptor -> runCatching { descriptor.close() } }
+        sessionDescriptors.forEach { runCatching { it.close() } }
         sessionDescriptors = emptyList()
         runCatching { sessionDir?.deleteRecursively() }
         sessionDir = null
@@ -441,13 +437,8 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun onThermalStatusChanged(status: Int) {
-        val next = PerformanceManager.resolve(
-            PerformanceManager.readUserMode(this),
-            deviceProfile,
-            status
-        )
+        val next = PerformanceManager.resolve(PerformanceManager.readUserMode(this), deviceProfile, status)
         if (next == performanceConfig) return
-
         performanceConfig = next
         if (started) {
             NativeBridge.updatePerformancePolicy(
@@ -463,17 +454,9 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
     @TargetApi(Build.VERSION_CODES.Q)
     private class ThermalMonitor(private val activity: EmulationActivity) {
         private val manager = activity.getSystemService(PowerManager::class.java)
-        private val listener = PowerManager.OnThermalStatusChangedListener { status ->
-            activity.onThermalStatusChanged(status)
-        }
-
-        fun register() {
-            runCatching { manager?.addThermalStatusListener(listener) }
-        }
-
-        fun unregister() {
-            runCatching { manager?.removeThermalStatusListener(listener) }
-        }
+        private val listener = PowerManager.OnThermalStatusChangedListener { activity.onThermalStatusChanged(it) }
+        fun register() { runCatching { manager?.addThermalStatusListener(listener) } }
+        fun unregister() { runCatching { manager?.removeThermalStatusListener(listener) } }
     }
 
     private fun stopSession() {
@@ -519,13 +502,10 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
 
     @Suppress("DEPRECATION")
     private fun enterImmersiveMode() {
-        window.decorView.systemUiVisibility =
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                View.SYSTEM_UI_FLAG_FULLSCREEN or
-                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+            View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
