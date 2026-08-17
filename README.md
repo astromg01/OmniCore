@@ -1,99 +1,181 @@
-# OmniCore 0.2.0 — PS1 Core + SmartPerf 2
+# OmniCore
 
-OmniCore is an Android-first universal emulation hub. The long-term frontend is designed to host separate native backends for N64, PS1, PS2, PSP, Wii and Switch while keeping library, input, saves and performance policy unified.
+> Android-first multi-system emulation frontend focused on clean architecture, stable frame pacing and device-aware performance.
 
-## v0.2 milestone
+[![Android](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
+[![Current DEV](https://img.shields.io/badge/current%20DEV-0.6.0-7C5CFF)](https://github.com/astromg01/OmniCore/releases/tag/v0.6.0-dev)
+[![PS1](https://img.shields.io/badge/PS1-PCSX--ReARMed-57D8FF)](https://github.com/libretro/pcsx_rearmed)
+[![License note](https://img.shields.io/badge/core%20license-GPL--2.0-important)](THIRD_PARTY_NOTICES.md)
 
-PS1 is the first real emulation backend. The cloud build fetches a pinned PCSX-ReARMed revision, builds its Android ARM libraries and packages them with OmniCore.
+OmniCore is a unified Android emulation hub being built around **independent native backends** with one shared library, input layer, save system, performance manager and user interface.
 
-Included in this milestone:
+The project is intentionally progressive: **PlayStation 1 is the first functional backend**. N64, PSP, Wii, PS2 and Switch remain roadmap targets and are not presented as working emulators yet.
 
-- Unified library UI for N64, PS1, PS2, PSP, Wii and Switch.
-- PlayStation core status is `READY`; the other systems remain planned.
-- PCSX-ReARMed libretro core built for `arm64-v8a` and `armeabi-v7a`.
-- Native C++20/JNI libretro host with video, AAudio, input, memory-card saves and save states.
-- Touch gamepad plus Android/Bluetooth game-controller button mapping.
-- Optional PS1 BIOS import. No BIOS is bundled; the core can fall back to its HLE path when supported.
-- Android Storage Access Framework library with persisted URI access.
-- Zero-copy content path for seekable Android document providers; non-seekable streams are copied in a background worker only when required.
-- GitHub Actions build with APK and corresponding PCSX-ReARMed source artifact.
-- No ROMs, BIOS, firmware, console keys or proprietary game files are bundled.
+## Current status — v0.6.0 DEV
 
-## SmartPerf 2
+The current development build focuses on making the PS1 path technically solid before the next console backend is added.
 
-The performance layer is device-aware and session-aware rather than a collection of fixed "boost" flags.
+### PlayStation 1
 
-- Conservative hardware classification using RAM, CPU count, 64-bit capability, Media Performance Class, low-RAM classification and observed maximum CPU frequency when readable.
-- Android thermal-status adaptation while a game is running.
-- Android Performance Hint / ADPF session when available, fed with measured emulation-thread work duration.
-- Surface frame-rate hint for the emulated refresh rate when supported by Android.
-- Deadline-based frame pacing with a short low-latency yield only when measured CPU headroom exists.
-- RGB565 zero-conversion rendering fast path.
-- Lock-free-style single-producer/single-consumer audio ring indices with block `memcpy` instead of sample-by-sample copies.
-- Adaptive AAudio buffer reacts to both platform xruns and ring-buffer starvation, then shrinks after a stable period.
-- Exclusive low-latency audio is only attempted on suitable profiles and always falls back to shared mode.
-- Native runtime is compiled with `-O2` even in the debug APK so device performance tests are meaningful.
-- No root, hidden APIs, fixed CPU clocks, vendor-specific properties or persistent system changes.
+- **PCSX-ReARMed/libretro** pinned to a reproducible upstream revision.
+- Android builds for **arm64-v8a** and **armeabi-v7a**.
+- Native **C++20/JNI libretro host**.
+- Dedicated emulation, audio and rendering paths.
+- **Runtime v7** with a separate video presentation thread.
+- **EGL + OpenGL ES 2** texture presenter instead of direct CPU blitting to `ANativeWindow`.
+- Direct RGB565 texture upload path plus explicit conversion for XRGB8888 / 0RGB1555.
+- AAudio output with priming, sample-rate adaptation and bounded adaptive buffering.
+- Touch controls, D-pad, analog input and Android/Bluetooth controller support.
+- Save RAM / memory-card persistence and save states.
+- Optional user-supplied PS1 BIOS import; no BIOS is bundled.
+- CUE/BIN folder workflows plus supported single-file images such as CHD and PBP.
+- Runtime diagnostics for produced, visible, dropped and presented frames.
 
-See [OPTIMIZATION.md](OPTIMIZATION.md) for the policy details.
+## SmartPerf
 
-## PS1 content supported in v0.2
+OmniCore treats performance management as part of the runtime architecture rather than a collection of fixed "boost" switches.
 
-Single-file content is the first target: `chd`, `pbp`, `iso`, `bin`, `img`, `mdf`, `cbn` and `exe` as accepted by the current frontend filter. Multi-disc / descriptor workflows such as CUE/M3U are intentionally deferred until the disk-control layer is added.
+Current performance systems include:
 
-## Build baseline
+- Conservative hardware profiling.
+- Per-session performance policy.
+- Android thermal-status adaptation.
+- Android Performance Hint / ADPF integration where available.
+- Emulation frame-time measurement.
+- Frame pacing based on the core refresh rate.
+- Surface refresh-rate hints when supported.
+- Adaptive AAudio buffering using platform xruns and frontend underrun telemetry.
+- Background content preparation.
+- Direct access to seekable Android document-provider files where possible.
+- Compatibility-first defaults on lower-end devices.
+- No root requirement, hidden APIs, forced CPU/GPU clocks or persistent vendor tweaks.
 
-- Android Gradle Plugin 9.3.0
-- Gradle 9.5.0
-- Kotlin / Compose Compiler plugin 2.3.21
-- Compose BOM 2026.06.00
-- Activity Compose 1.13.0
-- Lifecycle 2.10.0
-- compileSdk / targetSdk 36
-- minSdk 26
-- NDK 28.2.13676358
-- CMake 3.31.5
+See [OPTIMIZATION.md](OPTIMIZATION.md) for implementation details.
 
-## Cloud build
+## Multi-system roadmap
 
-Push the repository to GitHub or run the `Android Build` workflow manually. The workflow:
+| System | Backend direction | Status |
+|---|---|---|
+| PlayStation 1 | PCSX-ReARMed / libretro | **Active / functional** |
+| Nintendo 64 | Mupen64Plus family | Planned |
+| PSP | PPSSPP | Planned |
+| Wii / GameCube | Dolphin | Planned |
+| PlayStation 2 | Backend evaluation | Planned |
+| Nintendo Switch | Experimental backend evaluation | Long-term |
 
-1. Installs the pinned Android toolchain.
-2. Fetches PCSX-ReARMed at the revision recorded in `third_party/PCSX_REARMED_PIN.txt`.
-3. Builds the core for ARM64 and ARMv7.
-4. Archives the corresponding core source.
-5. Builds `app-debug.apk`.
-6. Checks ELF LOAD-segment alignment and runs `zipalign -P 16` validation.
-7. Uploads the APK and PCSX-ReARMed source as workflow artifacts.
+The order is deliberate: each backend should integrate cleanly with the same library, input, save, performance and update systems instead of becoming a collection of unrelated emulator wrappers.
 
-The source package itself does not contain ROMs or BIOS files.
+## In-app DEV updates
 
-## Local build
+Starting with **v0.6.0**, OmniCore development builds include an in-app updater that:
 
-With Android SDK/NDK installed:
+1. Checks OmniCore GitHub Releases.
+2. Compares semantic versions.
+3. Downloads the matching DEV APK.
+4. Verifies its SHA-256 digest when provided by GitHub.
+5. Hands the verified APK to Android's `PackageInstaller`.
 
-```bash
-./tools/fetch_ps1_core.sh
-ANDROID_NDK_HOME=/path/to/android-ndk ./tools/build_ps1_core_android.sh
-gradle :app:assembleDebug
+Development builds from v0.6.0 onward use a stable **DEV-only** signing certificate so compatible future DEV builds can update over the installed app while preserving app data.
+
+> **Migration note:** builds through v0.5.0 were produced with ephemeral GitHub-runner debug certificates. Moving from v0.5.0 or older to v0.6.0 requires one final uninstall/reinstall. This DEV signing identity is not intended for Play Store production signing.
+
+## Download
+
+The current development release is:
+
+**[OmniCore v0.6.0 DEV — EGL/GLES Video Foundation](https://github.com/astromg01/OmniCore/releases/tag/v0.6.0-dev)**
+
+Development releases are for testing and may contain compatibility regressions. Keep important save data backed up while the runtime is still under active development.
+
+## Content and firmware policy
+
+OmniCore does **not** include:
+
+- ROMs or game images
+- BIOS files
+- firmware
+- console encryption keys
+- proprietary game assets
+
+Users are responsible for providing content and firmware they are legally entitled to use.
+
+## Android / build baseline
+
+- `compileSdk` / `targetSdk`: 36
+- `minSdk`: 26
+- Android NDK: 28.2.13676358
+- CMake: 3.31.5
+- Native runtime: C++20
+- ARM targets: `arm64-v8a`, `armeabi-v7a`
+- Native ELF / APK alignment validated for **16 KB page-size compatibility** in CI
+
+## Reproducible PS1 core build
+
+The PCSX-ReARMed revision used by OmniCore is recorded in:
+
+`third_party/PCSX_REARMED_PIN.txt`
+
+The Android workflow fetches that exact revision, builds the ARM libraries and publishes the corresponding PCSX-ReARMed source bundle alongside the APK.
+
+This keeps the binary/core source relationship explicit and reproducible.
+
+## Project structure
+
+```text
+app/
+  src/main/java/com/omnicore/emulator/
+    core/          Core registry and backend integration
+    emulation/     Emulation activity and controls
+    performance/   SmartPerf runtime policy
+    settings/      Core/user settings
+    storage/       Library, BIOS and Android SAF handling
+    ui/            Compose frontend
+    update/        DEV update system
+
+  src/main/cpp/
+    libretro_host_v7.cpp
+    gl_presenter.cpp
+    native_bridge.cpp
+
+third_party/
+  PCSX_REARMED_PIN.txt
+  licenses/
+
+tools/
+  fetch_ps1_core.sh
+  build_ps1_core_android.sh
 ```
 
-## Licensing note
+## CI validation
 
-PCSX-ReARMed is distributed under GNU GPL v2 terms. `THIRD_PARTY_NOTICES.md` records the pinned component and the workflow emits its corresponding source bundle. Before a public/store release, the licensing strategy for the OmniCore frontend itself must be finalized so distribution remains compatible with every bundled core.
+The `Android Build` workflow currently validates the full development path:
 
-## Validation status
+- project/runtime version consistency
+- Android/JDK/NDK toolchain
+- pinned PCSX-ReARMed checkout
+- ARM64 and ARMv7 PS1-core builds
+- OmniCore APK compilation
+- stable DEV signing certificate
+- native 16 KB alignment
+- APK `zipalign` validation
+- GitHub development Release publication
+- corresponding PCSX-ReARMed source archive
 
-The v0.2 source/runtime passed local native syntax and project-structure checks. A full APK build could not be executed in the current container because it does not contain the Android SDK/NDK and cannot directly clone the pinned core source. The included `Android Build` GitHub Actions workflow is the reproducible full-build path. See `VALIDATION.md` for the exact checks completed.
+## Licensing
 
-## Next milestones
+PCSX-ReARMed is distributed under **GNU GPL v2** terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the bundled license text for details.
 
-1. On-device PS1 compatibility/performance validation and per-game profiles.
-2. Analog-stick input and controller remapping.
-3. N64 backend.
-4. PSP backend.
-5. Wii backend.
-6. PS2 backend evaluation/integration.
-7. Switch backend evaluation last.
+OmniCore's final distribution/licensing model must remain compatible with every backend included in a public build. Core licensing is treated as an architectural requirement, not an afterthought.
 
-The working name and application ID are still changeable before publication.
+## Development priorities
+
+1. Finish real-device validation of the PS1 EGL/GLES renderer.
+2. Harden PS1 compatibility, save behavior and per-game settings.
+3. Improve frontend diagnostics and update UX.
+4. Integrate the first non-PS1 backend.
+5. Expand the shared performance layer without device-specific hacks.
+6. Prepare production signing and store-distribution strategy only after the runtime foundation is stable.
+
+---
+
+**OmniCore** is developed by [@astromg01](https://github.com/astromg01).

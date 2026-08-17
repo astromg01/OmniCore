@@ -1,43 +1,69 @@
-# OmniCore 0.4.0 — Runtime Foundation
-
-- Compatibility-first Android video path; experimental direct Surface framebuffer disabled by default.
-- Primed AAudio output, bounded ring latency, live buffer tuning and sample-rate adaptation.
-- Hybrid libretro FPS/audio clock pacing with runtime video/audio telemetry.
-- Fixed PCSX-ReARMed threaded-rendering option values (`sync`/`async`) and safer compatibility defaults.
-- BIOS health detection (verified retail / unknown / HLE) without bundling firmware.
-- Runtime no longer reopens AAudio during thermal policy transitions.
-- Runtime v4 retained in source as a rollback reference; app builds with v5.
-
 # Changelog
 
-## 0.2.0
+## 0.6.0 — EGL/GLES Video Foundation
+
+### Video / runtime
+- Replaced the remaining direct CPU `ANativeWindow` presentation path with a dedicated **EGL + OpenGL ES 2** presenter.
+- Kept video presentation on a renderer thread so Surface/GPU work cannot stall the libretro emulation thread.
+- Added direct RGB565 texture uploads and explicit XRGB8888 / 0RGB1555 conversion paths.
+- Added renderer diagnostics so produced frames, visible frames, presented frames and presentation failures can be distinguished.
+- Kept the Runtime v6 decoupled A/V architecture that fixed audio starvation during real-device testing.
+
+### Audio / performance
+- Retained primed AAudio startup, adaptive bounded buffering and sample-rate adaptation.
+- Kept SmartPerf runtime telemetry, thermal adaptation, frame pacing and Android performance hints.
+- Preserved compatibility-first defaults instead of forcing aggressive GPU/SPU threading.
+
+### Updates / signing
+- Added an in-app DEV updater backed by OmniCore GitHub Releases.
+- Added semantic version comparison and APK SHA-256 verification before installation.
+- Integrated Android `PackageInstaller` for user-approved in-place updates.
+- Introduced a stable **DEV-only** signing identity for v0.6.0+ development builds.
+- Migration from v0.5.0 or older requires one final uninstall because older GitHub-runner debug builds were signed with different ephemeral certificates.
+
+### Build / validation
+- Added Runtime v7 and `gl_presenter` to the native build.
+- CI validates the stable DEV signing certificate.
+- CI continues validating native 16 KB ELF alignment and APK `zipalign -P 16` compatibility.
+- The v0.6.0 APK and corresponding pinned PCSX-ReARMed source bundle are published through GitHub Releases.
+
+## 0.5.0 — Decoupled Runtime
+
+- Moved all `ANativeWindow` work off the libretro emulation thread.
+- Added a latest-frame mailbox and independent render worker.
+- Prevented display stalls from starving `retro_run()` and the audio producer.
+- Increased video telemetry around generated, black, dropped and presented frames.
+- Reworked AAudio startup so playback begins only after a real sample reservoir is available.
+- Expanded adaptive audio diagnostics using frontend ring underruns in addition to platform xruns.
+
+## 0.4.0 — Runtime Foundation
+
+- Added a compatibility-first Android video path and disabled experimental direct software framebuffer access by default.
+- Added primed AAudio output, bounded ring latency, live buffer tuning and sample-rate adaptation.
+- Added hybrid libretro FPS/audio clock pacing with runtime A/V telemetry.
+- Fixed PCSX-ReARMed threaded-rendering option values and safer compatibility defaults.
+- Added BIOS health detection without bundling firmware.
+- Prevented thermal-policy transitions from reopening the live AAudio stream.
+
+## 0.2.0 — First functional PS1 backend
 
 ### Emulation
-- Added first real backend path: PCSX-ReARMed/libretro for PlayStation.
+- Added PCSX-ReARMed/libretro as the first real backend.
 - Added ARM64/ARMv7 core build scripts pinned to a reproducible upstream revision.
-- Added native libretro host, PS1 video/audio/input, memory-card save RAM and save states.
-- Added touch and external-controller digital input.
+- Added the native libretro host, PS1 video/audio/input, save RAM and save states.
+- Added touch and external-controller input.
 
-### SmartPerf 2
+### SmartPerf
 - Added device-aware performance modes and thermal adaptation.
-- Added ADPF Performance Hint integration with measured per-frame work duration.
-- Added Android Surface frame-rate hint support.
-- Added RGB565 render fast path.
-- Reworked audio ring to block copies and bounded latency capacity.
-- Fixed libretro audio backpressure reporting so the core sees the number of stereo frames actually accepted instead of a false full-consumption result.
-- Added adaptive AAudio buffering based on xruns and internal starvation.
-- Added headroom-aware deadline frame pacing.
-- Added background content preparation and zero-copy seekable SAF path.
-- Increased fallback copy block size to 256 KiB to reduce I/O overhead on large disc images without materially increasing memory pressure.
-- Cached hardware profile detection.
+- Added Android Performance Hint / ADPF integration.
+- Added Surface frame-rate hints, frame pacing and adaptive AAudio buffering.
+- Added background content preparation and seekable SAF direct-access paths.
+- Added conservative device profiling and native runtime optimization for performance testing.
 
 ### Build / compatibility
-- Updated dependency baseline to the current stable Compose BOM 2026.06.00.
-- Added 16 KB ELF/APK alignment verification in CI using `llvm-readelf` LOAD-segment alignment plus `zipalign -P 16`.
-- Kept native debug runtime optimized with `-O2` for meaningful device measurements.
-- Added corresponding PCSX-ReARMed source artifact to CI.
+- Added 16 KB ELF/APK alignment verification in CI.
+- Added corresponding PCSX-ReARMed source artifacts to the cloud build.
 
-### Known limits
-- PS1 v0.2 focuses on single-file games; CUE/M3U disk-control support is not implemented yet.
-- Analog sticks/remapping are not implemented yet.
-- N64, PSP, Wii, PS2 and Switch are not emulated yet; their frontend slots remain planned.
+### Scope
+- PS1 became the first functional console target.
+- N64, PSP, Wii, PS2 and Switch remained planned frontend/backend milestones.
