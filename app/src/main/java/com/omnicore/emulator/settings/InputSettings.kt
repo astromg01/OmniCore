@@ -30,12 +30,18 @@ object InputSettings {
     fun resolve(context: Context): Config {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val modeRaw = prefs.getString(KEY_ANALOG_MODE, AnalogMode.SMART.storage)
+        val analogMode = AnalogMode.entries.firstOrNull { it.storage == modeRaw } ?: AnalogMode.SMART
+        val defaultShowDpad = analogMode == AnalogMode.DPAD
         return Config(
-            analogMode = AnalogMode.entries.firstOrNull { it.storage == modeRaw } ?: AnalogMode.SMART,
+            analogMode = analogMode,
             touchOpacity = prefs.getFloat(KEY_TOUCH_OPACITY, 0.82f).coerceIn(0.35f, 1f),
             touchScale = prefs.getFloat(KEY_TOUCH_SCALE, 1f).coerceIn(0.80f, 1.20f),
             haptics = prefs.getBoolean(KEY_HAPTICS, false),
-            showDpad = prefs.getBoolean(KEY_SHOW_DPAD, true)
+            showDpad = if (prefs.contains(KEY_SHOW_DPAD)) {
+                prefs.getBoolean(KEY_SHOW_DPAD, defaultShowDpad)
+            } else {
+                defaultShowDpad
+            }
         )
     }
 
