@@ -34,7 +34,15 @@ jobs:
           grep -q 'Mauricio.gamedev' README.md
           grep -q 'current%20DEV-0.9.0' README.md
           grep -q 'Desenvolvido por Mauricio.gamedev' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
-          ! grep -RIn --exclude='*.b64' --exclude-dir=.git --exclude-dir=build --exclude-dir=.gradle --exclude-dir=pcsx_rearmed 'astromg01' .
+          ! grep -RIn \
+            --exclude='*.b64' \
+            --exclude='update_identity.py' \
+            --exclude='identity-migrate.yml' \
+            --exclude-dir=.git \
+            --exclude-dir=build \
+            --exclude-dir=.gradle \
+            --exclude-dir=pcsx_rearmed \
+            'astromg01' .
 
       - name: Commit identity migration
         shell: bash
