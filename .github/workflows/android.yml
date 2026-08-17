@@ -100,26 +100,25 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v0.2.0-dev"
-          TITLE="OmniCore v0.2.0 Development Build"
-          NOTES="Automated development build with the pinned PCSX-ReARMed PS1 core. ROMs, BIOS, firmware and keys are not included."
+          TAG="v0.2.1-dev"
+          TITLE="OmniCore v0.2.1 Development Build"
+          NOTES="PS1 CUE/BIN and folder import milestone. Includes the pinned PCSX-ReARMed core. ROMs, BIOS, firmware and keys are not included."
           APK="app/build/outputs/apk/debug/app-debug.apk"
           SOURCE="build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz"
 
-          cp "$APK" build/OmniCore-v0.2.0-debug.apk
-          sha256sum build/OmniCore-v0.2.0-debug.apk > build/OmniCore-v0.2.0-debug.sha256
+          cp "$APK" build/OmniCore-v0.2.1-debug.apk
+          sha256sum build/OmniCore-v0.2.1-debug.apk > build/OmniCore-v0.2.1-debug.sha256
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES" --prerelease
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES" --prerelease --target "$(git rev-parse HEAD)"
           else
-            gh release create "$TAG" --verify-tag --title "$TITLE" --notes "$NOTES" --prerelease
+            gh release create "$TAG" --target "$(git rev-parse HEAD)" --title "$TITLE" --notes "$NOTES" --prerelease
           fi
 
           gh release upload "$TAG" \
-            build/OmniCore-v0.2.0-debug.apk \
-            build/OmniCore-v0.2.0-debug.sha256 \
+            build/OmniCore-v0.2.1-debug.apk \
+            build/OmniCore-v0.2.1-debug.sha256 \
             "$SOURCE" \
             --clobber
 
-          # Do not report success unless the release object is actually readable.
           gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '{tag_name,name,draft,prerelease,html_url,assets:[.assets[].name]}'
