@@ -23,7 +23,7 @@ std::string toString(JNIEnv* env, jstring value) {
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_omnicore_emulator_core_nativebridge_NativeBridge_nativeRuntimeVersion(
         JNIEnv* env, jobject /* thiz */) {
-    return env->NewStringUTF("OmniCore Native Runtime 0.2.0 / libretro host v3 / SmartPerf 2");
+    return env->NewStringUTF("OmniCore Native Runtime 0.3.0 / libretro host v4 / SmartPerf 3");
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -46,7 +46,9 @@ Java_com_omnicore_emulator_core_nativebridge_NativeBridge_nativeStartPs1(
         jint audioBufferBursts,
         jboolean tryExclusiveAudio,
         jboolean preferPowerEfficiency,
-        jboolean aggressiveFramePacing) {
+        jboolean aggressiveFramePacing,
+        jstring coreOptions,
+        jboolean dualShock) {
     if (!surface) return JNI_FALSE;
 
     ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
@@ -73,7 +75,9 @@ Java_com_omnicore_emulator_core_nativebridge_NativeBridge_nativeStartPs1(
             .tryExclusiveAudio = tryExclusiveAudio == JNI_TRUE,
             .preferPowerEfficiency = preferPowerEfficiency == JNI_TRUE,
             .aggressiveFramePacing = aggressiveFramePacing == JNI_TRUE
-        }
+        },
+        toString(env, coreOptions),
+        dualShock == JNI_TRUE
     );
 
     // LibretroSession owns the ANativeWindow reference from this point onward.
@@ -98,7 +102,6 @@ Java_com_omnicore_emulator_core_nativebridge_NativeBridge_nativeStop(
     }
     if (session) session->stop();
 }
-
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_omnicore_emulator_core_nativebridge_NativeBridge_nativeUpdatePerformancePolicy(
@@ -129,6 +132,19 @@ Java_com_omnicore_emulator_core_nativebridge_NativeBridge_nativeSetButton(
     if (gSession && id >= 0 && id < 16) {
         gSession->setButton(static_cast<unsigned>(id), pressed == JNI_TRUE);
     }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_omnicore_emulator_core_nativebridge_NativeBridge_nativeSetAnalog(
+        JNIEnv* /* env */, jobject /* thiz */, jint stick, jint x, jint y) {
+    std::lock_guard<std::mutex> lock(gSessionMutex);
+    if (!gSession || stick < 0 || stick > 1) return;
+    const auto clampAxis = [](jint value) -> std::int16_t {
+        if (value < -32768) value = -32768;
+        if (value > 32767) value = 32767;
+        return static_cast<std::int16_t>(value);
+    };
+    gSession->setAnalog(static_cast<unsigned>(stick), clampAxis(x), clampAxis(y));
 }
 
 extern "C" JNIEXPORT void JNICALL
