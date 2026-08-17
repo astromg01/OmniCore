@@ -35,6 +35,7 @@ import com.omnicore.emulator.storage.Ps1Files
 import com.omnicore.emulator.storage.Ps1BiosHealth
 import com.omnicore.emulator.storage.SafGameSource
 import java.io.File
+import java.security.MessageDigest
 
 class EmulationActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var root: FrameLayout
@@ -46,6 +47,7 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
     private val handler = Handler(Looper.getMainLooper())
     private var sessionDescriptors: List<ParcelFileDescriptor> = emptyList()
     private var sessionDir: File? = null
+    private var sessionPersistent = false
     private var preparationThread: Thread? = null
     @Volatile private var destroyed = false
     private var started = false
@@ -197,8 +199,11 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
             val width = right - left
             val height = bottom - top
             if (width <= 0 || height <= 0) return@addOnLayoutChangeListener
-            val targetWidth = minOf(width, (height * 4f / 3f).toInt())
-            val targetHeight = minOf(height, (targetWidth * 3f / 4f).toInt())
+            val (targetWidth, targetHeight) = when (ps1Config.aspectMode) {
+                Ps1Settings.AspectMode.ORIGINAL_4_3 -> fitAspect(width, height, 4f / 3f)
+                Ps1Settings.AspectMode.WIDE_16_9 -> fitAspect(width, height, 16f / 9f)
+                Ps1Settings.AspectMode.FULLSCREEN -> width to height
+            }
             val params = surfaceView.layoutParams as FrameLayout.LayoutParams
             if (params.width != targetWidth || params.height != targetHeight) {
                 params.width = targetWidth
@@ -231,11 +236,12 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
     private data class PreparedContent(
         val path: String,
         val descriptors: List<ParcelFileDescriptor>,
-        val sessionDir: File
+        val sessionDir: File,
+        val persistent: Boolean = false
     ) : AutoCloseable {
         override fun close() {
             descriptors.forEach { descriptor -> runCatching { descriptor.close() } }
-            runCatching { sessionDir.deleteRecursively() }
+            if (!persistent) runCatching { sessionDir.deleteRecursively() }
         }
     }
 
@@ -252,6 +258,7 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
                 result.onSuccess { prepared ->
                     sessionDescriptors = prepared.descriptors
                     sessionDir = prepared.sessionDir
+                    sessionPersistent = prepared.persistent
                     gamePath = prepared.path
                     statusView.text = "PREP 3/3 • conteúdo pronto, iniciando core…"
                     if (surfaceView.holder.surface.isValid) tryStart(surfaceView.holder.surface)
@@ -290,8 +297,8 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun prepareCueSession(cueUri: Uri, folderUri: Uri?, companionUris: List<Uri>): PreparedContent {
-        val dir = freshSessionDir()
         val descriptors = mutableListOf<ParcelFileDescriptor>()
+        val dir = cueCacheDir()
         return try {
             ensurePreparationActive()
             val sources = if (folderUri != null) {
@@ -303,38 +310,80 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
             val cueText = SafGameSource.readCueText(this, cueUri)
             val references = SafGameSource.cueReferences(cueText)
             require(references.isNotEmpty()) { "O CUE não contém nenhuma linha FILE reconhecível." }
-            statusView.post { statusView.text = "PREP 2/3 • vinculando ${references.size} faixa(s)…" }
 
             val byName = sources.associateBy { it.name.lowercase() }
-            val resolvedNames = mutableMapOf<String, String>()
-            val stagedUris = mutableSetOf<String>()
-
-            references.forEach { reference ->
-                ensurePreparationActive()
+            val requiredTracks = references.map { reference ->
                 val baseName = SafGameSource.normalizeReference(reference)
-                val source = byName[baseName.lowercase()]
+                byName[baseName.lowercase()]
                     ?: error("Faixa '$baseName' citada no CUE não encontrada. Importe a pasta completa.")
+            }
+            val auxiliaries = sources.filter { it.extension == "sbi" }
+            val fingerprint = cueFingerprint(cueText, (requiredTracks + auxiliaries).distinctBy { it.uri.toString() })
+            val marker = File(dir, ".source-fingerprint")
+            val localCue = File(dir, "game.cue")
+
+            val cacheValid = runCatching {
+                marker.isFile && marker.readText(Charsets.UTF_8) == fingerprint &&
+                    localCue.isFile && localCue.length() > 0L &&
+                    validateCueSession(localCue).let { true }
+            }.getOrDefault(false)
+
+            if (cacheValid) {
+                statusView.post { statusView.text = "PREP 2/3 • cache CUE/BIN validado — início rápido" }
+                return PreparedContent(localCue.absolutePath, emptyList(), dir, persistent = true)
+            }
+
+            runCatching { dir.deleteRecursively() }
+            require(dir.mkdirs() || dir.isDirectory) { "Não consegui criar o cache persistente do jogo." }
+            statusView.post { statusView.text = "PREP 2/3 • preparando ${references.size} faixa(s) pela primeira vez…" }
+
+            val resolvedNames = mutableMapOf<String, String>()
+            requiredTracks.forEachIndexed { index, source ->
+                ensurePreparationActive()
+                val reference = references[index]
+                val baseName = SafGameSource.normalizeReference(reference)
                 val safeName = safeFileName(source.name)
                 resolvedNames[baseName.lowercase()] = safeName
-                if (stagedUris.add(source.uri.toString())) stageDocument(source.uri, File(dir, safeName), descriptors, forceCopy = true)
+                stageDocument(source.uri, File(dir, safeName), descriptors, forceCopy = true)
             }
 
-            sources.filter { it.extension == "sbi" }.forEach { source ->
-                if (stagedUris.add(source.uri.toString())) stageDocument(source.uri, File(dir, safeFileName(source.name)), descriptors, forceCopy = true)
+            auxiliaries.forEach { source ->
+                stageDocument(source.uri, File(dir, safeFileName(source.name)), descriptors, forceCopy = true)
             }
 
-            val localCue = File(dir, "game.cue")
             val rewrittenCue = SafGameSource.rewriteCueReferences(cueText, resolvedNames)
                 .removePrefix("\uFEFF")
             localCue.writeText(rewrittenCue, Charsets.UTF_8)
             validateCueSession(localCue)
+            marker.writeText(fingerprint, Charsets.UTF_8)
             ensurePreparationActive()
-            PreparedContent(localCue.absolutePath, descriptors.toList(), dir)
+            PreparedContent(localCue.absolutePath, descriptors.toList(), dir, persistent = true)
         } catch (error: Throwable) {
             descriptors.forEach { runCatching { it.close() } }
             runCatching { dir.deleteRecursively() }
             throw error
         }
+    }
+
+    private fun cueCacheDir(): File {
+        val safeKey = gameKey.replace(Regex("[^A-Za-z0-9_-]"), "_")
+        return File(cacheDir, "ps1-disc-cache/$safeKey")
+    }
+
+    private fun cueFingerprint(cueText: String, sources: List<SafGameSource.Document>): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(cueText.toByteArray(Charsets.UTF_8))
+        sources.sortedBy { it.name.lowercase() }.forEach { source ->
+            digest.update(0.toByte())
+            digest.update(source.name.lowercase().toByteArray(Charsets.UTF_8))
+            digest.update('|'.code.toByte())
+            digest.update(source.sizeBytes.toString().toByteArray(Charsets.UTF_8))
+            digest.update('|'.code.toByte())
+            digest.update(source.lastModifiedMillis.toString().toByteArray(Charsets.UTF_8))
+            digest.update('|'.code.toByte())
+            digest.update(source.uri.toString().toByteArray(Charsets.UTF_8))
+        }
+        return digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
     }
 
     private fun freshSessionDir(): File {
@@ -479,8 +528,9 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         stopSession()
         sessionDescriptors.forEach { runCatching { it.close() } }
         sessionDescriptors = emptyList()
-        runCatching { sessionDir?.deleteRecursively() }
+        if (!sessionPersistent) runCatching { sessionDir?.deleteRecursively() }
         sessionDir = null
+        sessionPersistent = false
         super.onDestroy()
     }
 
@@ -566,10 +616,20 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
             View.SYSTEM_UI_FLAG_LAYOUT_STABLE
     }
 
+    private fun fitAspect(width: Int, height: Int, aspect: Float): Pair<Int, Int> {
+        if (width <= 0 || height <= 0 || aspect <= 0f) return width to height
+        val widthFromHeight = (height * aspect).toInt().coerceAtLeast(1)
+        return if (widthFromHeight <= width) {
+            widthFromHeight to height
+        } else {
+            width to (width / aspect).toInt().coerceAtLeast(1)
+        }
+    }
+
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     companion object {
-        private const val COPY_BUFFER_BYTES = 256 * 1024
+        private const val COPY_BUFFER_BYTES = 2 * 1024 * 1024
         private const val EXTRA_GAME_URI = "gameUri"
         private const val EXTRA_GAME_ID = "gameId"
         private const val EXTRA_GAME_TITLE = "gameTitle"

@@ -11,6 +11,12 @@ object Ps1Settings {
         CUSTOM("custom", "Custom", "Ajustes avançados definidos por você")
     }
 
+    enum class AspectMode(val storage: String, val label: String, val subtitle: String) {
+        ORIGINAL_4_3("4_3", "4:3 original", "Proporção clássica do PlayStation"),
+        WIDE_16_9("16_9", "16:9", "Expande a apresentação para widescreen"),
+        FULLSCREEN("fullscreen", "Tela cheia", "Preenche toda a área disponível")
+    }
+
     data class Config(
         val preset: Preset,
         val enhancedResolution: Boolean,
@@ -22,16 +28,14 @@ object Ps1Settings {
         val frameskipAuto: Boolean,
         val cdReadAhead: Int,
         val interpolation: String,
-        val dualShock: Boolean
+        val dualShock: Boolean,
+        val showBiosBootLogo: Boolean,
+        val aspectMode: AspectMode
     ) {
         fun toCoreOptions(): String = buildList {
             add("pcsx_rearmed_bios=auto")
             add("pcsx_rearmed_drc=enabled")
             add("pcsx_rearmed_drc_thread=auto")
-            // Compatibility-first video contract for Runtime v7+: force the
-            // core's documented XRGB8888 output. The GLES presenter converts
-            // this explicitly to RGBA, removing RGB565/native-surface ambiguity.
-            add("pcsx_rearmed_rgb32_output=enabled")
             add("pcsx_rearmed_gpu_thread_rendering=${if (!threadedGpu) "disabled" else if (preset == Preset.PERFORMANCE) "enabled" else "auto"}")
             add("pcsx_rearmed_spu_thread=${if (threadedSpu) "enabled" else "disabled"}")
             add("pcsx_rearmed_neon_enhancement_enable=${if (enhancedResolution) "enabled" else "disabled"}")
@@ -52,11 +56,10 @@ object Ps1Settings {
             add("pcsx_rearmed_gpu_slow_llists=auto")
             add("pcsx_rearmed_fractional_framerate=auto")
             add("pcsx_rearmed_neon_interlace_enable_v2=auto")
-            // The historical option names are inverted: "disabled" means the
-            // no-audio/no-XA hack is disabled, i.e. normal CD/XA audio stays on.
+            add("pcsx_rearmed_rgb32_output=enabled")
             add("pcsx_rearmed_noxadecoding=disabled")
             add("pcsx_rearmed_nocdaudio=disabled")
-            add("pcsx_rearmed_show_bios_bootlogo=disabled")
+            add("pcsx_rearmed_show_bios_bootlogo=${if (showBiosBootLogo) "enabled" else "disabled"}")
             add("pcsx_rearmed_memcard1=libretro")
         }.joinToString("\n")
     }
@@ -64,6 +67,8 @@ object Ps1Settings {
     private const val PREFS = "ps1_settings"
     private const val KEY_PRESET = "preset"
     private const val KEY_DUALSHOCK = "dualshock"
+    private const val KEY_BOOT_LOGO = "bios_boot_logo"
+    private const val KEY_ASPECT_MODE = "aspect_mode"
     private const val K_ENHANCED = "enhanced"
     private const val K_SPEED = "enhanced_speed"
     private const val K_TEXTURE = "texture_adj"
@@ -93,19 +98,45 @@ object Ps1Settings {
             .edit().putBoolean(KEY_DUALSHOCK, enabled).apply()
     }
 
-    private fun presetConfig(preset: Preset, dualShock: Boolean): Config = when (preset) {
-        Preset.PERFORMANCE -> Config(preset, false, false, false, false, true, true, true, 32, "simple", dualShock)
-        Preset.BALANCED -> Config(preset, false, false, true, true, false, false, false, 8, "simple", dualShock)
-        Preset.QUALITY -> Config(preset, true, false, true, true, false, false, false, 8, "gaussian", dualShock)
-        else -> Config(Preset.SMART, false, false, false, true, false, false, false, 8, "simple", dualShock)
+    fun readBiosBootLogo(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_BOOT_LOGO, true)
+
+    fun saveBiosBootLogo(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_BOOT_LOGO, enabled).apply()
+    }
+
+    fun readAspectMode(context: Context): AspectMode {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_ASPECT_MODE, AspectMode.ORIGINAL_4_3.storage)
+        return AspectMode.entries.firstOrNull { it.storage == raw } ?: AspectMode.ORIGINAL_4_3
+    }
+
+    fun saveAspectMode(context: Context, mode: AspectMode) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putString(KEY_ASPECT_MODE, mode.storage).apply()
+    }
+
+    private fun presetConfig(
+        preset: Preset,
+        dualShock: Boolean,
+        showBiosBootLogo: Boolean,
+        aspectMode: AspectMode
+    ): Config = when (preset) {
+        Preset.PERFORMANCE -> Config(preset, false, false, false, false, true, true, true, 32, "simple", dualShock, showBiosBootLogo, aspectMode)
+        Preset.BALANCED -> Config(preset, false, false, true, true, false, false, false, 8, "simple", dualShock, showBiosBootLogo, aspectMode)
+        Preset.QUALITY -> Config(preset, true, false, true, true, false, false, false, 8, "gaussian", dualShock, showBiosBootLogo, aspectMode)
+        else -> Config(Preset.SMART, false, false, false, true, false, false, false, 8, "simple", dualShock, showBiosBootLogo, aspectMode)
     }
 
     fun resolve(context: Context): Config {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val preset = readPreset(context)
         val dualShock = readDualShock(context)
-        if (preset != Preset.CUSTOM) return presetConfig(preset, dualShock)
-        val fallback = presetConfig(Preset.SMART, dualShock)
+        val bootLogo = readBiosBootLogo(context)
+        val aspectMode = readAspectMode(context)
+        if (preset != Preset.CUSTOM) return presetConfig(preset, dualShock, bootLogo, aspectMode)
+        val fallback = presetConfig(Preset.SMART, dualShock, bootLogo, aspectMode)
         return Config(
             preset = Preset.CUSTOM,
             enhancedResolution = prefs.getBoolean(K_ENHANCED, fallback.enhancedResolution),
@@ -117,7 +148,9 @@ object Ps1Settings {
             frameskipAuto = prefs.getBoolean(K_FRAMESKIP, fallback.frameskipAuto),
             cdReadAhead = prefs.getInt(K_READAHEAD, fallback.cdReadAhead),
             interpolation = prefs.getString(K_INTERPOLATION, fallback.interpolation) ?: fallback.interpolation,
-            dualShock = dualShock
+            dualShock = dualShock,
+            showBiosBootLogo = bootLogo,
+            aspectMode = aspectMode
         )
     }
 
@@ -133,6 +166,8 @@ object Ps1Settings {
             .putBoolean(K_FRAMESKIP, config.frameskipAuto)
             .putInt(K_READAHEAD, config.cdReadAhead)
             .putString(K_INTERPOLATION, config.interpolation)
+            .putBoolean(KEY_BOOT_LOGO, config.showBiosBootLogo)
+            .putString(KEY_ASPECT_MODE, config.aspectMode.storage)
             .apply()
     }
 }

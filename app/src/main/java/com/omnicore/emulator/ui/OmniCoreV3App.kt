@@ -501,6 +501,7 @@ private fun HubTuning(biosCount: Int, gameCount: Int, onImportBios: () -> Unit) 
     var config by remember { mutableStateOf(Ps1Settings.resolve(context)) }
     var updateStatus by remember { mutableStateOf("Canal DEV • pronto para verificar") }
     var updateRelease by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
+    var cacheStatus by remember { mutableStateOf("CUE/BIN será reutilizado após a primeira preparação.") }
 
     fun checkUpdate() {
         updateStatus = "Verificando GitHub Releases…"
@@ -582,6 +583,52 @@ private fun HubTuning(biosCount: Int, gameCount: Int, onImportBios: () -> Unit) 
                 SettingSwitch("GPU em thread", "Executa comandos gráficos em thread auxiliar.", config.threadedGpu) {
                     saveCustom(config.copy(threadedGpu = it))
                 }
+            }
+        }
+        item {
+            HubSection("Tela e inicialização", "Mantém a base de vídeo 0.7 e adiciona apresentação configurável.") {
+                SettingSwitch(
+                    "Boot clássico do PS1",
+                    "Com uma BIOS real válida, mostra a tela/logo clássico antes do jogo. Pode ser desligado para máxima compatibilidade.",
+                    config.showBiosBootLogo
+                ) {
+                    Ps1Settings.saveBiosBootLogo(context, it)
+                    refresh()
+                }
+                Text("Formato de tela", fontWeight = FontWeight.Bold)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(Ps1Settings.AspectMode.entries) { mode ->
+                        FilterChip(
+                            selected = config.aspectMode == mode,
+                            onClick = { Ps1Settings.saveAspectMode(context, mode); refresh() },
+                            label = { Text(mode.label) }
+                        )
+                    }
+                }
+                Text(
+                    when (config.aspectMode) {
+                        Ps1Settings.AspectMode.ORIGINAL_4_3 -> "4:3 preserva a proporção original do console."
+                        Ps1Settings.AspectMode.WIDE_16_9 -> "16:9 expande a apresentação. Não é um patch widescreen de geometria 3D por jogo."
+                        Ps1Settings.AspectMode.FULLSCREEN -> "Tela cheia preenche toda a área disponível e pode deformar a proporção."
+                    },
+                    color = HubSoft,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+        item {
+            HubSection("Início rápido PS1", "CUE/BIN é preparado uma vez e reaproveitado enquanto a origem não mudar.") {
+                Text(cacheStatus, color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Button(onClick = {
+                    val cacheDir = context.cacheDir.resolve("ps1-disc-cache")
+                    val cleared = !cacheDir.exists() || cacheDir.deleteRecursively()
+                    cacheStatus = if (cleared) "Cache CUE/BIN limpo. O próximo boot fará uma nova preparação." else "Não consegui limpar todo o cache agora."
+                }) { Text("Limpar cache CUE/BIN") }
+                Text(
+                    "O Android ainda pode limpar este cache automaticamente quando precisar de espaço.",
+                    color = Color(0xFF737C98),
+                    style = MaterialTheme.typography.labelSmall
+                )
             }
         }
         item {

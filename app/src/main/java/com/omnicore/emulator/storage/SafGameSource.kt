@@ -14,7 +14,8 @@ object SafGameSource {
         val uri: Uri,
         val name: String,
         val sizeBytes: Long = 0L,
-        val mimeType: String? = null
+        val mimeType: String? = null,
+        val lastModifiedMillis: Long = 0L
     ) {
         val extension: String get() = name.substringAfterLast('.', "").lowercase()
         val isDirectory: Boolean get() = mimeType == DocumentsContract.Document.MIME_TYPE_DIR
@@ -28,7 +29,8 @@ object SafGameSource {
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
             DocumentsContract.Document.COLUMN_MIME_TYPE,
-            DocumentsContract.Document.COLUMN_SIZE
+            DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED
         )
 
         return buildList {
@@ -37,17 +39,20 @@ object SafGameSource {
                 val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
                 val mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
                 val sizeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+                val modifiedIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
                 while (cursor.moveToNext()) {
                     val documentId = if (idIndex >= 0) cursor.getString(idIndex) else continue
                     val name = if (nameIndex >= 0) cursor.getString(nameIndex) else documentId
                     val mime = if (mimeIndex >= 0 && !cursor.isNull(mimeIndex)) cursor.getString(mimeIndex) else null
                     val size = if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) cursor.getLong(sizeIndex) else 0L
+                    val modified = if (modifiedIndex >= 0 && !cursor.isNull(modifiedIndex)) cursor.getLong(modifiedIndex) else 0L
                     add(
                         Document(
                             uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId),
                             name = name,
                             sizeBytes = size,
-                            mimeType = mime
+                            mimeType = mime,
+                            lastModifiedMillis = modified
                         )
                     )
                 }
@@ -57,14 +62,16 @@ object SafGameSource {
 
     fun metadata(context: Context, uri: Uri): Document {
         val resolver = context.contentResolver
-        val projection = arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
+        val projection = arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED)
         resolver.query(uri, projection, null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
                 val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                 val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                val modifiedIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
                 val name = if (nameIndex >= 0) cursor.getString(nameIndex) else uri.lastPathSegment ?: "game"
                 val size = if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) cursor.getLong(sizeIndex) else 0L
-                return Document(uri = uri, name = name, sizeBytes = size)
+                val modified = if (modifiedIndex >= 0 && !cursor.isNull(modifiedIndex)) cursor.getLong(modifiedIndex) else 0L
+                return Document(uri = uri, name = name, sizeBytes = size, lastModifiedMillis = modified)
             }
         }
         return Document(uri = uri, name = uri.lastPathSegment ?: "game")
