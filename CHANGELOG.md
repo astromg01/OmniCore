@@ -1,3 +1,13 @@
+# OmniCore 0.4.0 — Runtime Foundation
+
+- Compatibility-first Android video path; experimental direct Surface framebuffer disabled by default.
+- Primed AAudio output, bounded ring latency, live buffer tuning and sample-rate adaptation.
+- Hybrid libretro FPS/audio clock pacing with runtime video/audio telemetry.
+- Fixed PCSX-ReARMed threaded-rendering option values (`sync`/`async`) and safer compatibility defaults.
+- BIOS health detection (verified retail / unknown / HLE) without bundling firmware.
+- Runtime no longer reopens AAudio during thermal policy transitions.
+- Runtime v4 retained in source as a rollback reference; app builds with v5.
+
 # Changelog
 
 ## 0.2.0

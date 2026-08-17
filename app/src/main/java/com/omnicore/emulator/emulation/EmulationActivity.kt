@@ -32,6 +32,7 @@ import com.omnicore.emulator.model.GameEntry
 import com.omnicore.emulator.performance.PerformanceManager
 import com.omnicore.emulator.settings.Ps1Settings
 import com.omnicore.emulator.storage.Ps1Files
+import com.omnicore.emulator.storage.Ps1BiosHealth
 import com.omnicore.emulator.storage.SafGameSource
 import java.io.File
 
@@ -57,6 +58,7 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
     private var thermalMonitor: ThermalMonitor? = null
     private var successfulPolls = 0
     private var lastRuntimeMessage = ""
+    private var biosLabel = "HLE"
 
     private val statusPoll = object : Runnable {
         override fun run() {
@@ -69,12 +71,15 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
                         statusView.visibility = View.VISIBLE
                         successfulPolls = 0
                     }
-                    if (text.startsWith("BOOT 6/6")) {
+                    if (text.startsWith("BOOT 6/6") || text.startsWith("RUN OK")) {
                         successfulPolls++
                         if (successfulPolls >= 7) statusView.visibility = View.GONE
-                    } else if (text.startsWith("BOOT E")) {
+                    } else if (text.startsWith("BOOT E") || text.startsWith("RUNTIME E")) {
                         statusView.visibility = View.VISIBLE
                         statusView.setBackgroundColor(Color.argb(225, 90, 15, 28))
+                    } else if (text.startsWith("RUNTIME W")) {
+                        statusView.visibility = View.VISIBLE
+                        statusView.setBackgroundColor(Color.argb(220, 88, 58, 8))
                     }
                 }
             }
@@ -90,6 +95,8 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         deviceProfile = PerformanceManager.profile(this)
         performanceConfig = PerformanceManager.initialConfig(this)
         ps1Config = Ps1Settings.resolve(this)
+        val biosHealth = Ps1BiosHealth.inspect(Ps1Files.systemDir(this))
+        biosLabel = biosHealth.shortLabel
         registerThermalAdaptation()
 
         gameKey = intent.getStringExtra(EXTRA_GAME_ID).orEmpty().ifBlank { "game" }
@@ -146,7 +153,7 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         ).apply { topMargin = dp(10) })
 
         presetView = TextView(this).apply {
-            text = "${ps1Config.preset.label} • ${if (ps1Config.dualShock) "DualShock" else "Digital"}"
+            text = "${ps1Config.preset.label} • ${if (ps1Config.dualShock) "DualShock" else "Digital"} • $biosLabel"
             setTextColor(Color.argb(210, 226, 224, 255))
             textSize = 10f
             setPadding(dp(9), dp(5), dp(9), dp(5))

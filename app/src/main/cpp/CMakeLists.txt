@@ -5,7 +5,7 @@ add_library(
     omnicore_runtime
     SHARED
     native_bridge.cpp
-    libretro_host_v4.cpp
+    libretro_host_v5.cpp
 )
 
 target_compile_features(omnicore_runtime PRIVATE cxx_std_20)
