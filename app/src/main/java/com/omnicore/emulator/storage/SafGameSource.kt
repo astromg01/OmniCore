@@ -62,16 +62,17 @@ object SafGameSource {
 
     fun metadata(context: Context, uri: Uri): Document {
         val resolver = context.contentResolver
-        val projection = arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+        // OpenableColumns are broadly supported by arbitrary document/content
+        // providers. LAST_MODIFIED is intentionally not requested here because
+        // some non-DocumentsProvider sources reject unknown projection columns.
+        val projection = arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
         resolver.query(uri, projection, null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
                 val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                 val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
-                val modifiedIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
                 val name = if (nameIndex >= 0) cursor.getString(nameIndex) else uri.lastPathSegment ?: "game"
                 val size = if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) cursor.getLong(sizeIndex) else 0L
-                val modified = if (modifiedIndex >= 0 && !cursor.isNull(modifiedIndex)) cursor.getLong(modifiedIndex) else 0L
-                return Document(uri = uri, name = name, sizeBytes = size, lastModifiedMillis = modified)
+                return Document(uri = uri, name = name, sizeBytes = size)
             }
         }
         return Document(uri = uri, name = uri.lastPathSegment ?: "game")
