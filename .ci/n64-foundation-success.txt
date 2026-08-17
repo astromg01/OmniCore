@@ -1,3 +1,0 @@
-run_id=32079255592
-commit=8db86b0a3c4a7676547532a71be5be5ed3835fcc
-status=success
