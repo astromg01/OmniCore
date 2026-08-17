@@ -113,3 +113,19 @@ jobs:
           fi
           git commit -m "Expose isolated Nintendo 64 foundation [skip ci]"
           git push origin HEAD:agent/0.10.0-n64-foundation
+
+      - name: Record failure for automatic correction
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          if [[ ! -d .git ]]; then exit 0; fi
+          mkdir -p .ci
+          printf 'run_id=%s\ncommit=%s\n' "$GITHUB_RUN_ID" "$GITHUB_SHA" > .ci/n64-foundation-failure.txt
+          git config user.name "Mauricio.dev"
+          git config user.email "antoniomauriciorodriguesalves@gmail.com"
+          git add .ci/n64-foundation-failure.txt
+          git commit -m "Record N64 foundation validation failure [skip ci]" || true
+          git push origin HEAD:agent/0.10.0-n64-foundation || true
