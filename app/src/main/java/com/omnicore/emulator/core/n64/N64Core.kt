@@ -6,7 +6,6 @@ import com.omnicore.emulator.core.CoreState
 import com.omnicore.emulator.core.EmulatorCore
 import com.omnicore.emulator.model.ConsoleSystem
 import com.omnicore.emulator.model.GameEntry
-import com.omnicore.emulator.storage.N64Storage
 
 class N64Core : EmulatorCore {
     override val info = CoreInfo(
@@ -23,13 +22,13 @@ class N64Core : EmulatorCore {
         check(isAvailable()) {
             "O núcleo Nintendo 64 ainda não está empacotado neste build."
         }
-        val validation = N64RomValidator.validate(context, game).getOrThrow()
-        N64Storage.prepare(context)
+        val prepared = N64RomPreparer.prepare(context, game).getOrThrow()
         error(
             buildString {
                 append("N64 Foundation pronta: ")
-                append(validation.byteOrder.label)
-                if (!validation.extensionMatchesHeader) append(" • extensão será autocorrigida no cache")
+                append(prepared.sourceOrder.label)
+                append(" → cache z64")
+                if (prepared.reusedCache) append(" reutilizado")
                 append(". O host de execução entra no próximo marco.")
             }
         )
