@@ -27,11 +27,11 @@ jobs:
           git fetch --no-tags origin main
           git checkout -B main origin/main
 
-      - name: Validate Runtime v7 foundation
+      - name: Validate 0.7 video foundation
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'versionName = "0.6.0"' app/build.gradle.kts
+          grep -q 'versionName = "0.7.0"' app/build.gradle.kts
           grep -q 'libretro_host_v7.cpp' app/src/main/cpp/CMakeLists.txt
           grep -q 'gl_presenter.cpp' app/src/main/cpp/CMakeLists.txt
           grep -q 'GLESv2' app/src/main/cpp/CMakeLists.txt
@@ -40,6 +40,9 @@ jobs:
           test -f app/src/main/java/com/omnicore/emulator/update/UpdateManager.kt
           test -f app/src/main/java/com/omnicore/emulator/update/UpdateInstallReceiver.kt
           grep -q 'EGL-GLES presenter' app/src/main/cpp/native_bridge.cpp
+          grep -q 'setWillNotDraw(true)' app/src/main/java/com/omnicore/emulator/emulation/EmulationActivity.kt
+          ! grep -q 'surfaceView = SurfaceView(this).*setBackgroundColor' app/src/main/java/com/omnicore/emulator/emulation/EmulationActivity.kt || true
+          grep -q 'pcsx_rearmed_rgb32_output=enabled' app/src/main/java/com/omnicore/emulator/settings/Ps1Settings.kt
           ! grep -q 'libretro_host_v6.cpp' app/src/main/cpp/CMakeLists.txt
 
       - name: Verify Android toolchain
@@ -141,15 +144,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v0.6.0-dev"
-          TITLE="OmniCore v0.6.0 EGL/GLES Video Foundation"
-          NOTES="Major PS1 video/runtime revision. Runtime v7 keeps the decoupled emulation/audio pipeline that fixed audio starvation, but replaces the remaining CPU ANativeWindow blit with a dedicated EGL/OpenGL ES 2 texture presenter inspired by mature libretro frontend architecture. RGB565 uploads directly to GLES; XRGB8888/0RGB1555 are converted explicitly to RGBA to avoid native Surface channel/stride ambiguity. This build also adds an in-app GitHub DEV updater with SHA-256 verification and introduces a stable DEV-only signing certificate so future 0.6+ development builds can install over one another while preserving app data. IMPORTANT: builds through 0.5.0 used ephemeral GitHub-runner debug keys, so upgrading from 0.5.0 or older requires one final uninstall before installing 0.6.0. The public DEV key is not a production/Play signing key. Includes the pinned PCSX-ReARMed source bundle. ROMs, BIOS, firmware and console keys are not included."
+          TAG="v0.7.0-dev"
+          TITLE="OmniCore v0.7.0 Video Composition Fix"
+          NOTES="PS1 video composition revision based on real-device testing where emulation and audio were healthy but the display remained black. The emulation SurfaceView is now kept explicitly in its no-draw state instead of assigning it an opaque Android View background, preserving the SurfaceView hole/composition path for the independent EGL surface. The parent container owns letterboxing/background instead. PCSX-ReARMed is also forced to its documented XRGB8888 output path, which the existing GLES presenter converts explicitly to RGBA, removing RGB565/native-surface ambiguity during compatibility validation. Runtime v7 decoupled audio/video, EGL/GLES presenter, CUE/BIN handling, BIOS support, saves, touch input, SmartPerf and the in-app updater remain intact. This build uses the same stable DEV signing certificate as v0.6.0, so it can update in place. ROMs, BIOS, firmware and console keys are not included."
           APK="app/build/outputs/apk/debug/app-debug.apk"
           SOURCE="build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz"
           TARGET="$(git rev-parse HEAD)"
 
-          cp "$APK" build/OmniCore-v0.6.0-debug.apk
-          sha256sum build/OmniCore-v0.6.0-debug.apk > build/OmniCore-v0.6.0-debug.sha256
+          cp "$APK" build/OmniCore-v0.7.0-debug.apk
+          sha256sum build/OmniCore-v0.7.0-debug.apk > build/OmniCore-v0.7.0-debug.sha256
 
           backoff_sleep() {
             local attempt="$1"
@@ -179,8 +182,8 @@ jobs:
             local attempt
             for attempt in 1 2 3 4 5 6 7; do
               if gh release upload "$TAG" \
-                build/OmniCore-v0.6.0-debug.apk \
-                build/OmniCore-v0.6.0-debug.sha256 \
+                build/OmniCore-v0.7.0-debug.apk \
+                build/OmniCore-v0.7.0-debug.sha256 \
                 "$SOURCE" --clobber; then return 0; fi
               if (( attempt < 7 )); then backoff_sleep "$attempt"; fi
             done
