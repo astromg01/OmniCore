@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.os.SystemClock
+import android.util.SparseIntArray
 import android.text.InputType
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -97,10 +98,21 @@ class GamepadOverlayView(context: Context) : View(context) {
     private var editTargetKey: String? = null
     private var menuVisible = false
     private var activeUntilMs = 0L
-    private var gesturePeak = 0
-    private var gestureCaptured = false
+    private var fadeScheduledAtMs = 0L
+    private var fourFingerGestureLatched = false
+    private val buttonPointerTargets = SparseIntArray()
+    private var selectedEditKey: String? = null
     private var legacyStatusView: TextView? = null
-    private var wasRunning = false
+    private var cheatsAppliedForSession = false
+    private val scratchRect = RectF()
+    private val dpadProjectionCache: Array<Set<Int>> = Array(16) { mask ->
+        buildSet {
+            if (mask and 1 != 0) add(4)
+            if (mask and 2 != 0) add(5)
+            if (mask and 4 != 0) add(6)
+            if (mask and 8 != 0) add(7)
+        }
+    }
 
     private val menuHideRunnable = Runnable {
         if (!editMode) {
@@ -108,12 +120,14 @@ class GamepadOverlayView(context: Context) : View(context) {
             scheduleRedraw()
         }
     }
-    private val fadeRunnable = Runnable { scheduleRedraw() }
+    private val fadeRunnable = Runnable {
+        fadeScheduledAtMs = 0L
+        scheduleRedraw()
+    }
     private val legacyStatusGuard = object : Runnable {
         override fun run() {
             val status = legacyStatusView
             if (status != null) {
-                config = InputSettings.resolveForGame(context, gameKey)
                 val text = status.text?.toString().orEmpty()
                 val important = text.startsWith("PREP") || text.startsWith("BOOT E") ||
                     text.startsWith("RUNTIME E") || text.startsWith("RUNTIME W")
@@ -130,10 +144,13 @@ class GamepadOverlayView(context: Context) : View(context) {
     }
     private val cheatApplyGuard = object : Runnable {
         override fun run() {
-            val running = NativeBridge.isRunning()
-            if (running && !wasRunning) applyStoredCheats()
-            wasRunning = running
-            postDelayed(this, 500)
+            if (cheatsAppliedForSession || !isAttachedToWindow) return
+            if (NativeBridge.isRunning()) {
+                applyStoredCheats()
+                cheatsAppliedForSession = true
+            } else {
+                postDelayed(this, 250)
+            }
         }
     }
 
@@ -204,7 +221,8 @@ class GamepadOverlayView(context: Context) : View(context) {
         val analog = InputSettings.resolveControlPosition(context, "analog", analogDefault.first, analogDefault.second, gameKey)
         analogCx = w * analog.x
         analogCy = h * analog.y
-        analogRadius = base * 0.105f * scale
+        val analogScale = InputSettings.resolveControlScale(context, "analog", gameKey)
+        analogRadius = base * 0.105f * scale * analogScale
         if (analogPointerId == -1) {
             analogKnobX = analogCx
             analogKnobY = analogCy
@@ -213,7 +231,8 @@ class GamepadOverlayView(context: Context) : View(context) {
         fun make(key: String, id: Int, label: String, fx: Float, fy: Float, radius: Float, wide: Boolean = false): Region {
             val d = xy(key, fx, fy)
             val saved = InputSettings.resolveControlPosition(context, key, d.first, d.second, gameKey)
-            return Region(key, id, label, w * saved.x, h * saved.y, radius, wide)
+            val individualScale = InputSettings.resolveControlScale(context, key, gameKey)
+            return Region(key, id, label, w * saved.x, h * saved.y, radius * individualScale, wide)
         }
 
         regions = listOf(
@@ -278,7 +297,6 @@ class GamepadOverlayView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        config = InputSettings.resolveForGame(context, gameKey)
         if (config.controlsVisible || editMode) drawControls(canvas)
         if (editMode) drawEditorUi(canvas)
         drawMenuButton(canvas)
@@ -304,16 +322,17 @@ class GamepadOverlayView(context: Context) : View(context) {
         }
 
         textPaint.textSize = min(width, height) * 0.029f * config.touchScale
-        visibleRegions().forEach { region ->
+        regions.forEach { region ->
+            if (!isRegionVisible(region)) return@forEach
             val active = region.id in committedButtons
             val alpha = scaledAlpha(if (active) 165 else 54, if (active) config.touchOpacity else opacity)
             fillPaint.color = Color.argb(alpha, if (active) 218 else 235, if (active) 214 else 238, 255)
             if (region.wide) {
                 val halfW = region.radius * 1.55f
                 val halfH = region.radius * 0.68f
-                val rect = RectF(region.cx - halfW, region.cy - halfH, region.cx + halfW, region.cy + halfH)
-                canvas.drawRoundRect(rect, halfH, halfH, fillPaint)
-                canvas.drawRoundRect(rect, halfH, halfH, strokePaint)
+                scratchRect.set(region.cx - halfW, region.cy - halfH, region.cx + halfW, region.cy + halfH)
+                canvas.drawRoundRect(scratchRect, halfH, halfH, fillPaint)
+                canvas.drawRoundRect(scratchRect, halfH, halfH, strokePaint)
             } else {
                 canvas.drawCircle(region.cx, region.cy, region.radius, fillPaint)
                 canvas.drawCircle(region.cx, region.cy, region.radius, strokePaint)
@@ -350,23 +369,32 @@ class GamepadOverlayView(context: Context) : View(context) {
             canvas.drawText(label, rect.centerX(), textBaseline(rect.centerY()), textPaint)
         }
         textPaint.textSize = min(width, height) * 0.014f
-        canvas.drawText("3 dedos: menu • 4 dedos: overlay", panel.centerX(), panel.bottom - min(width, height) * 0.018f, textPaint)
+        canvas.drawText("4 dedos: ocultar/mostrar overlay", panel.centerX(), panel.bottom - min(width, height) * 0.018f, textPaint)
     }
 
     private fun drawEditorUi(canvas: Canvas) {
         textPaint.textSize = min(width, height) * 0.016f
-        for (index in 0..2) {
+        for (index in 0..4) {
             val rect = editorButtonRect(index)
             canvas.drawRoundRect(rect, rect.height() / 2f, rect.height() / 2f, if (index == 0) chromeAccentPaint else chromePaint)
             val label = when (index) {
                 0 -> "CONCLUIR"
                 1 -> if (config.showDpad) "SETAS ON" else "SETAS OFF"
-                else -> "RESTAURAR"
+                2 -> "RESTAURAR"
+                3 -> "TAM −"
+                else -> "TAM +"
             }
             canvas.drawText(label, rect.centerX(), textBaseline(rect.centerY()), textPaint)
         }
-        textPaint.textSize = min(width, height) * 0.017f
-        canvas.drawText("Arraste qualquer controle", width * 0.5f, height * 0.18f, textPaint)
+        textPaint.textSize = min(width, height) * 0.016f
+        val selected = selectedEditKey
+        val info = if (selected == null) {
+            "Toque ou arraste um controle para selecioná-lo"
+        } else {
+            val scale = (InputSettings.resolveControlScale(context, selected, gameKey) * 100f).toInt()
+            "Selecionado: ${selected.replace('_', ' ').uppercase()} • tamanho $scale%"
+        }
+        canvas.drawText(info, width * 0.5f, height * 0.225f, textPaint)
     }
 
     private fun menuButtonRect(): RectF {
@@ -402,10 +430,20 @@ class GamepadOverlayView(context: Context) : View(context) {
 
     private fun editorButtonRect(index: Int): RectF {
         val base = min(width, height).toFloat().coerceAtLeast(1f)
-        val buttonW = if (index == 0) base * 0.25f else base * 0.21f
+        val buttonW = when (index) {
+            0 -> base * 0.25f
+            3, 4 -> base * 0.18f
+            else -> base * 0.21f
+        }
         val buttonH = base * 0.062f
-        val centerX = when (index) { 1 -> width * 0.22f; 2 -> width * 0.78f; else -> width * 0.50f }
-        val centerY = height * 0.095f
+        val centerX = when (index) {
+            1 -> width * 0.20f
+            2 -> width * 0.80f
+            3 -> width * 0.39f
+            4 -> width * 0.61f
+            else -> width * 0.50f
+        }
+        val centerY = if (index >= 3) height * 0.165f else height * 0.085f
         return RectF(centerX - buttonW / 2f, centerY - buttonH / 2f, centerX + buttonW / 2f, centerY + buttonH / 2f)
     }
 
@@ -422,11 +460,18 @@ class GamepadOverlayView(context: Context) : View(context) {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val index = event.actionIndex
+                val pointerId = event.getPointerId(index)
                 val x = event.getX(index)
                 val y = event.getY(index)
                 if (analogPointerId == -1 && insideAnalog(x, y, 1.55f)) {
-                    analogPointerId = event.getPointerId(index)
+                    analogPointerId = pointerId
+                    buttonPointerTargets.delete(pointerId)
                     if (config.haptics) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                } else {
+                    findButtonAt(x, y, 1.34f)?.let { region ->
+                        buttonPointerTargets.put(pointerId, region.id)
+                        if (config.haptics) performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    }
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
@@ -435,8 +480,11 @@ class GamepadOverlayView(context: Context) : View(context) {
                     analogPointerId = -1
                     updateAnalog(analogCx, analogCy)
                 }
+                buttonPointerTargets.delete(pointerId)
             }
             MotionEvent.ACTION_CANCEL -> {
+                buttonPointerTargets.clear()
+                regionPressed = emptySet()
                 analogPointerId = -1
                 updateAnalog(analogCx, analogCy)
             }
@@ -449,56 +497,44 @@ class GamepadOverlayView(context: Context) : View(context) {
             }
         }
 
-        val excludedUpIndex = when (event.actionMasked) {
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> event.actionIndex
-            else -> -1
-        }
-        val next = if (event.actionMasked == MotionEvent.ACTION_CANCEL) emptySet() else buildSet {
-            for (pointerIndex in 0 until event.pointerCount) {
-                if (pointerIndex == excludedUpIndex) continue
-                if (event.getPointerId(pointerIndex) == analogPointerId) continue
-                findButtonAt(event.getX(pointerIndex), event.getY(pointerIndex), 1.34f)?.let { add(it.id) }
-            }
-        }
-        if (next != regionPressed && config.haptics && (next - regionPressed).isNotEmpty()) {
-            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-        }
-        regionPressed = next
-        commitButtons()
+        syncPressedButtonsFromPointers()
         if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
         return true
     }
 
+    private fun syncPressedButtonsFromPointers() {
+        if (buttonPointerTargets.size() == 0) {
+            if (regionPressed.isNotEmpty()) {
+                regionPressed = emptySet()
+                commitButtons()
+            }
+            return
+        }
+        val next = HashSet<Int>(buttonPointerTargets.size())
+        for (index in 0 until buttonPointerTargets.size()) next.add(buttonPointerTargets.valueAt(index))
+        if (next != regionPressed) {
+            regionPressed = next
+            commitButtons()
+        }
+    }
+
     private fun handleMultiFingerGesture(event: MotionEvent): Boolean {
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                gesturePeak = 1
-                gestureCaptured = false
-            }
+            MotionEvent.ACTION_DOWN -> fourFingerGestureLatched = false
             MotionEvent.ACTION_POINTER_DOWN -> {
-                gesturePeak = maxOf(gesturePeak, event.pointerCount)
-                if (gesturePeak >= 3 && event.eventTime - event.downTime <= 420L) {
-                    gestureCaptured = true
+                if (!fourFingerGestureLatched && event.pointerCount >= 4 && event.eventTime - event.downTime <= 500L) {
+                    fourFingerGestureLatched = true
                     releaseAll()
+                    config = config.copy(controlsVisible = !config.controlsVisible)
+                    persistGameConfig()
+                    showToast(if (config.controlsVisible) "Overlay visível" else "Modo ultra imersivo")
+                    scheduleRedraw()
                     return true
                 }
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (gestureCaptured) {
-                    if (gesturePeak >= 4) {
-                        config = config.copy(controlsVisible = !config.controlsVisible)
-                        persistGameConfig()
-                        showToast(if (config.controlsVisible) "Overlay visível" else "Modo ultra imersivo")
-                    } else {
-                        toggleMenu()
-                    }
-                    gestureCaptured = false
-                    gesturePeak = 0
-                    return true
-                }
-            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> fourFingerGestureLatched = false
         }
-        return gestureCaptured
+        return fourFingerGestureLatched && event.pointerCount >= 4
     }
 
     private fun handleQuickMenuTouch(event: MotionEvent): Boolean {
@@ -545,9 +581,14 @@ class GamepadOverlayView(context: Context) : View(context) {
     }
 
     private fun boostInteraction() {
-        activeUntilMs = SystemClock.uptimeMillis() + 650L
-        removeCallbacks(fadeRunnable)
-        postDelayed(fadeRunnable, 680L)
+        val now = SystemClock.uptimeMillis()
+        activeUntilMs = now + 650L
+        val desiredFade = now + 680L
+        if (fadeScheduledAtMs == 0L || desiredFade - fadeScheduledAtMs > 420L) {
+            removeCallbacks(fadeRunnable)
+            fadeScheduledAtMs = desiredFade
+            postDelayed(fadeRunnable, 680L)
+        }
     }
 
     private fun handleEditorTouch(event: MotionEvent): Boolean {
@@ -566,8 +607,18 @@ class GamepadOverlayView(context: Context) : View(context) {
             }
             if (editorButtonRect(2).contains(actionX, actionY)) {
                 InputSettings.resetControlPositions(context, gameKey)
+                InputSettings.resetControlScales(context, gameKey)
+                selectedEditKey = null
                 rebuildLayout(width, height)
-                showToast("Layout deste jogo restaurado")
+                showToast("Layout e tamanhos deste jogo restaurados")
+                return true
+            }
+            if (editorButtonRect(3).contains(actionX, actionY)) {
+                adjustSelectedControlScale(-0.10f)
+                return true
+            }
+            if (editorButtonRect(4).contains(actionX, actionY)) {
+                adjustSelectedControlScale(0.10f)
                 return true
             }
         }
@@ -576,6 +627,7 @@ class GamepadOverlayView(context: Context) : View(context) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 if (editPointerId == -1) {
                     editTargetKey = findEditTarget(actionX, actionY)
+                    selectedEditKey = editTargetKey
                     if (editTargetKey != null) {
                         editPointerId = event.getPointerId(actionIndex)
                         if (config.haptics) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -615,8 +667,9 @@ class GamepadOverlayView(context: Context) : View(context) {
         menuVisible = false
         editPointerId = -1
         editTargetKey = null
+        if (!enabled) selectedEditKey = null
         releaseAll()
-        if (enabled) showToast("EDITAR CONTROLES: arraste e toque em CONCLUIR quando terminar")
+        if (enabled) showToast("EDITAR: arraste controles; selecione um e use TAM − / TAM +")
         scheduleRedraw()
     }
 
@@ -811,13 +864,37 @@ class GamepadOverlayView(context: Context) : View(context) {
         InputSettings.saveGameConfig(context, gameKey, config)
     }
 
+    private fun adjustSelectedControlScale(delta: Float) {
+        val key = selectedEditKey
+        if (key == null) {
+            showToast("Toque em um controle primeiro")
+            return
+        }
+        val current = InputSettings.resolveControlScale(context, key, gameKey)
+        val next = (current + delta).coerceIn(0.65f, 1.45f)
+        InputSettings.saveControlScale(context, key, next, gameKey)
+        rebuildLayout(width, height)
+        scheduleRedraw()
+    }
+
     private fun findEditTarget(x: Float, y: Float): String? {
         if (insideAnalog(x, y, 1.55f)) return "analog"
         return findButtonAt(x, y, 1.45f)?.key
     }
 
-    private fun findButtonAt(x: Float, y: Float, hitScale: Float): Region? =
-        visibleRegions().asSequence().filter { contains(it, x, y, hitScale) }.minByOrNull { hitDistance(it, x, y) }
+    private fun findButtonAt(x: Float, y: Float, hitScale: Float): Region? {
+        var best: Region? = null
+        var bestDistance = Double.MAX_VALUE
+        for (region in regions) {
+            if (!isRegionVisible(region) || !contains(region, x, y, hitScale)) continue
+            val distance = hitDistance(region, x, y)
+            if (distance < bestDistance) {
+                best = region
+                bestDistance = distance
+            }
+        }
+        return best
+    }
 
     private fun hitDistance(region: Region, x: Float, y: Float): Double {
         if (!region.wide) return hypot((x - region.cx).toDouble(), (y - region.cy).toDouble()) / region.radius.coerceAtLeast(1f)
@@ -853,6 +930,7 @@ class GamepadOverlayView(context: Context) : View(context) {
     override fun performClick(): Boolean { super.performClick(); return true }
 
     fun releaseAll() {
+        buttonPointerTargets.clear()
         regionPressed = emptySet()
         analogDpadPressed = emptySet()
         commitButtons()
@@ -860,13 +938,11 @@ class GamepadOverlayView(context: Context) : View(context) {
         updateAnalog(analogCx, analogCy)
     }
 
-    private fun visibleRegions(): List<Region> = regions.filter { region ->
-        when {
-            region.id in 4..7 && !config.showDpad -> false
-            region.id in 10..13 && !config.showShoulders -> false
-            region.id in 2..3 && !config.showStartSelect -> false
-            else -> true
-        }
+    private fun isRegionVisible(region: Region): Boolean = when {
+        region.id in 4..7 && !config.showDpad -> false
+        region.id in 10..13 && !config.showShoulders -> false
+        region.id in 2..3 && !config.showStartSelect -> false
+        else -> true
     }
 
     private fun insideAnalog(x: Float, y: Float, scale: Float): Boolean =
@@ -889,31 +965,37 @@ class GamepadOverlayView(context: Context) : View(context) {
         analogKnobX = analogCx + dx * analogRadius * 0.72f
         analogKnobY = analogCy + dy * analogRadius * 0.72f
         val analogChanged = lastAnalogX.isNaN() || abs(dx - lastAnalogX) > 0.0025f || abs(dy - lastAnalogY) > 0.0025f
-        when (config.analogMode) {
+        val nextDigital = when (config.analogMode) {
             InputSettings.AnalogMode.NATIVE -> {
                 if (analogChanged) NativeBridge.setAnalog(0, dx, dy)
-                analogDpadPressed = emptySet()
+                emptySet()
             }
             InputSettings.AnalogMode.DPAD -> {
                 if (analogChanged) NativeBridge.setAnalog(0, 0f, 0f)
-                analogDpadPressed = dpadProjection(dx, dy)
+                dpadProjection(dx, dy)
             }
             InputSettings.AnalogMode.SMART -> {
                 if (analogChanged) NativeBridge.setAnalog(0, dx, dy)
-                analogDpadPressed = dpadProjection(dx, dy)
+                dpadProjection(dx, dy)
             }
         }
-        lastAnalogX = dx; lastAnalogY = dy
-        commitButtons()
+        if (nextDigital != analogDpadPressed) {
+            analogDpadPressed = nextDigital
+            commitButtons()
+        }
+        lastAnalogX = dx
+        lastAnalogY = dy
         scheduleRedraw()
     }
 
-    private fun dpadProjection(x: Float, y: Float): Set<Int> = buildSet {
+    private fun dpadProjection(x: Float, y: Float): Set<Int> {
         val threshold = 0.42f
-        if (y <= -threshold) add(4)
-        if (y >= threshold) add(5)
-        if (x <= -threshold) add(6)
-        if (x >= threshold) add(7)
+        var mask = 0
+        if (y <= -threshold) mask = mask or 1
+        if (y >= threshold) mask = mask or 2
+        if (x <= -threshold) mask = mask or 4
+        if (x >= threshold) mask = mask or 8
+        return dpadProjectionCache[mask]
     }
 
     private fun contains(region: Region, x: Float, y: Float, hitScale: Float): Boolean = if (region.wide) {

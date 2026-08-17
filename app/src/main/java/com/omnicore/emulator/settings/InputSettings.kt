@@ -51,6 +51,7 @@ object InputSettings {
     private const val KEY_SHOW_PERFORMANCE_HUD = "show_performance_hud"
     private const val KEY_CONTROLS_VISIBLE = "controls_visible"
     private const val POSITION_PREFIX = "control_position_"
+    private const val SCALE_PREFIX = "control_scale_"
     private const val GAME_PREFIX = "game_"
 
     fun resolve(context: Context): Config {
@@ -179,6 +180,30 @@ object InputSettings {
             .putFloat("$prefix${POSITION_PREFIX}${key}_x", x.coerceIn(0.04f, 0.96f))
             .putFloat("$prefix${POSITION_PREFIX}${key}_y", y.coerceIn(0.06f, 0.95f))
             .apply()
+    }
+
+    fun resolveControlScale(context: Context, key: String, gameKey: String? = null): Float {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val globalKey = SCALE_PREFIX + key
+        val gameScaleKey = gameKey?.let { gamePrefix(it) + globalKey }
+        return when {
+            gameScaleKey != null && prefs.contains(gameScaleKey) -> prefs.getFloat(gameScaleKey, 1f)
+            prefs.contains(globalKey) -> prefs.getFloat(globalKey, 1f)
+            else -> 1f
+        }.coerceIn(0.65f, 1.45f)
+    }
+
+    fun saveControlScale(context: Context, key: String, value: Float, gameKey: String? = null) {
+        val prefix = gameKey?.let(::gamePrefix).orEmpty()
+        edit(context).putFloat("$prefix$SCALE_PREFIX$key", value.coerceIn(0.65f, 1.45f)).apply()
+    }
+
+    fun resetControlScales(context: Context, gameKey: String? = null) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefix = gameKey?.let { gamePrefix(it) + SCALE_PREFIX } ?: SCALE_PREFIX
+        val editor = prefs.edit()
+        prefs.all.keys.filter { it.startsWith(prefix) }.forEach { key -> editor.remove(key) }
+        editor.apply()
     }
 
     fun resetControlPositions(context: Context, gameKey: String? = null) {

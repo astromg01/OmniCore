@@ -39,10 +39,12 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,6 +71,9 @@ import com.omnicore.emulator.storage.Ps1Files
 import com.omnicore.emulator.storage.SafGameSource
 import com.omnicore.emulator.update.UpdateManager
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private enum class HubScreen { LIBRARY, CORES, TUNING }
 private enum class LibrarySort { RECENT, TITLE, SIZE }
@@ -83,17 +88,29 @@ private val HubCyan = Color(0xFF57D8FF)
 fun OmniCoreV3App() {
     val context = LocalContext.current
     val store = remember { GameLibraryStore(context) }
-    var games by remember { mutableStateOf(store.load()) }
+    val ioScope = rememberCoroutineScope()
+    var games by remember { mutableStateOf<List<GameEntry>>(emptyList()) }
     var filter by remember { mutableStateOf<ConsoleSystem?>(null) }
     var screen by remember { mutableStateOf(HubScreen.LIBRARY) }
     var message by remember { mutableStateOf<String?>(null) }
     var importDialog by remember { mutableStateOf(false) }
-    var biosCount by remember { mutableIntStateOf(Ps1Files.biosFiles(context).size) }
+    var biosCount by remember { mutableIntStateOf(0) }
+    var ps1Ready by remember { mutableStateOf<Boolean?>(null) }
+
+    LaunchedEffect(Unit) {
+        val startup = withContext(Dispatchers.IO) {
+            Triple(store.load(), Ps1Files.biosFiles(context).size, NativeBridge.hasPs1Core())
+        }
+        games = startup.first
+        biosCount = startup.second
+        ps1Ready = startup.third
+    }
 
     fun persist(additions: List<GameEntry>, success: String) {
         if (additions.isEmpty()) return
         games = (games + additions).distinctBy { "${it.uri}|${it.folderUri.orEmpty()}" }
-        store.save(games)
+        val snapshot = games
+        ioScope.launch(Dispatchers.IO) { store.save(snapshot) }
         message = success
     }
 
@@ -246,6 +263,7 @@ fun OmniCoreV3App() {
                     HubScreen.LIBRARY -> HubLibrary(
                         games = games,
                         selected = filter,
+                        ps1Ready = ps1Ready,
                         onFilter = { filter = it },
                         onImport = { importDialog = true },
                         onPlay = { game ->
@@ -264,7 +282,8 @@ fun OmniCoreV3App() {
                         },
                         onRemove = { game ->
                             games = games.filterNot { it.id == game.id }
-                            store.save(games)
+                            val snapshot = games
+                            ioScope.launch(Dispatchers.IO) { store.save(snapshot) }
                         }
                     )
                     HubScreen.CORES -> HubCores()
@@ -356,6 +375,7 @@ private fun HubTopBar(screen: HubScreen, count: Int, onImport: () -> Unit) {
 private fun HubLibrary(
     games: List<GameEntry>,
     selected: ConsoleSystem?,
+    ps1Ready: Boolean?,
     onFilter: (ConsoleSystem?) -> Unit,
     onImport: () -> Unit,
     onPlay: (GameEntry) -> Unit,
@@ -382,7 +402,7 @@ private fun HubLibrary(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
-            item { EngineHero() }
+            item { EngineHero(ps1Ready) }
             item {
                 OutlinedTextField(
                     value = query,
@@ -474,7 +494,7 @@ private fun HubLibrary(
 }
 
 @Composable
-private fun EngineHero() {
+private fun EngineHero(ps1Ready: Boolean?) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
@@ -492,7 +512,9 @@ private fun EngineHero() {
                 Text("PCSX-ReARMed", fontWeight = FontWeight.Black, style = MaterialTheme.typography.headlineSmall)
                 Text("CUE/BIN • CHD • PBP • EGL/GLES • A/V desacoplado", color = HubSoft, style = MaterialTheme.typography.bodySmall)
             }
-            AssistChip(onClick = {}, label = { Text(if (NativeBridge.hasPs1Core()) "ONLINE" else "OFFLINE") })
+            AssistChip(onClick = {}, label = {
+                Text(when (ps1Ready) { true -> "ONLINE"; false -> "OFFLINE"; null -> "VERIFICANDO" })
+            })
         }
     }
 }
