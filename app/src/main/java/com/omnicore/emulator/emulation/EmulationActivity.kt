@@ -16,6 +16,7 @@ import android.os.PowerManager
 import android.system.Os
 import android.system.OsConstants
 import android.view.Gravity
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.Surface
 import android.view.SurfaceHolder
@@ -30,6 +31,7 @@ import com.omnicore.emulator.core.nativebridge.NativeBridge
 import com.omnicore.emulator.core.ps1.Ps1Core
 import com.omnicore.emulator.model.GameEntry
 import com.omnicore.emulator.performance.PerformanceManager
+import com.omnicore.emulator.settings.InputSettings
 import com.omnicore.emulator.settings.Ps1Settings
 import com.omnicore.emulator.storage.Ps1Files
 import com.omnicore.emulator.storage.Ps1BiosHealth
@@ -159,7 +161,8 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         ).apply { topMargin = dp(10) })
 
         presetView = TextView(this).apply {
-            text = "${ps1Config.preset.label} • ${if (ps1Config.dualShock) "DualShock" else "Digital"} • $biosLabel"
+            val inputMode = InputSettings.resolve(this@EmulationActivity).analogMode.label
+            text = "${ps1Config.preset.label} • ${if (ps1Config.dualShock) "DualShock" else "Digital"} • $inputMode • $biosLabel"
             setTextColor(Color.argb(210, 226, 224, 255))
             textSize = 10f
             setPadding(dp(9), dp(5), dp(9), dp(5))
@@ -571,6 +574,44 @@ class EmulationActivity : Activity(), SurfaceHolder.Callback {
         if (::controls.isInitialized) controls.releaseAll()
         if (started) NativeBridge.stop()
         started = false
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        val isJoystick = (event.source and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK
+        if (started && isJoystick && event.action == MotionEvent.ACTION_MOVE) {
+            val input = InputSettings.resolve(this)
+            val lx = normalizedAxis(event, MotionEvent.AXIS_X)
+            val ly = normalizedAxis(event, MotionEvent.AXIS_Y)
+            val rx = normalizedAxis(event, MotionEvent.AXIS_Z, MotionEvent.AXIS_RX)
+            val ry = normalizedAxis(event, MotionEvent.AXIS_RZ, MotionEvent.AXIS_RY)
+
+            if (input.analogMode == InputSettings.AnalogMode.DPAD) NativeBridge.setAnalog(0, 0f, 0f)
+            else NativeBridge.setAnalog(0, lx, ly)
+            NativeBridge.setAnalog(1, rx, ry)
+
+            if (input.analogMode != InputSettings.AnalogMode.NATIVE) {
+                val threshold = 0.42f
+                NativeBridge.setButton(4, ly <= -threshold)
+                NativeBridge.setButton(5, ly >= threshold)
+                NativeBridge.setButton(6, lx <= -threshold)
+                NativeBridge.setButton(7, lx >= threshold)
+            }
+            return true
+        }
+        return super.onGenericMotionEvent(event)
+    }
+
+    private fun normalizedAxis(event: MotionEvent, primary: Int, fallback: Int? = null): Float {
+        fun value(axis: Int): Float? {
+            val range = event.device?.getMotionRange(axis, event.source) ?: return null
+            val raw = event.getAxisValue(axis)
+            val flat = range.flat.coerceAtLeast(0.08f)
+            if (kotlin.math.abs(raw) <= flat) return 0f
+            val sign = if (raw < 0f) -1f else 1f
+            val normalized = ((kotlin.math.abs(raw) - flat) / (1f - flat)).coerceIn(0f, 1f)
+            return normalized * sign
+        }
+        return value(primary) ?: fallback?.let(::value) ?: 0f
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

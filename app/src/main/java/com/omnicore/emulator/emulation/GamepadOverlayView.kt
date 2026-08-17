@@ -5,9 +5,11 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import com.omnicore.emulator.core.nativebridge.NativeBridge
+import com.omnicore.emulator.settings.InputSettings
 import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -22,6 +24,7 @@ class GamepadOverlayView(context: Context) : View(context) {
         val wide: Boolean = false
     )
 
+    private val config = InputSettings.resolve(context)
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.argb(145, 235, 238, 255)
@@ -48,7 +51,9 @@ class GamepadOverlayView(context: Context) : View(context) {
     }
 
     private var regions: List<Region> = emptyList()
-    private var pressed: Set<Int> = emptySet()
+    private var regionPressed: Set<Int> = emptySet()
+    private var analogDpadPressed: Set<Int> = emptySet()
+    private var committedButtons: Set<Int> = emptySet()
     private var analogCx = 0f
     private var analogCy = 0f
     private var analogRadius = 0f
@@ -60,41 +65,40 @@ class GamepadOverlayView(context: Context) : View(context) {
         isClickable = true
         isFocusable = true
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
+        alpha = config.touchOpacity
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
         val base = min(w, h).toFloat()
-        val r = base * 0.060f
-        val small = base * 0.048f
-        val dpadR = base * 0.048f
-        textPaint.textSize = base * 0.032f
+        val scale = config.touchScale
+        val r = base * 0.060f * scale
+        val small = base * 0.048f * scale
+        val dpadR = base * 0.048f * scale
+        textPaint.textSize = base * 0.032f * scale
 
         analogCx = w * 0.145f
         analogCy = h * 0.73f
-        analogRadius = base * 0.105f
+        analogRadius = base * 0.105f * scale
         analogKnobX = analogCx
         analogKnobY = analogCy
 
         val dpx = w * 0.315f
         val dpy = h * 0.72f
-        val dStep = base * 0.082f
+        val dStep = base * 0.082f * scale
 
         regions = listOf(
             Region(4, "▲", dpx, dpy - dStep, dpadR),
             Region(5, "▼", dpx, dpy + dStep, dpadR),
             Region(6, "◀", dpx - dStep, dpy, dpadR),
             Region(7, "▶", dpx + dStep, dpy, dpadR),
-
             Region(9, "△", w * 0.845f, h * 0.55f, r),
             Region(0, "×", w * 0.845f, h * 0.83f, r),
             Region(1, "□", w * 0.775f, h * 0.69f, r),
             Region(8, "○", w * 0.915f, h * 0.69f, r),
-
             Region(2, "SELECT", w * 0.465f, h * 0.84f, small, wide = true),
             Region(3, "START", w * 0.565f, h * 0.84f, small, wide = true),
-
             Region(10, "L1", w * 0.095f, h * 0.13f, small, wide = true),
             Region(12, "L2", w * 0.215f, h * 0.13f, small, wide = true),
             Region(13, "R2", w * 0.785f, h * 0.13f, small, wide = true),
@@ -104,16 +108,15 @@ class GamepadOverlayView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-
         canvas.drawCircle(analogCx, analogCy, analogRadius, analogBasePaint)
         canvas.drawCircle(analogCx, analogCy, analogRadius, analogRingPaint)
         canvas.drawCircle(analogKnobX, analogKnobY, analogRadius * 0.44f, analogKnobPaint)
-        textPaint.textSize = min(width, height) * 0.025f
+        textPaint.textSize = min(width, height) * 0.025f * config.touchScale
         canvas.drawText("L", analogCx, analogCy - analogRadius - textPaint.textSize * 0.35f, textPaint)
 
-        textPaint.textSize = min(width, height) * 0.032f
+        textPaint.textSize = min(width, height) * 0.032f * config.touchScale
         regions.forEach { region ->
-            val active = region.id in pressed
+            val active = region.id in committedButtons
             fillPaint.color = if (active) Color.argb(145, 218, 214, 255) else Color.argb(62, 235, 238, 255)
             if (region.wide) {
                 val halfW = region.radius * 1.60f
@@ -136,8 +139,9 @@ class GamepadOverlayView(context: Context) : View(context) {
                 val index = event.actionIndex
                 val x = event.getX(index)
                 val y = event.getY(index)
-                if (analogPointerId == -1 && insideAnalog(x, y, 1.20f)) {
+                if (analogPointerId == -1 && insideAnalog(x, y, 1.25f)) {
                     analogPointerId = event.getPointerId(index)
+                    if (config.haptics) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
@@ -164,20 +168,20 @@ class GamepadOverlayView(context: Context) : View(context) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> event.actionIndex
             else -> -1
         }
-        val next = if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
-            emptySet()
-        } else {
-            buildSet {
-                for (pointerIndex in 0 until event.pointerCount) {
-                    if (pointerIndex == excludedUpIndex) continue
-                    if (event.getPointerId(pointerIndex) == analogPointerId) continue
-                    val x = event.getX(pointerIndex)
-                    val y = event.getY(pointerIndex)
-                    regions.forEach { region -> if (contains(region, x, y)) add(region.id) }
-                }
+        val next = if (event.actionMasked == MotionEvent.ACTION_CANCEL) emptySet() else buildSet {
+            for (pointerIndex in 0 until event.pointerCount) {
+                if (pointerIndex == excludedUpIndex) continue
+                if (event.getPointerId(pointerIndex) == analogPointerId) continue
+                val x = event.getX(pointerIndex)
+                val y = event.getY(pointerIndex)
+                regions.forEach { region -> if (contains(region, x, y)) add(region.id) }
             }
         }
-        updatePressed(next)
+        if (next != regionPressed && config.haptics && (next - regionPressed).isNotEmpty()) {
+            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        }
+        regionPressed = next
+        commitButtons()
         if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
         return true
     }
@@ -188,7 +192,9 @@ class GamepadOverlayView(context: Context) : View(context) {
     }
 
     fun releaseAll() {
-        updatePressed(emptySet())
+        regionPressed = emptySet()
+        analogDpadPressed = emptySet()
+        commitButtons()
         analogPointerId = -1
         updateAnalog(analogCx, analogCy)
     }
@@ -211,14 +217,38 @@ class GamepadOverlayView(context: Context) : View(context) {
             dy = 0f
         } else if (magnitude > 0f) {
             val remapped = ((magnitude - deadzone) / (1f - deadzone)).coerceIn(0f, 1f)
-            val scale = remapped / magnitude.coerceAtLeast(0.0001f)
-            dx *= scale
-            dy *= scale
+            val remapScale = remapped / magnitude.coerceAtLeast(0.0001f)
+            dx *= remapScale
+            dy *= remapScale
         }
+
         analogKnobX = analogCx + dx * analogRadius * 0.72f
         analogKnobY = analogCy + dy * analogRadius * 0.72f
-        NativeBridge.setAnalog(0, dx, dy)
+
+        when (config.analogMode) {
+            InputSettings.AnalogMode.NATIVE -> {
+                NativeBridge.setAnalog(0, dx, dy)
+                analogDpadPressed = emptySet()
+            }
+            InputSettings.AnalogMode.DPAD -> {
+                NativeBridge.setAnalog(0, 0f, 0f)
+                analogDpadPressed = dpadProjection(dx, dy)
+            }
+            InputSettings.AnalogMode.SMART -> {
+                NativeBridge.setAnalog(0, dx, dy)
+                analogDpadPressed = dpadProjection(dx, dy)
+            }
+        }
+        commitButtons()
         invalidate()
+    }
+
+    private fun dpadProjection(x: Float, y: Float): Set<Int> = buildSet {
+        val threshold = 0.42f
+        if (y <= -threshold) add(4)
+        if (y >= threshold) add(5)
+        if (x <= -threshold) add(6)
+        if (x >= threshold) add(7)
     }
 
     private fun contains(region: Region, x: Float, y: Float): Boolean {
@@ -231,11 +261,12 @@ class GamepadOverlayView(context: Context) : View(context) {
         }
     }
 
-    private fun updatePressed(next: Set<Int>) {
-        if (next == pressed) return
-        (pressed - next).forEach { NativeBridge.setButton(it, false) }
-        (next - pressed).forEach { NativeBridge.setButton(it, true) }
-        pressed = next
+    private fun commitButtons() {
+        val next = regionPressed + analogDpadPressed
+        if (next == committedButtons) return
+        (committedButtons - next).forEach { NativeBridge.setButton(it, false) }
+        (next - committedButtons).forEach { NativeBridge.setButton(it, true) }
+        committedButtons = next
         invalidate()
     }
 }

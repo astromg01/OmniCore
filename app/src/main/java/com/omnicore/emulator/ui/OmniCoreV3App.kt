@@ -32,6 +32,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -61,6 +62,7 @@ import com.omnicore.emulator.library.RomDetector
 import com.omnicore.emulator.model.ConsoleSystem
 import com.omnicore.emulator.model.GameEntry
 import com.omnicore.emulator.performance.PerformanceManager
+import com.omnicore.emulator.settings.InputSettings
 import com.omnicore.emulator.settings.Ps1Settings
 import com.omnicore.emulator.storage.GameLibraryStore
 import com.omnicore.emulator.storage.Ps1Files
@@ -69,6 +71,7 @@ import com.omnicore.emulator.update.UpdateManager
 import java.util.UUID
 
 private enum class HubScreen { LIBRARY, CORES, TUNING }
+private enum class LibrarySort { RECENT, TITLE, SIZE }
 
 private val HubPanel = Color(0xEB121526)
 private val HubPanelStrong = Color(0xF51A1D32)
@@ -358,81 +361,115 @@ private fun HubLibrary(
     onPlay: (GameEntry) -> Unit,
     onRemove: (GameEntry) -> Unit
 ) {
-    val shown = remember(games, selected) {
-        if (selected == null) games else games.filter { it.system == selected }
-    }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(13.dp)
-    ) {
-        item { EngineHero() }
-        item {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item {
-                    FilterChip(selected = selected == null, onClick = { onFilter(null) }, label = { Text("Todos") })
-                }
-                items(ConsoleSystem.entries) { system ->
-                    FilterChip(
-                        selected = selected == system,
-                        onClick = { onFilter(system) },
-                        label = { Text(system.shortName) }
-                    )
-                }
-            }
+    var query by remember { mutableStateOf("") }
+    var sort by remember { mutableStateOf(LibrarySort.RECENT) }
+    var pendingRemoval by remember { mutableStateOf<GameEntry?>(null) }
+    val shown = remember(games, selected, query, sort) {
+        val filtered = games.asSequence()
+            .filter { selected == null || it.system == selected }
+            .filter { query.isBlank() || it.title.contains(query.trim(), ignoreCase = true) || it.fileName.contains(query.trim(), ignoreCase = true) }
+            .toList()
+        when (sort) {
+            LibrarySort.RECENT -> filtered.sortedByDescending { it.addedAt }
+            LibrarySort.TITLE -> filtered.sortedBy { it.title.lowercase() }
+            LibrarySort.SIZE -> filtered.sortedByDescending { it.sizeBytes }
         }
-        if (shown.isEmpty()) {
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(13.dp)
+        ) {
+            item { EngineHero() }
             item {
-                HubCard {
-                    Text("Sua biblioteca está pronta", fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        "Adicione uma pasta PS1 ou um arquivo compatível. O PS1 é o primeiro motor funcional do OmniCore.",
-                        color = HubSoft
-                    )
-                    Button(onClick = onImport) { Text("Adicionar jogo") }
-                }
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Buscar na biblioteca") },
+                    placeholder = { Text("Nome do jogo ou arquivo") }
+                )
             }
-        } else {
-            items(shown, key = { it.id }) { game ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().border(1.dp, Color(0x223B4262), RoundedCornerShape(19.dp)),
-                    colors = CardDefaults.cardColors(containerColor = HubPanel),
-                    shape = RoundedCornerShape(19.dp)
-                ) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(15.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(13.dp)
-                    ) {
-                        Box(
-                            Modifier.size(60.dp).clip(RoundedCornerShape(17.dp))
-                                .background(Brush.linearGradient(listOf(Color(0xFF332B66), Color(0xFF17394B)))),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(game.system.shortName, color = Color.White, fontWeight = FontWeight.Black)
-                        }
-                        Column(Modifier.weight(1f)) {
-                            Text(game.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
-                            Text(game.system.displayName, color = HubSoft, style = MaterialTheme.typography.bodySmall)
-                            Text(
-                                buildString {
-                                    append(game.fileName)
-                                    if (game.folderUri != null) append(" • pasta")
-                                    if (game.sizeBytes > 0) append(" • ").append(formatHubBytes(game.sizeBytes))
-                                },
-                                color = Color(0xFF747D9A),
-                                style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        TextButton(onClick = { onRemove(game) }) { Text("Remover") }
-                        Button(onClick = { onPlay(game) }) { Text("Jogar") }
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { FilterChip(selected = selected == null, onClick = { onFilter(null) }, label = { Text("Todos") }) }
+                    items(ConsoleSystem.entries) { system ->
+                        FilterChip(selected = selected == system, onClick = { onFilter(system) }, label = { Text(system.shortName) })
                     }
                 }
             }
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { FilterChip(selected = sort == LibrarySort.RECENT, onClick = { sort = LibrarySort.RECENT }, label = { Text("Recentes") }) }
+                    item { FilterChip(selected = sort == LibrarySort.TITLE, onClick = { sort = LibrarySort.TITLE }, label = { Text("A–Z") }) }
+                    item { FilterChip(selected = sort == LibrarySort.SIZE, onClick = { sort = LibrarySort.SIZE }, label = { Text("Tamanho") }) }
+                }
+            }
+            if (shown.isEmpty()) {
+                item {
+                    HubCard {
+                        Text(if (games.isEmpty()) "Sua biblioteca está pronta" else "Nenhum jogo encontrado", fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            if (games.isEmpty()) "Adicione uma pasta PS1 ou um arquivo compatível. O PS1 é o primeiro motor funcional do OmniCore."
+                            else "Tente limpar a busca ou mudar o filtro de sistema.",
+                            color = HubSoft
+                        )
+                        if (games.isEmpty()) Button(onClick = onImport) { Text("Adicionar jogo") }
+                    }
+                }
+            } else {
+                items(shown, key = { it.id }) { game ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().border(1.dp, Color(0x223B4262), RoundedCornerShape(19.dp)),
+                        colors = CardDefaults.cardColors(containerColor = HubPanel),
+                        shape = RoundedCornerShape(19.dp)
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(15.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(13.dp)
+                        ) {
+                            Box(
+                                Modifier.size(60.dp).clip(RoundedCornerShape(17.dp))
+                                    .background(Brush.linearGradient(listOf(Color(0xFF332B66), Color(0xFF17394B)))),
+                                contentAlignment = Alignment.Center
+                            ) { Text(game.system.shortName, color = Color.White, fontWeight = FontWeight.Black) }
+                            Column(Modifier.weight(1f)) {
+                                Text(game.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
+                                Text(
+                                    buildString {
+                                        append(game.system.displayName)
+                                        if (game.folderUri != null) append(" • pasta")
+                                        if (game.sizeBytes > 0) append(" • ").append(formatHubBytes(game.sizeBytes))
+                                    },
+                                    color = Color(0xFF747D9A), style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            TextButton(onClick = { pendingRemoval = game }) { Text("Remover") }
+                            Button(onClick = { onPlay(game) }) { Text("Jogar") }
+                        }
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(5.dp)) }
         }
-        item { Spacer(Modifier.height(5.dp)) }
+
+        pendingRemoval?.let { game ->
+            AlertDialog(
+                onDismissRequest = { pendingRemoval = null },
+                containerColor = HubPanelStrong,
+                title = { Text("Remover da biblioteca?") },
+                text = { Text("${game.title} será removido apenas da biblioteca. O arquivo do jogo não será apagado.", color = HubSoft) },
+                confirmButton = {
+                    TextButton(onClick = { onRemove(game); pendingRemoval = null }) { Text("Remover") }
+                },
+                dismissButton = { TextButton(onClick = { pendingRemoval = null }) { Text("Cancelar") } }
+            )
+        }
     }
 }
 
@@ -499,6 +536,7 @@ private fun HubTuning(biosCount: Int, gameCount: Int, onImportBios: () -> Unit) 
     val device = remember { PerformanceManager.profile(context) }
     var perfMode by remember { mutableStateOf(PerformanceManager.readUserMode(context)) }
     var config by remember { mutableStateOf(Ps1Settings.resolve(context)) }
+    var inputConfig by remember { mutableStateOf(InputSettings.resolve(context)) }
     var updateStatus by remember { mutableStateOf("Canal DEV • pronto para verificar") }
     var updateRelease by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
     var cacheStatus by remember { mutableStateOf("CUE/BIN será reutilizado após a primeira preparação.") }
@@ -536,6 +574,7 @@ private fun HubTuning(biosCount: Int, gameCount: Int, onImportBios: () -> Unit) 
     }
 
     fun refresh() { config = Ps1Settings.resolve(context) }
+    fun refreshInput() { inputConfig = InputSettings.resolve(context) }
     fun saveCustom(next: Ps1Settings.Config) {
         Ps1Settings.saveCustom(context, next.copy(preset = Ps1Settings.Preset.CUSTOM))
         refresh()
@@ -662,11 +701,47 @@ private fun HubTuning(biosCount: Int, gameCount: Int, onImportBios: () -> Unit) 
             }
         }
         item {
-            HubSection("Controle", "Analógico esquerdo touch real + D-pad independente.") {
+            HubSection("Controles", "Compatibilidade para PS1 antigo, DualShock e controles Android.") {
                 SettingSwitch("DualShock / analógico", "Ativa o tipo DualShock no core e os eixos analógicos.", config.dualShock) {
                     Ps1Settings.saveDualShock(context, it)
                     refresh()
                 }
+                Text("Comportamento do analógico esquerdo", fontWeight = FontWeight.Bold)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(InputSettings.AnalogMode.entries) { mode ->
+                        FilterChip(
+                            selected = inputConfig.analogMode == mode,
+                            onClick = { InputSettings.saveAnalogMode(context, mode); refreshInput() },
+                            label = { Text(mode.label) }
+                        )
+                    }
+                }
+                Text(inputConfig.analogMode.subtitle, color = HubSoft, style = MaterialTheme.typography.bodySmall)
+                Text("Tamanho do touch", fontWeight = FontWeight.Bold)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(listOf(0.85f to "85%", 1f to "100%", 1.15f to "115%")) { option ->
+                        FilterChip(
+                            selected = kotlin.math.abs(inputConfig.touchScale - option.first) < 0.02f,
+                            onClick = { InputSettings.saveTouchScale(context, option.first); refreshInput() },
+                            label = { Text(option.second) }
+                        )
+                    }
+                }
+                Text("Opacidade", fontWeight = FontWeight.Bold)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(listOf(0.55f to "55%", 0.70f to "70%", 0.85f to "85%", 1f to "100%")) { option ->
+                        FilterChip(
+                            selected = kotlin.math.abs(inputConfig.touchOpacity - option.first) < 0.03f,
+                            onClick = { InputSettings.saveTouchOpacity(context, option.first); refreshInput() },
+                            label = { Text(option.second) }
+                        )
+                    }
+                }
+                SettingSwitch("Feedback tátil", "Vibração curta ao tocar botões e capturar o analógico.", inputConfig.haptics) {
+                    InputSettings.saveHaptics(context, it)
+                    refreshInput()
+                }
+                Text("Alterações de tamanho/opacidade entram na próxima sessão de jogo.", color = Color(0xFF737C98), style = MaterialTheme.typography.labelSmall)
             }
         }
         item {
