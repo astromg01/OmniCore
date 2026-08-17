@@ -129,23 +129,23 @@ object InputSettings {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val prefix = gamePrefix(gameKey)
         val editor = prefs.edit()
-        prefs.all.keys.filter { it.startsWith(prefix) }.forEach(editor::remove)
+        prefs.all.keys.filter { it.startsWith(prefix) }.forEach { key -> editor.remove(key) }
         editor.apply()
     }
 
-    fun saveAnalogMode(context: Context, mode: AnalogMode) = edit(context).putString(KEY_ANALOG_MODE, mode.storage).apply()
-    fun saveTouchOpacity(context: Context, value: Float) = edit(context).putFloat(KEY_TOUCH_OPACITY, value.coerceIn(0.35f, 1f)).apply()
-    fun saveTouchScale(context: Context, value: Float) = edit(context).putFloat(KEY_TOUCH_SCALE, value.coerceIn(0.80f, 1.20f)).apply()
-    fun saveHaptics(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_HAPTICS, enabled).apply()
-    fun saveShowDpad(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_SHOW_DPAD, enabled).apply()
-    fun saveOverlayPreset(context: Context, preset: OverlayPreset) = edit(context).putString(KEY_OVERLAY_PRESET, preset.storage).apply()
-    fun saveCleanOverlay(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_CLEAN_OVERLAY, enabled).apply()
-    fun saveDynamicOpacity(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_DYNAMIC_OPACITY, enabled).apply()
-    fun saveShowLabels(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_SHOW_LABELS, enabled).apply()
-    fun saveShowShoulders(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_SHOW_SHOULDERS, enabled).apply()
-    fun saveShowStartSelect(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_SHOW_START_SELECT, enabled).apply()
-    fun saveShowPerformanceHud(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_SHOW_PERFORMANCE_HUD, enabled).apply()
-    fun saveControlsVisible(context: Context, enabled: Boolean) = edit(context).putBoolean(KEY_CONTROLS_VISIBLE, enabled).apply()
+    fun saveAnalogMode(context: Context, mode: AnalogMode) { edit(context).putString(KEY_ANALOG_MODE, mode.storage).apply() }
+    fun saveTouchOpacity(context: Context, value: Float) { edit(context).putFloat(KEY_TOUCH_OPACITY, value.coerceIn(0.35f, 1f)).apply() }
+    fun saveTouchScale(context: Context, value: Float) { edit(context).putFloat(KEY_TOUCH_SCALE, value.coerceIn(0.80f, 1.20f)).apply() }
+    fun saveHaptics(context: Context, enabled: Boolean) { edit(context).putBoolean(KEY_HAPTICS, enabled).apply() }
+    fun saveShowDpad(context: Context, enabled: Boolean) { edit(context).putBoolean(KEY_SHOW_DPAD, enabled).apply() }
+    fun saveOverlayPreset(context: Context, preset: OverlayPreset) { edit(context).putString(KEY_OVERLAY_PRESET, preset.storage).apply() }
+    fun saveCleanOverlay(context: Context, enabled: Boolean) { edit(context).putBoolean(KEY_CLEAN_OVERLAY, enabled).apply() }
+    fun saveDynamicOpacity(context: Context, enabled: Boolean) { edit(context).putBoolean(KEY_DYNAMIC_OPACITY, enabled).apply() }
+    fun saveShowLabels(context: Context, enabled: Boolean) { edit(context).putBoolean(KEY_SHOW_LABELS, enabled).apply() }
+    fun saveShowShoulders(context: Context, enabled: Boolean) { edit(context).putBoolean(KEY_SHOW_SHOULDERS, enabled).apply() }
+    fun saveShowStartSelect(context: Context, enabled: Boolean) { edit(context).putBoolean(KEY_SHOW_START_SELECT, enabled).apply() }
+    fun saveShowPerformanceHud(context: Context, enabled: Boolean) { edit(context).putBoolean(KEY_SHOW_PERFORMANCE_HUD, enabled).apply() }
+    fun saveControlsVisible(context: Context, enabled: Boolean) { edit(context).putBoolean(KEY_CONTROLS_VISIBLE, enabled).apply() }
 
     fun resolveControlPosition(
         context: Context,
@@ -185,7 +185,7 @@ object InputSettings {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val prefix = gameKey?.let { gamePrefix(it) + POSITION_PREFIX } ?: POSITION_PREFIX
         val editor = prefs.edit()
-        prefs.all.keys.filter { it.startsWith(prefix) }.forEach(editor::remove)
+        prefs.all.keys.filter { it.startsWith(prefix) }.forEach { key -> editor.remove(key) }
         editor.apply()
     }
 
