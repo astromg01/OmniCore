@@ -1,0 +1,5 @@
+Repository: https://github.com/libretro/pcsx_rearmed
+Pinned revision: da2cb8ecd17fd0932ab6d94774c0522beebce6e3
+Core: PCSX-ReARMed (libretro)
+License: GPL-2.0
+Android build entrypoint: jni/Android.mk

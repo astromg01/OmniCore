@@ -1,0 +1,49 @@
+#pragma once
+
+#include <android/native_window.h>
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <string>
+
+struct RuntimePerformanceConfig {
+    // 0 = sustained/efficiency, 1 = balanced, 2 = low latency/performance.
+    int policy = 1;
+    int audioBufferBursts = 3;
+    bool tryExclusiveAudio = false;
+    bool preferPowerEfficiency = false;
+    bool aggressiveFramePacing = false;
+};
+
+class LibretroSession {
+public:
+    LibretroSession(
+        std::string coreLibrary,
+        std::string gamePath,
+        std::string gameKey,
+        std::string systemDir,
+        std::string saveDir,
+        std::string stateDir,
+        ANativeWindow* window,
+        RuntimePerformanceConfig performance
+    );
+    ~LibretroSession();
+
+    LibretroSession(const LibretroSession&) = delete;
+    LibretroSession& operator=(const LibretroSession&) = delete;
+
+    bool start();
+    void stop();
+    bool running() const;
+    void setButton(unsigned id, bool pressed);
+    void requestSaveState(int slot);
+    void requestLoadState(int slot);
+    void updatePerformanceConfig(RuntimePerformanceConfig performance);
+    std::string status() const;
+
+private:
+    class Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+bool probeLibretroCore(const char* libraryName);
