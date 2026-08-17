@@ -1,6 +1,10 @@
 package com.omnicore.emulator.core.nativebridge
 
 import android.view.Surface
+import java.io.File
+import java.io.FileInputStream
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 object NativeBridge {
     private val loaded: Boolean = runCatching {
@@ -8,14 +12,34 @@ object NativeBridge {
         true
     }.getOrDefault(false)
 
+    private val coreAvailabilityLock = Any()
+    @Volatile private var ps1CoreAvailable: Boolean? = null
+
+    private val stateLoadGeneration = AtomicInteger(0)
+    private val stateLoadExecutor = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "OmniCore-StatePrefetch").apply {
+            priority = Thread.NORM_PRIORITY - 1
+            isDaemon = true
+        }
+    }
+    @Volatile private var activeGameKey: String = ""
+    @Volatile private var activeStateDir: String = ""
+
     fun isLoaded(): Boolean = loaded
 
     fun runtimeVersion(): String =
         if (loaded) runCatching { nativeRuntimeVersion() }.getOrDefault("native-runtime-error")
         else "native-runtime-unavailable"
 
-    fun hasPs1Core(): Boolean =
-        loaded && runCatching { nativeHasPs1Core() }.getOrDefault(false)
+    fun hasPs1Core(): Boolean {
+        if (!loaded) return false
+        ps1CoreAvailable?.let { return it }
+        return synchronized(coreAvailabilityLock) {
+            ps1CoreAvailable ?: runCatching { nativeHasPs1Core() }
+                .getOrDefault(false)
+                .also { ps1CoreAvailable = it }
+        }
+    }
 
     fun startPs1(
         gamePath: String,
@@ -31,15 +55,27 @@ object NativeBridge {
         aggressiveFramePacing: Boolean,
         coreOptions: String,
         dualShock: Boolean
-    ): Boolean = loaded && runCatching {
-        nativeStartPs1(
-            gamePath, gameKey, systemDir, saveDir, stateDir, surface,
-            performancePolicy, audioBufferBursts, tryExclusiveAudio,
-            preferPowerEfficiency, aggressiveFramePacing, coreOptions, dualShock
-        )
-    }.getOrDefault(false)
+    ): Boolean {
+        if (!loaded) return false
+        val started = runCatching {
+            nativeStartPs1(
+                gamePath, gameKey, systemDir, saveDir, stateDir, surface,
+                performancePolicy, audioBufferBursts, tryExclusiveAudio,
+                preferPowerEfficiency, aggressiveFramePacing, coreOptions, dualShock
+            )
+        }.getOrDefault(false)
+        if (started) {
+            activeGameKey = gameKey
+            activeStateDir = stateDir
+            stateLoadGeneration.incrementAndGet()
+        }
+        return started
+    }
 
     fun stop() {
+        stateLoadGeneration.incrementAndGet()
+        activeGameKey = ""
+        activeStateDir = ""
         if (loaded) runCatching { nativeStop() }
     }
 
@@ -58,12 +94,48 @@ object NativeBridge {
     }
 
     fun saveState(slot: Int = 0) {
-        if (loaded) runCatching { nativeSaveState(slot) }
+        if (loaded) runCatching { nativeSaveState(slot.coerceIn(0, 9)) }
     }
 
     fun loadState(slot: Int = 0) {
-        if (loaded) runCatching { nativeLoadState(slot) }
+        if (!loaded) return
+        val safeSlot = slot.coerceIn(0, 9)
+        val stateDir = activeStateDir
+        val gameKey = activeGameKey
+        if (stateDir.isBlank() || gameKey.isBlank()) {
+            runCatching { nativeLoadState(safeSlot) }
+            return
+        }
+
+        val generation = stateLoadGeneration.incrementAndGet()
+        stateLoadExecutor.execute {
+            if (generation != stateLoadGeneration.get()) return@execute
+            warmStateFile(File(stateDir, "${safeGameKey(gameKey)}.state$safeSlot"))
+            if (generation == stateLoadGeneration.get()) {
+                runCatching { nativeLoadState(safeSlot) }
+            }
+        }
     }
+
+    private fun warmStateFile(file: File) {
+        if (!file.isFile || file.length() <= 0L) return
+        runCatching {
+            FileInputStream(file).use { input ->
+                val buffer = ByteArray(256 * 1024)
+                while (input.read(buffer) >= 0) {
+                    // Sequentially touching the state on a background thread warms the
+                    // kernel page cache. The native core can then unserialize without
+                    // paying the storage read latency on the emulation thread.
+                }
+            }
+        }
+    }
+
+    private fun safeGameKey(value: String): String = buildString(value.length) {
+        value.forEach { char ->
+            append(if (char.isLetterOrDigit() || char == '-' || char == '_') char else '_')
+        }
+    }.ifBlank { "game" }
 
     fun lastMessage(): String =
         if (loaded) runCatching { nativeLastMessage() }.getOrDefault("Runtime indisponível")
