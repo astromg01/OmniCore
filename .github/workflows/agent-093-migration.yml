@@ -1,0 +1,54 @@
+name: OmniCore 0.9.3 Migration
+
+on:
+  push:
+    branches:
+      - agent/0.9.3-clean-overlay-cheats
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone migration branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin agent/0.9.3-clean-overlay-cheats
+          git checkout -B agent/0.9.3-clean-overlay-cheats origin/agent/0.9.3-clean-overlay-cheats
+
+      - name: Apply 0.9.3 migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/agent_093_migrate.py
+
+      - name: Validate generated sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'versionName = "0.9.3"' app/build.gradle.kts
+          grep -q 'OverlayPreset' app/src/main/java/com/omnicore/emulator/settings/InputSettings.kt
+          grep -q 'Quick Menu' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV3App.kt
+          grep -q 'CheatStore' app/src/main/java/com/omnicore/emulator/emulation/GamepadOverlayView.kt
+          grep -q 'nativeSetCheat' app/src/main/java/com/omnicore/emulator/core/nativebridge/NativeBridge.kt
+          grep -q 'retro_cheat_set' app/src/main/cpp/libretro_host_v7.cpp
+          test ! -f tools/agent_093_migrate.py
+          test ! -f .github/workflows/agent-093-migration.yml
+
+      - name: Commit generated implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Mauricio.dev"
+          git config user.email "antoniomauriciorodriguesalves@gmail.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Implement OmniCore 0.9.3 clean overlay and cheats [skip ci]"
+          git push origin HEAD:agent/0.9.3-clean-overlay-cheats
