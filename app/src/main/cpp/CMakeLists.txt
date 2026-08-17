@@ -53,7 +53,7 @@ target_link_libraries(
 )
 
 # Nintendo 64 runtime. This remains a different shared object and owns its own
-# EGL/GLES3 context, libretro callbacks, telemetry and controller state.
+# EGL/GLES3 context, AAudio stream, libretro callbacks, telemetry and input state.
 add_library(
     omnicore_n64_runtime
     SHARED
@@ -85,6 +85,7 @@ target_link_libraries(
     omnicore_n64_runtime
     ${android-lib}
     ${log-lib}
+    ${aaudio-lib}
     ${dl-lib}
     ${egl-lib}
     ${glesv3-lib}
