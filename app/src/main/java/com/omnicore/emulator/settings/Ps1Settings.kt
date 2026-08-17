@@ -28,7 +28,7 @@ object Ps1Settings {
             add("pcsx_rearmed_bios=auto")
             add("pcsx_rearmed_drc=enabled")
             add("pcsx_rearmed_drc_thread=auto")
-            add("pcsx_rearmed_gpu_thread_rendering=${if (threadedGpu) (if (preset == Preset.PERFORMANCE) "async" else "sync") else "disabled"}")
+            add("pcsx_rearmed_gpu_thread_rendering=${if (!threadedGpu) "disabled" else if (preset == Preset.PERFORMANCE) "enabled" else "auto"}")
             add("pcsx_rearmed_spu_thread=${if (threadedSpu) "enabled" else "disabled"}")
             add("pcsx_rearmed_neon_enhancement_enable=${if (enhancedResolution) "enabled" else "disabled"}")
             add("pcsx_rearmed_neon_enhancement_no_main=${if (enhancedSpeedHack) "enabled" else "disabled"}")
@@ -48,6 +48,8 @@ object Ps1Settings {
             add("pcsx_rearmed_gpu_slow_llists=auto")
             add("pcsx_rearmed_fractional_framerate=auto")
             add("pcsx_rearmed_neon_interlace_enable_v2=auto")
+            // The historical option names are inverted: "disabled" means the
+            // no-audio/no-XA hack is disabled, i.e. normal CD/XA audio stays on.
             add("pcsx_rearmed_noxadecoding=disabled")
             add("pcsx_rearmed_nocdaudio=disabled")
             add("pcsx_rearmed_show_bios_bootlogo=disabled")
