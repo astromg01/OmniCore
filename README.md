@@ -3,37 +3,61 @@
 > Android-first multi-system emulation frontend focused on clean architecture, stable frame pacing and device-aware performance.
 
 [![Android](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
-[![Current DEV](https://img.shields.io/badge/current%20DEV-0.6.0-7C5CFF)](https://github.com/astromg01/OmniCore/releases/tag/v0.6.0-dev)
-[![PS1](https://img.shields.io/badge/PS1-PCSX--ReARMed-57D8FF)](https://github.com/libretro/pcsx_rearmed)
+[![Current DEV](https://img.shields.io/badge/current%20DEV-0.8.0-7C5CFF)](https://github.com/astromg01/OmniCore/releases/tag/v0.8.0-dev)
+[![PS1](https://img.shields.io/badge/PS1-functional-57D8FF)](https://github.com/libretro/pcsx_rearmed)
+[![Runtime](https://img.shields.io/badge/runtime-v7%20EGL%2FGLES-9879FF)](app/src/main/cpp/)
 [![License note](https://img.shields.io/badge/core%20license-GPL--2.0-important)](THIRD_PARTY_NOTICES.md)
 
-OmniCore is a unified Android emulation hub being built around **independent native backends** with one shared library, input layer, save system, performance manager and user interface.
+OmniCore is a unified Android emulation hub built around **independent native backends** with one shared library, input layer, save system, performance manager, update system and user interface.
 
-The project is intentionally progressive: **PlayStation 1 is the first functional backend**. N64, PSP, Wii, PS2 and Switch remain roadmap targets and are not presented as working emulators yet.
+The project is intentionally progressive: **PlayStation 1 is the first functional backend**. N64, PSP, Wii / GameCube, PS2 and Switch remain roadmap targets and are not presented as working emulators yet.
 
-## Current status — v0.6.0 DEV
+## Current status — v0.8.0 DEV
 
-The current development build focuses on making the PS1 path technically solid before the next console backend is added.
+The PS1 backend has crossed the first major runtime milestone: **real gameplay, video and audio have been validated on Android hardware** using the OmniCore frontend and the pinned PCSX-ReARMed core.
+
+The v0.8.0 line keeps the working v0.7 video/audio foundation intact and focuses on compatibility, startup latency and user-facing refinement.
 
 ### PlayStation 1
 
 - **PCSX-ReARMed/libretro** pinned to a reproducible upstream revision.
 - Android builds for **arm64-v8a** and **armeabi-v7a**.
 - Native **C++20/JNI libretro host**.
-- Dedicated emulation, audio and rendering paths.
-- **Runtime v7** with a separate video presentation thread.
-- **EGL + OpenGL ES 2** texture presenter instead of direct CPU blitting to `ANativeWindow`.
-- Direct RGB565 texture upload path plus explicit conversion for XRGB8888 / 0RGB1555.
+- **Runtime v7** with emulation, audio and presentation decoupled.
+- **EGL + OpenGL ES 2** texture presenter.
+- Stable **XRGB8888** core-output path with explicit GLES conversion.
+- `SurfaceView` no-draw composition path validated after real-device black-screen debugging.
 - AAudio output with priming, sample-rate adaptation and bounded adaptive buffering.
-- Touch controls, D-pad, analog input and Android/Bluetooth controller support.
+- Real gameplay validated with stable video and non-stuttering audio on Android hardware.
+- Touch controls with D-pad, left analog stick, face buttons, shoulders, Start and Select.
+- Android/Bluetooth controller input path.
 - Save RAM / memory-card persistence and save states.
 - Optional user-supplied PS1 BIOS import; no BIOS is bundled.
+- Optional **classic PlayStation BIOS boot/logo** when a valid real BIOS is available.
 - CUE/BIN folder workflows plus supported single-file images such as CHD and PBP.
-- Runtime diagnostics for produced, visible, dropped and presented frames.
+- Persistent validated **CUE/BIN disc cache** so unchanged games do not need to copy large BIN tracks on every launch.
+- Presentation modes: **4:3 original, 16:9 expansion and fullscreen**.
+- Runtime diagnostics for produced, presented and dropped frames plus audio-buffer state.
+
+> **16:9 note:** the current widescreen option changes frontend presentation. It is not presented as a universal per-game 3D geometry patch.
+
+## Fast PS1 startup
+
+CUE/BIN compatibility originally required materializing CD tracks as real local files because PCSX-ReARMed reopens tracks through standard file I/O. That path is kept for compatibility, but v0.8.0 no longer repeats the expensive copy on every launch.
+
+OmniCore now:
+
+1. Reads the CUE and resolves every referenced track.
+2. Builds a fingerprint from the source metadata and CUE contents.
+3. Materializes and validates the local disc set once.
+4. Reuses the prepared disc cache while the source remains unchanged.
+5. Rebuilds automatically if the source fingerprint changes.
+
+The cache can be cleared manually from **Tuning → Início rápido PS1**.
 
 ## SmartPerf
 
-OmniCore treats performance management as part of the runtime architecture rather than a collection of fixed "boost" switches.
+OmniCore treats performance management as part of the runtime architecture rather than a collection of fixed “boost” switches.
 
 Current performance systems include:
 
@@ -46,7 +70,7 @@ Current performance systems include:
 - Surface refresh-rate hints when supported.
 - Adaptive AAudio buffering using platform xruns and frontend underrun telemetry.
 - Background content preparation.
-- Direct access to seekable Android document-provider files where possible.
+- Direct access to seekable Android document-provider files where safe.
 - Compatibility-first defaults on lower-end devices.
 - No root requirement, hidden APIs, forced CPU/GPU clocks or persistent vendor tweaks.
 
@@ -56,7 +80,7 @@ See [OPTIMIZATION.md](OPTIMIZATION.md) for implementation details.
 
 | System | Backend direction | Status |
 |---|---|---|
-| PlayStation 1 | PCSX-ReARMed / libretro | **Active / functional** |
+| PlayStation 1 | PCSX-ReARMed / libretro | **Functional / active development** |
 | Nintendo 64 | Mupen64Plus family | Planned |
 | PSP | PPSSPP | Planned |
 | Wii / GameCube | Dolphin | Planned |
@@ -72,20 +96,24 @@ Starting with **v0.6.0**, OmniCore development builds include an in-app updater 
 1. Checks OmniCore GitHub Releases.
 2. Compares semantic versions.
 3. Downloads the matching DEV APK.
-4. Verifies its SHA-256 digest when provided by GitHub.
+4. Verifies its SHA-256 digest when available.
 5. Hands the verified APK to Android's `PackageInstaller`.
 
 Development builds from v0.6.0 onward use a stable **DEV-only** signing certificate so compatible future DEV builds can update over the installed app while preserving app data.
 
-> **Migration note:** builds through v0.5.0 were produced with ephemeral GitHub-runner debug certificates. Moving from v0.5.0 or older to v0.6.0 requires one final uninstall/reinstall. This DEV signing identity is not intended for Play Store production signing.
+> **Migration note:** builds through v0.5.0 were produced with ephemeral GitHub-runner debug certificates. Moving from v0.5.0 or older to v0.6.0 required one final uninstall/reinstall. Builds from v0.6.0 onward share the stable DEV signing identity. This identity is not intended for Play Store production signing.
 
 ## Download
 
 The current development release is:
 
-**[OmniCore v0.6.0 DEV — EGL/GLES Video Foundation](https://github.com/astromg01/OmniCore/releases/tag/v0.6.0-dev)**
+**[OmniCore v0.8.0 DEV — Compatibility & UX](https://github.com/astromg01/OmniCore/releases/tag/v0.8.0-dev)**
 
-Development releases are for testing and may contain compatibility regressions. Keep important save data backed up while the runtime is still under active development.
+Direct APK:
+
+**[OmniCore-v0.8.0-debug.apk](https://github.com/astromg01/OmniCore/releases/download/v0.8.0-dev/OmniCore-v0.8.0-debug.apk)**
+
+Development releases are for testing and may still contain game-specific compatibility regressions. Keep important save data backed up while the runtime remains under active development.
 
 ## Content and firmware policy
 
@@ -125,10 +153,10 @@ This keeps the binary/core source relationship explicit and reproducible.
 app/
   src/main/java/com/omnicore/emulator/
     core/          Core registry and backend integration
-    emulation/     Emulation activity and controls
+    emulation/     Emulation activity and touch/controller input
     performance/   SmartPerf runtime policy
-    settings/      Core/user settings
-    storage/       Library, BIOS and Android SAF handling
+    settings/      Core/user settings and presentation modes
+    storage/       Library, BIOS, SAF and disc preparation
     ui/            Compose frontend
     update/        DEV update system
 
@@ -148,7 +176,7 @@ tools/
 
 ## CI validation
 
-The `Android Build` workflow currently validates the full development path:
+The `Android Build` workflow validates the full development path:
 
 - project/runtime version consistency
 - Android/JDK/NDK toolchain
@@ -169,12 +197,14 @@ OmniCore's final distribution/licensing model must remain compatible with every 
 
 ## Development priorities
 
-1. Finish real-device validation of the PS1 EGL/GLES renderer.
-2. Harden PS1 compatibility, save behavior and per-game settings.
-3. Improve frontend diagnostics and update UX.
-4. Integrate the first non-PS1 backend.
-5. Expand the shared performance layer without device-specific hacks.
-6. Prepare production signing and store-distribution strategy only after the runtime foundation is stable.
+1. Expand PS1 real-device and per-game compatibility testing without destabilizing the working v0.7 renderer/runtime foundation.
+2. Refine startup latency, disc caching and BIOS behavior.
+3. Improve touch-control ergonomics, remapping and per-game profiles.
+4. Add proper presentation/scaling controls and evaluate safe game-specific widescreen mechanisms.
+5. Improve library metadata, covers and diagnostics/exportable logs.
+6. Harden save-state/memory-card behavior and recovery.
+7. Begin the first non-PS1 backend only after the PS1 foundation remains stable across a broader test set.
+8. Prepare production signing and store-distribution strategy after the runtime and licensing model are mature.
 
 ---
 
