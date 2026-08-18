@@ -1,0 +1,3 @@
+OmniCore N64 Alpha 16 compile-fix gate
+issue=missing kotlin.math.roundToInt import
+revision=1
