@@ -7,7 +7,7 @@ on:
       - ".ci/ps2-foundation-trigger.txt"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ps2-foundation
@@ -27,7 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin agent/0.10.0-n64-foundation
+          git fetch --no-tags origin agent/0.10.0-n64-foundation
           changed="$(git diff --name-only origin/agent/0.10.0-n64-foundation...HEAD)"
           echo "$changed"
           forbidden='^(app/src/main/cpp/(native_bridge\.cpp|gl_presenter\.cpp|libretro_host_v7\.cpp|n64/)|app/src/main/java/com/omnicore/emulator/core/n64/|app/src/main/java/com/omnicore/emulator/emulation/N64|app/src/main/java/com/omnicore/emulator/performance/N64)'
@@ -47,25 +47,33 @@ jobs:
           grep -q 'cycleSkippingAllowed: Boolean = false' app/src/main/java/com/omnicore/emulator/performance/PS2SmartPerf.kt
           grep -q '04bde0df87ee7c0e2f0151b51bb2cc22c88541da' PS2_FOUNDATION.md
           grep -q '4fd1a4192a2cf4e48ee60cbe92d7d9da98f0ce44' PS2_FOUNDATION.md
+          git diff --check origin/agent/0.10.0-n64-foundation...HEAD
 
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
+      - name: Verify proven Android toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
+          test -d "$ANDROID_SDK_ROOT/platforms/android-36"
+          test -x "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign"
+          test -d "$ANDROID_NDK_HOME"
+          java -version
+          cmake --version || true
 
       - name: Compile Kotlin and all native runtimes
         shell: bash
         run: |
-          set -euo pipefail
-          chmod +x gradlew
-          ./gradlew --no-daemon :app:compileDebugKotlin :app:externalNativeBuildDebug
+          set -o pipefail
+          gradle :app:externalNativeBuildDebug :app:compileDebugKotlin --stacktrace --no-daemon 2>&1 | tee /tmp/ps2-foundation-build.log
 
       - name: Build foundation APK container
         shell: bash
         run: |
-          set -euo pipefail
-          ./gradlew --no-daemon :app:assembleDebug
+          set -o pipefail
+          gradle :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee -a /tmp/ps2-foundation-build.log
           APK=app/build/outputs/apk/debug/app-debug.apk
           test -f "$APK"
           unzip -l "$APK" | grep -q 'lib/arm64-v8a/libomnicore_runtime.so'
@@ -78,11 +86,55 @@ jobs:
         run: |
           set -euo pipefail
           APK=app/build/outputs/apk/debug/app-debug.apk
-          ZIPALIGN="$(find "$ANDROID_HOME/build-tools" -name zipalign -type f | sort -V | tail -n1)"
-          test -x "$ZIPALIGN"
+          ZIPALIGN="$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign"
           "$ZIPALIGN" -c -P 16 4 "$APK"
 
+      - name: Record PS2 foundation failure
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          {
+            echo "run_id=$GITHUB_RUN_ID"
+            echo "commit=$GITHUB_SHA"
+            echo "status=failure"
+            echo "branch=agent/0.11.0-ps2-foundation"
+            echo "phase=foundation-v1"
+          } > .ci/ps2-foundation-failure.txt
+          if test -f /tmp/ps2-foundation-build.log; then
+            echo >> .ci/ps2-foundation-failure.txt
+            echo "--- build tail ---" >> .ci/ps2-foundation-failure.txt
+            tail -n 120 /tmp/ps2-foundation-build.log >> .ci/ps2-foundation-failure.txt
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .ci/ps2-foundation-failure.txt
+          git commit -m "Record PS2 foundation failure [skip ci]" || true
+          git push origin HEAD:agent/0.11.0-ps2-foundation || true
+
+      - name: Record PS2 foundation success
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "run_id=$GITHUB_RUN_ID"
+            echo "commit=$GITHUB_SHA"
+            echo "status=success"
+            echo "branch=agent/0.11.0-ps2-foundation"
+            echo "phase=foundation-v1"
+            echo "ps2_runtime=libomnicore_ps2_runtime.so"
+          } > .ci/ps2-foundation-success.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .ci/ps2-foundation-success.txt
+          git commit -m "Record PS2 foundation success [skip ci]"
+          git push origin HEAD:agent/0.11.0-ps2-foundation
+
       - name: Foundation summary
+        if: success()
         shell: bash
         run: |
           echo "PS2 foundation compile/isolation validation passed."
