@@ -9,10 +9,22 @@ PIN="04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
 PLAY_ABIS="${PLAY_ABIS:-arm64-v8a armeabi-v7a}"
 PLAY_BUILD_JOBS="${PLAY_BUILD_JOBS:-2}"
 
-if [[ "$(git -C "$PLAY_SRC" rev-parse HEAD)" != "$PIN" ]]; then
-  echo "Unexpected Play! source revision" >&2
-  exit 1
-fi
+verify_upstream_pins() {
+  if [[ "$(git -C "$PLAY_SRC" rev-parse HEAD)" != "$PIN" ]]; then
+    echo "Unexpected Play! source revision" >&2
+    return 1
+  fi
+
+  local status
+  status="$(git -C "$PLAY_SRC" submodule status --recursive)"
+  printf '%s\n' "$status"
+  if grep -Eq '^[+-U]' <<< "$status"; then
+    echo "Play! submodule revision changed or is unresolved." >&2
+    return 1
+  fi
+}
+
+verify_upstream_pins
 
 for ABI in $PLAY_ABIS; do
   BUILD_DIR="$OUT_ROOT/$ABI"
@@ -48,5 +60,10 @@ for ABI in $PLAY_ABIS; do
   test -s "$JNI_DIR/libPlay.so"
 done
 
-git -C "$PLAY_SRC" diff --quiet
+# Some upstream CMake dependencies intentionally rename/generated files while
+# configuring (notably libchdr's bundled zlib zconf.h). A dirty worktree after
+# a build is therefore not evidence that OmniCore patched Play!. What matters
+# for reproducibility is that the root checkout and every recursive submodule
+# remain at the exact commits recorded by the pinned Play! revision.
+verify_upstream_pins
 printf 'Play! Android backend built for: %s\n' "$PLAY_ABIS"
