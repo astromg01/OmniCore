@@ -31,6 +31,7 @@ object N64NativeBridge {
     }.getOrDefault(false)
 
     @Volatile private var coreAvailable: Boolean? = null
+    @Volatile private var diagnosticGeneration = 0L
 
     fun hasCore(): Boolean {
         if (!runtimeLoaded) return false
@@ -61,15 +62,18 @@ object N64NativeBridge {
             N64InputSettings.PakMode.AUTO,
             N64InputSettings.PakMode.MEMORY -> "memory"
         }
-        val diagnosticPath = File(paths.root, "last_boot_stage.txt").absolutePath
-        val verificationPath = File(paths.root, "boot_verified.flag").absolutePath
+        val diagnosticFile = File(paths.root, "last_boot_stage.txt")
+        val verificationFile = File(paths.root, "boot_verified.flag")
+        val diagnosticPath = diagnosticFile.absolutePath
+        val verificationPath = verificationFile.absolutePath
         runCatching {
-            File(diagnosticPath).writeText(
+            diagnosticFile.writeText(
                 "stage=kotlin:native_start\ntimestamp=${System.currentTimeMillis()}\n" +
                     "detail=${config.cpuMode.storage},threaded=${config.threadedRenderer},fb=${config.framebufferEmulation}\n"
             )
         }
-        return runCatching {
+
+        val started = runCatching {
             nativeStart(
                 surface = surface,
                 romPath = rom.absolutePath,
@@ -89,9 +93,53 @@ object N64NativeBridge {
                 audioBufferBursts = decision.audioBufferBursts.coerceIn(2, 7)
             )
         }.getOrDefault(false)
+        if (started) startDiagnosticPoll(diagnosticFile, verificationFile)
+        return started
+    }
+
+    private fun startDiagnosticPoll(diagnosticFile: File, verificationFile: File) {
+        val generation = System.nanoTime()
+        diagnosticGeneration = generation
+        Thread({
+            var last = ""
+            var stoppedPolls = 0
+            while (diagnosticGeneration == generation) {
+                val message = runCatching { nativeLastMessage() }.getOrDefault("")
+                if (message.isNotBlank() && message != last) {
+                    last = message
+                    runCatching {
+                        diagnosticFile.writeText(
+                            "stage=${message.replace('\n', ' ').take(220)}\n" +
+                                "timestamp=${System.currentTimeMillis()}\n"
+                        )
+                    }
+                    if (message.startsWith("N64 RUN OK")) {
+                        runCatching {
+                            verificationFile.writeText(
+                                "verified=${System.currentTimeMillis()}\n$message\n"
+                            )
+                        }
+                    }
+                }
+
+                val running = runCatching { nativeIsRunning() }.getOrDefault(false)
+                if (running) stoppedPolls = 0 else stoppedPolls++
+                if (stoppedPolls >= 12) break
+                try {
+                    Thread.sleep(40L)
+                } catch (_: InterruptedException) {
+                    break
+                }
+            }
+        }, "OmniCore-N64Diag").apply {
+            priority = Thread.NORM_PRIORITY - 1
+            isDaemon = true
+            start()
+        }
     }
 
     fun stop() {
+        diagnosticGeneration = System.nanoTime()
         if (runtimeLoaded) runCatching { nativeStop() }
     }
 
