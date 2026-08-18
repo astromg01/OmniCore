@@ -18,8 +18,7 @@ import kotlin.math.min
 /**
  * Nintendo 64 touch controller focused on comfortable phone play.
  * Visual regions stay intentionally light while hit areas are larger than the
- * artwork. Pointer ownership remains stable and button fingers may slide between
- * neighbouring buttons without breaking another simultaneous pointer.
+ * artwork. The layout can be edited directly on top of the running game.
  */
 class N64GamepadOverlayView(
     context: Context,
@@ -27,12 +26,13 @@ class N64GamepadOverlayView(
 ) : View(context) {
 
     private data class ButtonRegion(
+        val key: String,
         val id: Int,
         val label: String,
+        val accent: Boolean = false,
         var x: Float = 0f,
         var y: Float = 0f,
-        var radius: Float = 1f,
-        val accent: Boolean = false
+        var radius: Float = 1f
     )
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -40,10 +40,21 @@ class N64GamepadOverlayView(
         style = Paint.Style.STROKE
         strokeWidth = resources.displayMetrics.density * 1.25f
     }
+    private val editPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(235, 118, 226, 255)
+        style = Paint.Style.STROKE
+        strokeWidth = resources.displayMetrics.density * 2.6f
+    }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textAlign = Paint.Align.CENTER
         isFakeBoldText = true
+    }
+    private val editorTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textAlign = Paint.Align.LEFT
+        isFakeBoldText = true
+        textSize = resources.displayMetrics.scaledDensity * 12f
     }
 
     private var analogX = 0f
@@ -57,23 +68,28 @@ class N64GamepadOverlayView(
     private val pressed = BooleanArray(16)
     private var activeUntilMs = 0L
 
+    private var editMode = false
+    private var editPointerId = INVALID_POINTER
+    private var editTargetKey: String? = null
+    private var selectedKey: String? = null
+
     // Alternate Mupen mapping: A=B(0), B=Y(1), L=SELECT(2), Start=3,
     // C-down=A(8), C-up=X(9), C-left=L(10), C-right=R(11), Z=L2(12), R=R2(13).
     private val buttons = arrayOf(
-        ButtonRegion(0, "A", accent = true),
-        ButtonRegion(1, "B"),
-        ButtonRegion(8, "C↓", accent = true),
-        ButtonRegion(9, "C↑", accent = true),
-        ButtonRegion(10, "C←", accent = true),
-        ButtonRegion(11, "C→", accent = true),
-        ButtonRegion(12, "Z"),
-        ButtonRegion(2, "L"),
-        ButtonRegion(13, "R"),
-        ButtonRegion(3, "START"),
-        ButtonRegion(4, "↑"),
-        ButtonRegion(5, "↓"),
-        ButtonRegion(6, "←"),
-        ButtonRegion(7, "→")
+        ButtonRegion("a", 0, "A", accent = true),
+        ButtonRegion("b", 1, "B"),
+        ButtonRegion("c_down", 8, "C↓", accent = true),
+        ButtonRegion("c_up", 9, "C↑", accent = true),
+        ButtonRegion("c_left", 10, "C←", accent = true),
+        ButtonRegion("c_right", 11, "C→", accent = true),
+        ButtonRegion("z", 12, "Z"),
+        ButtonRegion("l", 2, "L"),
+        ButtonRegion("r", 13, "R"),
+        ButtonRegion("start", 3, "START"),
+        ButtonRegion("dpad_up", 4, "↑"),
+        ButtonRegion("dpad_down", 5, "↓"),
+        ButtonRegion("dpad_left", 6, "←"),
+        ButtonRegion("dpad_right", 7, "→")
     )
 
     private val fadeRunnable = Runnable { postInvalidateOnAnimation() }
@@ -93,8 +109,11 @@ class N64GamepadOverlayView(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        if (w <= 0 || h <= 0) return
+        rebuildLayout(w, h)
+    }
 
+    private fun rebuildLayout(w: Int = width, h: Int = height) {
+        if (w <= 0 || h <= 0) return
         val short = min(w, h).toFloat().coerceAtLeast(1f)
         val presetScale = when (config.overlayPreset) {
             N64InputSettings.OverlayPreset.CLEAN -> 0.90f
@@ -106,50 +125,58 @@ class N64GamepadOverlayView(
         val small = short * 0.044f * scale
         val cRadius = short * 0.041f * scale
 
-        val analogPos = when (config.overlayPreset) {
+        val analogDefault = when (config.overlayPreset) {
             N64InputSettings.OverlayPreset.CLEAN -> 0.135f to 0.76f
             N64InputSettings.OverlayPreset.STANDARD -> 0.17f to 0.74f
             N64InputSettings.OverlayPreset.COMPACT -> 0.105f to 0.80f
         }
-        analogCenterX = w * analogPos.first
-        analogCenterY = h * analogPos.second
-        analogRadius = short * 0.108f * scale
+        val analogPos = N64InputSettings.resolveControlPosition(
+            context, ANALOG_KEY, analogDefault.first, analogDefault.second
+        )
+        analogCenterX = w * analogPos.x
+        analogCenterY = h * analogPos.y
+        analogRadius = short * 0.108f * scale * N64InputSettings.resolveControlScale(context, ANALOG_KEY)
 
         val aX = when (config.overlayPreset) {
             N64InputSettings.OverlayPreset.CLEAN -> 0.90f
             N64InputSettings.OverlayPreset.STANDARD -> 0.87f
             N64InputSettings.OverlayPreset.COMPACT -> 0.93f
         }
-        place(0, w * aX, h * 0.76f, standard * 1.08f)
-        place(1, w * (aX - 0.10f), h * 0.82f, standard)
+        place("a", aX, 0.76f, standard * 1.08f)
+        place("b", aX - 0.10f, 0.82f, standard)
 
-        val cx = w * 0.84f
-        val cy = h * 0.47f
-        place(8, cx, cy + cRadius * 1.48f, cRadius)
-        place(9, cx, cy - cRadius * 1.48f, cRadius)
-        place(10, cx - cRadius * 1.48f, cy, cRadius)
-        place(11, cx + cRadius * 1.48f, cy, cRadius)
+        val cNormX = 0.84f
+        val cNormY = 0.47f
+        val cSpacingX = cRadius * 1.48f / w
+        val cSpacingY = cRadius * 1.48f / h
+        place("c_down", cNormX, cNormY + cSpacingY, cRadius)
+        place("c_up", cNormX, cNormY - cSpacingY, cRadius)
+        place("c_left", cNormX - cSpacingX, cNormY, cRadius)
+        place("c_right", cNormX + cSpacingX, cNormY, cRadius)
 
-        place(12, w * 0.39f, h * 0.88f, standard * 0.86f)
-        place(2, w * 0.075f, h * 0.11f, small)
-        place(13, w * 0.925f, h * 0.11f, small)
-        place(3, w * 0.52f, h * 0.91f, small * 1.03f)
+        place("z", 0.39f, 0.88f, standard * 0.86f)
+        place("l", 0.075f, 0.11f, small)
+        place("r", 0.925f, 0.11f, small)
+        place("start", 0.52f, 0.91f, small * 1.03f)
 
-        val dx = w * 0.275f
-        val dy = h * 0.70f
-        val dr = small * 0.78f
-        place(4, dx, dy - dr * 1.42f, dr)
-        place(5, dx, dy + dr * 1.42f, dr)
-        place(6, dx - dr * 1.42f, dy, dr)
-        place(7, dx + dr * 1.42f, dy, dr)
+        val dNormX = 0.275f
+        val dNormY = 0.70f
+        val dRadius = small * 0.78f
+        val dSpacingX = dRadius * 1.42f / w
+        val dSpacingY = dRadius * 1.42f / h
+        place("dpad_up", dNormX, dNormY - dSpacingY, dRadius)
+        place("dpad_down", dNormX, dNormY + dSpacingY, dRadius)
+        place("dpad_left", dNormX - dSpacingX, dNormY, dRadius)
+        place("dpad_right", dNormX + dSpacingX, dNormY, dRadius)
+        postInvalidateOnAnimation()
     }
 
-    private fun place(id: Int, x: Float, y: Float, radius: Float) {
-        buttons.firstOrNull { it.id == id }?.let {
-            it.x = x
-            it.y = y
-            it.radius = radius
-        }
+    private fun place(key: String, defaultX: Float, defaultY: Float, baseRadius: Float) {
+        val button = buttons.firstOrNull { it.key == key } ?: return
+        val pos = N64InputSettings.resolveControlPosition(context, key, defaultX, defaultY)
+        button.x = width * pos.x
+        button.y = height * pos.y
+        button.radius = baseRadius * N64InputSettings.resolveControlScale(context, key)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -157,12 +184,14 @@ class N64GamepadOverlayView(
         val opacity = effectiveOpacity()
         drawAnalog(canvas, opacity)
         for (button in buttons) {
-            if (!config.showDpad && button.id in 4..7) continue
+            if (!config.showDpad && button.id in 4..7 && !editMode) continue
             drawButton(canvas, button, opacity)
         }
+        if (editMode) drawEditor(canvas)
     }
 
     private fun effectiveOpacity(): Float {
+        if (editMode) return 0.96f
         val now = SystemClock.uptimeMillis()
         val active = analogPointerId != INVALID_POINTER || pointerButtons.size() > 0 || now <= activeUntilMs
         val idleFactor = if (config.dynamicOpacity && !active) 0.42f else 1f
@@ -177,7 +206,6 @@ class N64GamepadOverlayView(
         strokePaint.color = Color.argb(scaledAlpha(132, opacity), 240, 241, 255)
         canvas.drawCircle(analogCenterX, analogCenterY, analogRadius, fillPaint)
         canvas.drawCircle(analogCenterX, analogCenterY, analogRadius, strokePaint)
-
         val knobRadius = analogRadius * 0.40f
         fillPaint.color = Color.argb(
             scaledAlpha(if (analogPointerId == INVALID_POINTER) 95 else 165, opacity),
@@ -189,6 +217,9 @@ class N64GamepadOverlayView(
             knobRadius,
             fillPaint
         )
+        if (editMode && selectedKey == ANALOG_KEY) {
+            canvas.drawCircle(analogCenterX, analogCenterY, analogRadius * 1.12f, editPaint)
+        }
     }
 
     private fun drawButton(canvas: Canvas, button: ButtonRegion, opacity: Float) {
@@ -207,6 +238,9 @@ class N64GamepadOverlayView(
         }
         canvas.drawCircle(button.x, button.y, button.radius, fillPaint)
         canvas.drawCircle(button.x, button.y, button.radius, strokePaint)
+        if (editMode && selectedKey == button.key) {
+            canvas.drawCircle(button.x, button.y, button.radius * 1.18f, editPaint)
+        }
         textPaint.alpha = scaledAlpha(if (active) 255 else 215, opacity)
         textPaint.textSize = (button.radius * if (button.label.length > 2) 0.44f else 0.63f).coerceAtLeast(9f)
         val baseline = button.y - (textPaint.ascent() + textPaint.descent()) / 2f
@@ -214,7 +248,18 @@ class N64GamepadOverlayView(
         textPaint.alpha = 255
     }
 
+    private fun drawEditor(canvas: Canvas) {
+        fillPaint.color = Color.argb(150, 8, 11, 18)
+        canvas.drawRoundRect(18f, 18f, min(width * 0.58f, 560f), 86f, 18f, 18f, fillPaint)
+        canvas.drawText("EDITOR N64 • arraste um controle", 34f, 47f, editorTextPaint)
+        val selected = selectedControlLabel() ?: "toque em um controle para selecionar"
+        editorTextPaint.isFakeBoldText = false
+        canvas.drawText("Selecionado: $selected", 34f, 72f, editorTextPaint)
+        editorTextPaint.isFakeBoldText = true
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (editMode) return onEditorTouch(event)
         markActive()
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
@@ -231,12 +276,119 @@ class N64GamepadOverlayView(
                     }
                 }
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
-                release(event.getPointerId(event.actionIndex))
-            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> release(event.getPointerId(event.actionIndex))
             MotionEvent.ACTION_CANCEL -> releaseAll()
         }
         return true
+    }
+
+    private fun onEditorTouch(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                if (editPointerId != INVALID_POINTER) return true
+                val index = event.actionIndex
+                val key = findEditTarget(event.getX(index), event.getY(index)) ?: return true
+                editPointerId = event.getPointerId(index)
+                editTargetKey = key
+                selectedKey = key
+                haptic()
+                postInvalidateOnAnimation()
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val pointer = editPointerId
+                if (pointer == INVALID_POINTER) return true
+                val index = event.findPointerIndex(pointer)
+                if (index < 0) return true
+                moveEditTarget(event.getX(index), event.getY(index))
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                if (event.getPointerId(event.actionIndex) == editPointerId) finishEditDrag()
+            }
+            MotionEvent.ACTION_CANCEL -> finishEditDrag()
+        }
+        return true
+    }
+
+    private fun findEditTarget(x: Float, y: Float): String? {
+        var bestKey: String? = null
+        var bestDistance = Float.MAX_VALUE
+        val analogDistance = hypot(x - analogCenterX, y - analogCenterY)
+        if (analogDistance <= analogRadius * 1.55f) {
+            bestKey = ANALOG_KEY
+            bestDistance = analogDistance
+        }
+        for (button in buttons) {
+            val distance = hypot(x - button.x, y - button.y)
+            if (distance <= button.radius * 1.65f && distance < bestDistance) {
+                bestKey = button.key
+                bestDistance = distance
+            }
+        }
+        return bestKey
+    }
+
+    private fun moveEditTarget(x: Float, y: Float) {
+        val key = editTargetKey ?: return
+        val clampedX = x.coerceIn(width * 0.035f, width * 0.965f)
+        val clampedY = y.coerceIn(height * 0.045f, height * 0.955f)
+        if (key == ANALOG_KEY) {
+            analogCenterX = clampedX
+            analogCenterY = clampedY
+        } else {
+            buttons.firstOrNull { it.key == key }?.let {
+                it.x = clampedX
+                it.y = clampedY
+            }
+        }
+        postInvalidateOnAnimation()
+    }
+
+    private fun finishEditDrag() {
+        val key = editTargetKey
+        if (key != null && width > 0 && height > 0) {
+            if (key == ANALOG_KEY) {
+                N64InputSettings.saveControlPosition(context, key, analogCenterX / width, analogCenterY / height)
+            } else {
+                buttons.firstOrNull { it.key == key }?.let {
+                    N64InputSettings.saveControlPosition(context, key, it.x / width, it.y / height)
+                }
+            }
+        }
+        editPointerId = INVALID_POINTER
+        editTargetKey = null
+        postInvalidateOnAnimation()
+    }
+
+    fun setEditMode(enabled: Boolean) {
+        if (editMode == enabled) return
+        releaseAll()
+        editMode = enabled
+        editPointerId = INVALID_POINTER
+        editTargetKey = null
+        if (!enabled) selectedKey = null
+        postInvalidateOnAnimation()
+    }
+
+    fun isEditMode(): Boolean = editMode
+
+    fun selectedControlLabel(): String? {
+        val key = selectedKey ?: return null
+        if (key == ANALOG_KEY) return "Analógico"
+        return buttons.firstOrNull { it.key == key }?.label
+    }
+
+    fun adjustSelectedScale(delta: Float): Boolean {
+        val key = selectedKey ?: return false
+        val current = N64InputSettings.resolveControlScale(context, key)
+        N64InputSettings.saveControlScale(context, key, current + delta)
+        rebuildLayout()
+        return true
+    }
+
+    fun resetEditedLayout() {
+        N64InputSettings.resetTouchLayout(context)
+        selectedKey = null
+        rebuildLayout()
     }
 
     private fun markActive() {
@@ -265,7 +417,6 @@ class N64GamepadOverlayView(
         val currentId = if (index >= 0) pointerButtons.valueAt(index) else -1
         val candidate = findButton(x, y, currentId) ?: return
         if (candidate.id == currentId) return
-
         if (currentId >= 0) setPressed(currentId, false)
         pointerButtons.put(pointerId, candidate.id)
         setPressed(candidate.id, true)
@@ -351,6 +502,7 @@ class N64GamepadOverlayView(
     }
 
     companion object {
+        private const val ANALOG_KEY = "analog"
         private const val INVALID_POINTER = -1
         private const val ACTIVE_HOLD_MS = 1050L
     }
