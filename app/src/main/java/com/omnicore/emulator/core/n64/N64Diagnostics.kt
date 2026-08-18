@@ -7,20 +7,26 @@ import android.os.Build
 import java.io.File
 
 /**
- * Phone-first N64 crash diagnostics.
+ * Phone-first N64 crash diagnostics and boot validation state.
  *
  * The N64 runtime lives in :n64, so the main OmniCore process can inspect the
- * Android process-exit history after a native crash. A tiny breadcrumb file is
- * also shared between the two processes to tell us the last boot stage reached
- * before the process died.
+ * Android process-exit history after a native crash. Tiny files shared between
+ * both processes keep the last boot stage and whether a real first frame has
+ * ever been produced successfully on this installation.
  */
 object N64Diagnostics {
     private const val PREFS = "n64_diagnostics"
     private const val KEY_LAST_EXIT_TS = "last_exit_timestamp"
     private const val BREADCRUMB = "last_boot_stage.txt"
+    private const val VERIFIED_BOOT = "boot_verified.flag"
 
-    fun breadcrumbFile(context: Context): File =
-        File(File(context.filesDir, "n64"), BREADCRUMB)
+    private fun root(context: Context) = File(context.filesDir, "n64")
+
+    fun breadcrumbFile(context: Context): File = File(root(context), BREADCRUMB)
+
+    fun verifiedBootFile(context: Context): File = File(root(context), VERIFIED_BOOT)
+
+    fun hasVerifiedBoot(context: Context): Boolean = verifiedBootFile(context).isFile
 
     fun mark(context: Context, stage: String, detail: String = "") {
         runCatching {
