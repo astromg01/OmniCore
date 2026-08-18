@@ -1,4 +1,4 @@
 OmniCore N64 Alpha 14 build trigger
 version=0.10.13
 focus=SmartPrecompile + Game Intelligence + Kirby analog bridge
-revision=2-kotlin-nul-fix
+revision=3-verbatim-migration
