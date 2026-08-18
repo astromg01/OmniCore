@@ -1,4 +1,0 @@
-run_id=32167464695
-commit=892d3c424042fdf41d5332515a000657683ce622
-status=failure
-version=0.10.15-alpha16
