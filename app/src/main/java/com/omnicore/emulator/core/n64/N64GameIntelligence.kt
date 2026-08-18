@@ -14,6 +14,7 @@ object N64GameIntelligence {
     data class InputPolicy(
         val bridgeDpadInAuto: Boolean,
         val internalTitle: String,
+        val analogProfile: String,
         val reason: String?
     )
 
@@ -26,10 +27,16 @@ object N64GameIntelligence {
         val fileIdentity = rom.nameWithoutExtension.uppercase(Locale.ROOT)
         val identity = "$title $fileIdentity"
         val matched = dpadFirstMarkers.firstOrNull { identity.contains(it) }
+        val racingProfile = identity.contains("MARIOKART") || identity.contains("MARIO KART")
+        val reasons = listOfNotNull(
+            matched?.let { "digital-profile:$it" },
+            if (racingProfile) "analog-profile:RACING" else null
+        )
         return InputPolicy(
             bridgeDpadInAuto = matched != null,
             internalTitle = title,
-            reason = matched?.let { "digital-profile:$it" }
+            analogProfile = if (racingProfile) "racing" else "balanced",
+            reason = reasons.takeIf { it.isNotEmpty() }?.joinToString("+")
         )
     }
 

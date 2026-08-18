@@ -33,6 +33,7 @@ struct RuntimeConfig {
     int analogSensitivityPercent = 100;
     std::string smartAnalogMode = "auto";
     bool smartAnalogAutoDpad = false;
+    std::string analogProfile = "balanced";
     bool precisionAnalog = true;
     int audioBufferBursts = 4;
 };

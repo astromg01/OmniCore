@@ -96,7 +96,7 @@ object N64NativeBridge {
             diagnosticFile.writeText(
                 "stage=kotlin:native_start\ntimestamp=${System.currentTimeMillis()}\n" +
                     "detail=${config.cpuMode.storage},threaded=${config.threadedRenderer},fb=${config.framebufferEmulation},aspect=${config.aspectRatio.storage}," +
-                    "smartInput=${inputPolicy.reason ?: "generic"},title=${inputPolicy.internalTitle.take(28)}\n"
+                    "smartInput=${inputPolicy.reason ?: "generic"},analogProfile=${inputPolicy.analogProfile},title=${inputPolicy.internalTitle.take(28)}\n"
             )
         }
 
@@ -122,6 +122,7 @@ object N64NativeBridge {
                 analogSensitivityPercent = (input.analogSensitivity * 100f).roundToInt(),
                 smartAnalogMode = input.smartAnalogMode.storage,
                 smartAnalogAutoDpad = !input.showDpad || inputPolicy.bridgeDpadInAuto,
+                analogProfile = inputPolicy.analogProfile,
                 precisionAnalog = input.precisionAnalog,
                 audioBufferBursts = decision.audioBufferBursts.coerceIn(2, 8)
             )
@@ -267,6 +268,7 @@ object N64NativeBridge {
         analogSensitivityPercent: Int,
         smartAnalogMode: String,
         smartAnalogAutoDpad: Boolean,
+        analogProfile: String,
         precisionAnalog: Boolean,
         audioBufferBursts: Int
     ): Boolean

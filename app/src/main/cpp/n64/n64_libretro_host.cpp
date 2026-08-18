@@ -75,7 +75,7 @@ struct AnalogVector final {
     float y = 0.0f;
 };
 
-AnalogVector shapeAnalog(float x, float y, int deadzonePercent, int sensitivityPercent, bool precision) {
+AnalogVector shapeAnalog(float x, float y, int deadzonePercent, int sensitivityPercent, bool precision, const std::string& profile) {
     x = std::clamp(x, -1.0f, 1.0f);
     y = std::clamp(y, -1.0f, 1.0f);
     if (!precision) return {x, y};
@@ -87,18 +87,30 @@ AnalogVector shapeAnalog(float x, float y, int deadzonePercent, int sensitivityP
     float normalized = (sourceMagnitude - deadzone) / std::max(0.01f, 1.0f - deadzone);
     normalized = std::clamp(normalized, 0.0f, 1.0f);
 
-    // ComfortAnalog keeps a small high-precision zone around center, then
-    // returns to a nearly linear response instead of suppressing the entire
-    // stick range. This makes slow walking/aiming controllable without making
-    // normal movement feel heavy. The last ~1.5% of the physical/touch radius
-    // is treated as full travel so users do not have to pin the thumb to the rim.
-    constexpr float kFineZone = 0.28f;
-    if (normalized < kFineZone) {
-        const float local = normalized / kFineZone;
-        normalized = std::pow(local, 1.08f) * kFineZone;
+    const float userSensitivity = std::clamp(
+        static_cast<float>(sensitivityPercent) / 100.0f, 0.70f, 1.30f);
+    if (profile == "racing") {
+        // RacingComfort: Mario Kart benefits from a wider fine-steering zone and
+        // a near-neutral effective default sensitivity. Full steering remains
+        // reachable at the rim, so this improves control without capping range.
+        constexpr float kRacingFineZone = 0.42f;
+        if (normalized < kRacingFineZone) {
+            const float local = normalized / kRacingFineZone;
+            normalized = std::pow(local, 1.16f) * kRacingFineZone;
+        }
+        normalized = std::min(1.0f, normalized / 0.995f);
+        normalized *= userSensitivity * 0.96f;
+    } else {
+        // Generic ComfortAnalog keeps the Alpha 19 behavior that tested well
+        // for Zelda and normal analog titles.
+        constexpr float kFineZone = 0.28f;
+        if (normalized < kFineZone) {
+            const float local = normalized / kFineZone;
+            normalized = std::pow(local, 1.08f) * kFineZone;
+        }
+        normalized = std::min(1.0f, normalized / 0.985f);
+        normalized *= userSensitivity;
     }
-    normalized = std::min(1.0f, normalized / 0.985f);
-    normalized *= std::clamp(static_cast<float>(sensitivityPercent) / 100.0f, 0.70f, 1.30f);
     normalized = std::clamp(normalized, 0.0f, 1.0f);
     return {x / magnitude * normalized, y / magnitude * normalized};
 }
@@ -640,6 +652,7 @@ struct LibretroHost::Impl {
     int stableAudioChecks = 0;
     int audioBufferFrames = 0;
     std::uint64_t lastRingUnderruns = 0;
+    std::chrono::steady_clock::time_point transitionAudioShieldUntil{};
     std::int16_t lastAudioLeft = 0;
     std::int16_t lastAudioRight = 0;
     double resampleAccumulator = 0.0;
@@ -761,6 +774,16 @@ struct LibretroHost::Impl {
         presentationTargetNs = 0;
     }
 
+    void armTransitionAudioShield(std::chrono::milliseconds duration) {
+        const auto requestedUntil = std::chrono::steady_clock::now() + duration;
+        if (requestedUntil > transitionAudioShieldUntil) transitionAudioShieldUntil = requestedUntil;
+        stableAudioChecks = 0;
+    }
+
+    bool transitionAudioShieldActive() const {
+        return std::chrono::steady_clock::now() < transitionAudioShieldUntil;
+    }
+
     void updateAudioTelemetry() {
         if (!owner || outputSampleRate <= 0) return;
         const float fillMs = static_cast<float>(audioRing.availableSamples() / 2u) * 1000.0f /
@@ -812,7 +835,8 @@ struct LibretroHost::Impl {
             // SmartPerf reduce latency only after the stream proves stable.
             audioPrimeFrames = std::min<int>(
                 static_cast<int>(audioRing.capacitySamples() / 4u),
-                std::max(framesPerBurst * 5, outputSampleRate / 24));
+                std::max(framesPerBurst * 6, outputSampleRate / 20));
+            armTransitionAudioShield(std::chrono::milliseconds(6000));
             lastXRunCount = std::max(0, AAudioStream_getXRunCount(audioStream));
             lastRingUnderruns = audioRing.underruns();
             stableAudioChecks = 0;
@@ -851,6 +875,7 @@ struct LibretroHost::Impl {
         resampleAccumulator = 0.0;
         lastRingUnderruns = 0;
         stableAudioChecks = 0;
+        armTransitionAudioShield(std::chrono::milliseconds(2200));
         updateAudioTelemetry();
     }
 
@@ -865,9 +890,16 @@ struct LibretroHost::Impl {
         updateAudioTelemetry();
         const float fillMs = owner ? owner->audioFillMs_.load(std::memory_order_acquire) : 0.0f;
         const float bufferMs = owner ? owner->audioBufferMs_.load(std::memory_order_acquire) : 0.0f;
-        const float targetFillMs = std::max(42.0f, bufferMs * 1.65f);
+        const float steadyTargetFillMs = std::max(42.0f, bufferMs * 1.65f);
+        const bool transitionShield = transitionAudioShieldActive();
+        const float targetFillMs = transitionShield
+            ? std::max(steadyTargetFillMs, 76.0f)
+            : steadyTargetFillMs;
         double scale = 1.0;
-        if (fillMs < targetFillMs * 0.55f) scale = 1.0075;
+        if (transitionShield && fillMs < targetFillMs * 0.42f) scale = 1.0180;
+        else if (transitionShield && fillMs < targetFillMs * 0.68f) scale = 1.0120;
+        else if (transitionShield && fillMs < targetFillMs * 0.90f) scale = 1.0065;
+        else if (fillMs < targetFillMs * 0.55f) scale = 1.0075;
         else if (fillMs < targetFillMs * 0.80f) scale = 1.0035;
         else if (fillMs > targetFillMs * 1.75f) scale = 0.9945;
         else if (fillMs > targetFillMs * 1.40f) scale = 0.9975;
@@ -913,6 +945,7 @@ struct LibretroHost::Impl {
     void adaptAudio(int requestedBursts) {
         if (!audioStream || framesPerBurst <= 0) return;
         requestedBursts = std::clamp(requestedBursts, 2, 8);
+        if (transitionAudioShieldActive()) requestedBursts = std::max(requestedBursts, 7);
         const int xruns = std::max(0, AAudioStream_getXRunCount(audioStream));
         const auto underruns = audioRing.underruns();
         int next = appliedAudioBursts;
@@ -993,7 +1026,7 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     hwRenderRequested_ = false;
     hwRender_ = {};
     precisionGovernorMode_.store(0, std::memory_order_release);
-    setMessage("N64 BOOT 1/6 • Alpha 19 PrecisionGovernor v2.1 + MicroBurstShield…");
+    setMessage("N64 BOOT 1/6 • Alpha 20 TransitionAudioShield + RacingComfort…");
     try {
         thread_ = std::thread(&LibretroHost::run, this);
     } catch (...) {
@@ -1079,7 +1112,8 @@ void LibretroHost::setButton(unsigned retroPadId, bool pressed) {
 
 void LibretroHost::setAnalog(float x, float y, float cX, float cY) {
     const AnalogVector shaped = shapeAnalog(
-        x, y, config_.analogDeadzonePercent, config_.analogSensitivityPercent, config_.precisionAnalog);
+        x, y, config_.analogDeadzonePercent, config_.analogSensitivityPercent,
+        config_.precisionAnalog, config_.analogProfile);
     analogX_.store(axisFromFloat(shaped.x), std::memory_order_release);
     analogY_.store(axisFromFloat(shaped.y), std::memory_order_release);
     cX_.store(axisFromFloat(cX), std::memory_order_release);
@@ -1699,6 +1733,7 @@ void LibretroHost::run() {
 
     auto nextFrame = std::chrono::steady_clock::now() + targetDuration;
     std::uint32_t adaptationCounter = 0;
+    std::uint64_t observedAudioUnderruns = 0;
     int stableStreak = 0;
     int warmStableFrames = 0;
     int candidateMode = 0;
@@ -1736,8 +1771,10 @@ void LibretroHost::run() {
         }
 
         if (menuTransitionBoost_.exchange(false, std::memory_order_acq_rel)) {
-            // Menus are commonly framebuffer-heavy. Hint GPU only; audio has its
-            // own xrun/fill controller and must not expand just because Start was pressed.
+            // Menus are commonly framebuffer-heavy. Give the renderer bounded
+            // headroom and temporarily protect the existing audio reserve.
+            impl_->armTransitionAudioShield(std::chrono::milliseconds(2400));
+            impl_->adaptAudio(std::max(audioTargetBursts_.load(std::memory_order_acquire), 7));
             impl_->perfHint.notifySpike(false, true, "omnicore-n64-menu-present-spike");
             governorHeadroomUntil = std::max(
                 governorHeadroomUntil,
@@ -1748,6 +1785,7 @@ void LibretroHost::run() {
             // hint only: no clock mutation, no resolution change and no audio
             // buffer growth. This helps the frames immediately following
             // attacks/collisions where CPU logic and a new RDP effect often meet.
+            impl_->armTransitionAudioShield(std::chrono::milliseconds(1200));
             impl_->perfHint.notifySpike(true, true, "omnicore-n64-action-microburst");
             governorHeadroomUntil = std::max(
                 governorHeadroomUntil,
@@ -1763,6 +1801,15 @@ void LibretroHost::run() {
         const float frameMs = std::chrono::duration<float, std::milli>(afterRun - begin).count();
         impl_->perfHint.report(workNs);
         recordFrame(frameMs, targetMs);
+
+        // Audio underruns are handled as episodes immediately after the next
+        // emulation slice, not delayed until the 60-frame adaptation cadence.
+        const std::uint64_t ringUnderrunsNow = impl_->audioRing.underruns();
+        if (ringUnderrunsNow > observedAudioUnderruns) {
+            observedAudioUnderruns = ringUnderrunsNow;
+            impl_->armTransitionAudioShield(std::chrono::milliseconds(2600));
+            impl_->adaptAudio(std::max(audioTargetBursts_.load(std::memory_order_acquire), 7));
+        }
 
         const auto controlNow = std::chrono::steady_clock::now();
         const float presentMs = lastPresentMs_.load(std::memory_order_acquire);
@@ -1834,6 +1881,7 @@ void LibretroHost::run() {
             frameMs > transientBaseline * 1.16f && pressureDebt < 0.55f;
         const bool catastrophicSpike = frameMs > targetMs * 1.85f;
         if (suddenMicroSpike || catastrophicSpike) {
+            impl_->armTransitionAudioShield(std::chrono::milliseconds(1800));
             const bool spikeGpu = presentMs >= std::max(3.6f, targetMs * 0.22f);
             impl_->perfHint.notifySpike(
                 !spikeGpu,
