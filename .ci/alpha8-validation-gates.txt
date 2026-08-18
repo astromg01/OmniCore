@@ -1,0 +1,57 @@
+migration_exit=0
+first_failure=none
+run_id=32101074258
+commit=8611d8c23542e065ee1cbb30e94e202b2256fb9b
+--- checks ---
+PASS version_code
+PASS version_name
+PASS app_v4
+PASS process_n64
+PASS registry
+PASS library_engine
+PASS zip
+PASS gzip
+PASS smart_session
+PASS frame_rate_hint
+PASS activity_present
+PASS edit_touch
+PASS save_state_ui
+PASS load_state_ui
+PASS edit_mode
+PASS control_position
+PASS state_file
+PASS smart_class
+PASS gpu_bound
+PASS smart_present
+PASS native_save
+PASS bridge_present
+PASS bridge_adpf
+PASS present_window
+PASS adpf_atomic
+PASS adpf_create
+PASS adpf_report
+PASS egl_presentation
+PASS fadvise
+PASS madvise
+PASS no_sequential
+PASS nearest
+PASS native_texrect
+PASS lod_true
+PASS persist_safe
+PASS no_save_counter
+PASS swap_zero
+PASS no_swap_one
+PASS no_forced_sample_rate
+PASS audio_buffer_frames
+PASS aaudio_latency
+PASS aaudio_exclusive
+PASS audio_sync
+PASS serialize
+PASS memory_data
+PASS runtime_version
+PASS telemetry_12
+PASS rom_alloc_patch
+PASS diff_check
+--- migration tail ---
+Alpha 8 migration applied successfully
+--- diff check ---
