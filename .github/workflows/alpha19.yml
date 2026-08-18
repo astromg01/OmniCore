@@ -1,4 +1,4 @@
-name: N64 Alpha 19
+name: N64 Alpha 20 Bridge
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: android-n64-alpha19
+  group: android-n64-alpha20-bridge
   cancel-in-progress: true
 
 jobs:
@@ -28,50 +28,45 @@ jobs:
           git fetch --no-tags origin agent/0.10.0-n64-foundation
           git checkout -B agent/0.10.0-n64-foundation origin/agent/0.10.0-n64-foundation
 
-      - name: Apply Alpha 19 micro-refinement migration
+      - name: Apply Alpha 20 transition-audio migration
         shell: bash
         run: |
           set -euo pipefail
-          if grep -q 'versionName = "0.10.17"' app/build.gradle.kts; then
-            python3 tools/agent_01018_alpha19.py
-            echo "ALPHA19_MIGRATED=1" >> "$GITHUB_ENV"
-          elif grep -q 'versionName = "0.10.18"' app/build.gradle.kts; then
-            echo "ALPHA19_MIGRATED=0" >> "$GITHUB_ENV"
+          if grep -q 'versionName = "0.10.18"' app/build.gradle.kts; then
+            python3 tools/agent_01019_alpha20.py
+            echo "ALPHA20_MIGRATED=1" >> "$GITHUB_ENV"
+          elif grep -q 'versionName = "0.10.19"' app/build.gradle.kts; then
+            echo "ALPHA20_MIGRATED=0" >> "$GITHUB_ENV"
           else
-            echo "Unsupported OmniCore source version for Alpha 19" >&2
+            echo "Unsupported OmniCore source version for Alpha 20" >&2
             exit 1
           fi
 
-      - name: Validate Alpha 19 architecture and isolation
+      - name: Validate Alpha 20 architecture and isolation
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'versionCode = 34' app/build.gradle.kts
-          grep -q 'versionName = "0.10.18"' app/build.gradle.kts
-          grep -q 'MicroBurstShield' app/src/main/cpp/n64/n64_native_bridge.cpp
-          grep -q 'CruiseGuard' app/src/main/cpp/n64/n64_native_bridge.cpp
-          grep -q 'ComfortAnalog' app/src/main/cpp/n64/n64_native_bridge.cpp
-          grep -q 'interactionTransitionBoost_' app/src/main/cpp/n64/n64_libretro_host.h
+          grep -q 'versionCode = 35' app/build.gradle.kts
+          grep -q 'versionName = "0.10.19"' app/build.gradle.kts
+          grep -q 'TransitionAudioShield' app/src/main/cpp/n64/n64_native_bridge.cpp
+          grep -q 'RacingComfort' app/src/main/cpp/n64/n64_native_bridge.cpp
+          grep -q 'analogProfile = if (racingProfile) "racing" else "balanced"' app/src/main/java/com/omnicore/emulator/core/n64/N64GameIntelligence.kt
+          grep -q 'analogProfile = inputPolicy.analogProfile' app/src/main/java/com/omnicore/emulator/core/n64/N64NativeBridge.kt
+          grep -q 'std::string analogProfile = "balanced"' app/src/main/cpp/n64/n64_libretro_host.h
+          grep -q 'armTransitionAudioShield' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'ringUnderrunsNow' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'scale = 1.0180' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'kRacingFineZone = 0.42f' app/src/main/cpp/n64/n64_libretro_host.cpp
           grep -q 'std::try_to_lock' app/src/main/cpp/n64/n64_libretro_host.cpp
-          grep -q 'omnicore-n64-action-microburst' app/src/main/cpp/n64/n64_libretro_host.cpp
-          grep -q 'suddenMicroSpike' app/src/main/cpp/n64/n64_libretro_host.cpp
           grep -q 'cruiseRelaxed' app/src/main/cpp/n64/n64_libretro_host.cpp
-          grep -q 'kFineZone = 0.28f' app/src/main/cpp/n64/n64_libretro_host.cpp
-          grep -q 'normalized / 0.985f' app/src/main/cpp/n64/n64_libretro_host.cpp
-          grep -q 'else -> 1200L' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-          grep -q 'pressureDebt' app/src/main/cpp/n64/n64_libretro_host.cpp
-          grep -q 'candidateStreak' app/src/main/cpp/n64/n64_libretro_host.cpp
-          grep -q 'jitterEwma' app/src/main/cpp/n64/n64_libretro_host.cpp
           ! grep -q 'runSmartPrecompile' app/src/main/cpp/n64/n64_libretro_host.cpp
           ! grep -q 'glFinish();' app/src/main/cpp/n64/n64_libretro_host.cpp
           grep -q 'X15("1.5x", "1,5×", 15)' app/src/main/java/com/omnicore/emulator/settings/N64Settings.kt
           grep -q 'framebufferEmulation = true' app/src/main/java/com/omnicore/emulator/settings/N64Settings.kt
-          grep -q 'internalResolution = requested.internalResolution' app/src/main/java/com/omnicore/emulator/performance/N64SmartPerf.kt
-          grep -q 'threadedRenderer = requested.threadedRenderer' app/src/main/java/com/omnicore/emulator/performance/N64SmartPerf.kt
           grep -q 'PIN="f275caf4b2bfa1e6d1c51636746ea793f3d80320"' tools/fetch_n64_core.sh
           CHANGED="$(git status --porcelain | sed -E 's/^.. //')"
           if grep -Eiq '(^|/)(ps1|pcsx)' <<< "$CHANGED"; then
-            echo "Alpha 19 attempted to modify PS1-owned source:" >&2
+            echo "Alpha 20 attempted to modify PS1-owned source:" >&2
             grep -Ei '(^|/)(ps1|pcsx)' <<< "$CHANGED" >&2
             exit 1
           fi
@@ -139,7 +134,7 @@ jobs:
           tar --exclude=.git -czf build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz -C third_party pcsx_rearmed
           tar --exclude=.git -czf build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz -C third_party mupen64plus_next
 
-      - name: Build signed Alpha 19 APK
+      - name: Build signed Alpha 20 APK
         shell: bash
         run: |
           set -euo pipefail
@@ -168,33 +163,33 @@ jobs:
           done < <(find "$CHECK_DIR/lib" -type f -name '*.so' -print0)
           "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" -v -c -P 16 4 "$APK"
 
-      - name: Commit validated Alpha 19 source
-        if: env.ALPHA19_MIGRATED == '1'
+      - name: Commit validated Alpha 20 source
+        if: env.ALPHA20_MIGRATED == '1'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          rm -f tools/agent_01018_alpha19.py
+          rm -f tools/agent_01019_alpha20.py
           git config user.name "Mauricio.dev"
           git config user.email "antoniomauriciorodriguesalves@gmail.com"
-          git add -u app tools/agent_01018_alpha19.py
+          git add -u app tools/agent_01019_alpha20.py
           git diff --cached --check
-          git commit -m "Apply OmniCore 0.10.18 N64 Alpha 19 micro-refinements [skip ci]"
+          git commit -m "Apply OmniCore 0.10.19 N64 Alpha 20 transition audio polish [skip ci]"
           git push origin HEAD:agent/0.10.0-n64-foundation
 
-      - name: Publish N64 Alpha 19 prerelease
+      - name: Publish N64 Alpha 20 prerelease
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v0.10.18-n64-alpha19"
-          TITLE="OmniCore v0.10.18 N64 Alpha 19"
-          NOTES="Nineteenth Nintendo 64 device-test alpha. Micro-refinement pass on the successful PrecisionGovernor v2 foundation. NonBlockingTelemetry makes diagnostic ring writes try-lock only so UI telemetry can never stall an emulation/presentation frame. MicroBurstShield adds bounded predictive A/B/Z action hints plus lower-threshold transient hitch detection for collision/hit/effect bursts without changing fidelity. CruiseGuard gently relaxes prolonged controlled ADPF pressure and immediately restores headroom when pressure returns, targeting long-session thermal oscillation. ComfortAnalog keeps a fine center zone, near-linear mid-range and easier full travel. Stable frontend polling relaxes to 1200 ms. CadencePolish, StarUI Smooth, Achievements v2, Smart Analog/Kirby, DirectPresenter/RenderBridge, passive 2 MiB WarmCache, protected 1.5x resolution and framebuffer compatibility remain. PS1 remains isolated and unchanged. ROMs, BIOS, firmware, keys and games are not included."
+          TAG="v0.10.19-n64-alpha20"
+          TITLE="OmniCore v0.10.19 N64 Alpha 20"
+          NOTES="Twentieth Nintendo 64 device-test alpha. TransitionAudioShield targets short AAudio underruns observed during Zelda and Mario Kart menus while gameplay remained strong. It adds immediate underrun-episode recovery, a bounded startup/transition reserve and faster temporary ring refill without permanently increasing latency. RacingComfort adds a Mario Kart 64-specific fine-steering profile while preserving full travel. PrecisionGovernor v2.1, CruiseGuard, MicroBurstShield, NonBlockingTelemetry, CadencePolish, StarUI Smooth, Achievements v2, Smart Analog/Kirby, DirectPresenter/RenderBridge, passive 2 MiB WarmCache, protected 1.5x resolution and framebuffer compatibility remain. PS1 remains isolated and unchanged."
           APK="app/build/outputs/apk/debug/app-debug.apk"
-          OUT="build/OmniCore-v0.10.18-n64-alpha19-debug.apk"
-          HASH="build/OmniCore-v0.10.18-n64-alpha19-debug.sha256"
+          OUT="build/OmniCore-v0.10.19-n64-alpha20-debug.apk"
+          HASH="build/OmniCore-v0.10.19-n64-alpha20-debug.sha256"
           cp "$APK" "$OUT"
           sha256sum "$OUT" > "$HASH"
           TARGET="$(git rev-parse HEAD)"
@@ -205,23 +200,23 @@ jobs:
           fi
           gh release upload "$TAG" "$OUT" "$HASH" build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz --clobber
 
-      - name: Record Alpha 19 success
+      - name: Record Alpha 20 success
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p .ci
-          printf 'run_id=%s\ncommit=%s\nstatus=success\nversion=0.10.18\ntag=v0.10.18-n64-alpha19\n' "$GITHUB_RUN_ID" "$(git rev-parse HEAD)" > .ci/n64-foundation-success.txt
+          printf 'run_id=%s\ncommit=%s\nstatus=success\nversion=0.10.19\ntag=v0.10.19-n64-alpha20\n' "$GITHUB_RUN_ID" "$(git rev-parse HEAD)" > .ci/n64-foundation-success.txt
           rm -f .ci/n64-foundation-failure.txt
           git config user.name "Mauricio.dev"
           git config user.email "antoniomauriciorodriguesalves@gmail.com"
           git add .ci/n64-foundation-success.txt
           git add -u .ci/n64-foundation-failure.txt 2>/dev/null || true
-          git commit -m "Record N64 Alpha 19 validation success [skip ci]" || true
+          git commit -m "Record N64 Alpha 20 validation success [skip ci]" || true
           git push origin HEAD:agent/0.10.0-n64-foundation
 
-      - name: Record Alpha 19 failure
+      - name: Record Alpha 20 failure
         if: failure()
         shell: bash
         env:
@@ -230,12 +225,12 @@ jobs:
           set +e
           git reset --hard HEAD
           mkdir -p .ci
-          printf 'run_id=%s\ncommit=%s\nstatus=failure\nversion=0.10.18-alpha19\n' "$GITHUB_RUN_ID" "$GITHUB_SHA" > .ci/n64-foundation-failure.txt
+          printf 'run_id=%s\ncommit=%s\nstatus=failure\nversion=0.10.19-alpha20-bridge\n' "$GITHUB_RUN_ID" "$GITHUB_SHA" > .ci/n64-foundation-failure.txt
           git config user.name "Mauricio.dev"
           git config user.email "antoniomauriciorodriguesalves@gmail.com"
           git add .ci/n64-foundation-failure.txt
-          git commit -m "Record N64 Alpha 19 validation failure [skip ci]" || true
+          git commit -m "Record N64 Alpha 20 bridge validation failure [skip ci]" || true
           git push origin HEAD:agent/0.10.0-n64-foundation || true
 
       - name: Complete job
-        run: echo "Alpha 19 validation finished"
+        run: echo "Alpha 20 bridge validation finished"
