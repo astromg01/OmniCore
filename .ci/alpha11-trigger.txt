@@ -1,0 +1,4 @@
+OmniCore N64 Alpha 11
+version=0.10.10
+focus=BurstShield + same-resolution optimization + menu spike protection + audio resilience
+trigger=2026-08-18T06:39:00Z
