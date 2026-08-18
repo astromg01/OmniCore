@@ -1,0 +1,2 @@
+OmniCore 0.10.6 N64 Alpha 7 final validation trigger.
+Focus: single-pacer runtime, native-rate AAudio, stateful SmartPerf, SRAM/save states, editable touch controls and quick menu.
