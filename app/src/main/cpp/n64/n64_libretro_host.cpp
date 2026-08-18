@@ -663,6 +663,7 @@ struct LibretroHost::Impl {
     std::array<std::int16_t, 2048> callbackHistory{};
     std::size_t callbackHistorySamples = 0;
     int consecutiveStarvedCallbacks = 0;
+    int audioPrimeStableFrames = 0;
 
     static aaudio_data_callback_result_t audioCallback(
         AAudioStream*, void* userData, void* audioData, std::int32_t numFrames) {
@@ -894,6 +895,7 @@ struct LibretroHost::Impl {
         audioRing.clear();
         callbackHistorySamples = 0;
         consecutiveStarvedCallbacks = 0;
+        audioPrimeStableFrames = 0;
         coreSampleRate = sampleRate > 1000.0 ? sampleRate : 44100.0;
         requestedBursts = std::clamp(requestedBursts, 2, 8);
         resampleAccumulator = 0.0;
@@ -927,11 +929,19 @@ struct LibretroHost::Impl {
             const int requestedFrames = framesPerBurst * appliedAudioBursts;
             const int appliedFrames = AAudioStream_setBufferSizeInFrames(audioStream, requestedFrames);
             audioBufferFrames = appliedFrames > 0 ? appliedFrames : requestedFrames;
-            // Start with enough PCM queued to survive scheduler jitter, then let
-            // SmartPerf reduce latency only after the stream proves stable.
-            audioPrimeFrames = std::min<int>(
-                static_cast<int>(audioRing.capacitySamples() / 4u),
-                std::max(framesPerBurst * 6, outputSampleRate / 20));
+            // StartupAudioGate: Alpha 21 started AAudio around 50 ms while the
+            // transition controller immediately targeted ~76 ms. That meant the
+            // stream could begin already below its own safe reserve. Prime to a
+            // bounded ~90 ms floor (or enough for the actual device buffer plus
+            // four bursts) before the callback is allowed to consume anything.
+            const int startupFloorFrames = std::max(1, outputSampleRate * 90 / 1000);
+            const int startupCeilingFrames = std::max(startupFloorFrames, outputSampleRate * 120 / 1000);
+            const int deviceSafetyFrames = std::max(
+                framesPerBurst * 8, audioBufferFrames + framesPerBurst * 4);
+            audioPrimeFrames = std::clamp(
+                std::max(startupFloorFrames, deviceSafetyFrames),
+                startupFloorFrames,
+                std::min(startupCeilingFrames, static_cast<int>(audioRing.capacitySamples() / 2u)));
             armTransitionAudioShield(std::chrono::milliseconds(6000));
             lastXRunCount = std::max(0, AAudioStream_getXRunCount(audioStream));
             lastRingUnderruns = audioRing.underruns();
@@ -955,6 +965,7 @@ struct LibretroHost::Impl {
         framesPerBurst = 0;
         audioBufferFrames = 0;
         audioPrimeFrames = 0;
+        audioPrimeStableFrames = 0;
         resampleAccumulator = 0.0;
         audioRing.clear();
         if (owner) {
@@ -970,6 +981,7 @@ struct LibretroHost::Impl {
         audioRing.clear();
         callbackHistorySamples = 0;
         consecutiveStarvedCallbacks = 0;
+        audioPrimeStableFrames = 0;
         resampleAccumulator = 0.0;
         lastRingUnderruns = 0;
         stableAudioChecks = 0;
@@ -979,8 +991,21 @@ struct LibretroHost::Impl {
 
     void startAudioIfReady() {
         if (!audioStream || audioStarted) return;
-        if (audioRing.availableSamples() / 2u < static_cast<std::size_t>(std::max(1, audioPrimeFrames))) return;
-        if (AAudioStream_requestStart(audioStream) == AAUDIO_OK) audioStarted = true;
+        const std::size_t availableFrames = audioRing.availableSamples() / 2u;
+        if (availableFrames < static_cast<std::size_t>(std::max(1, audioPrimeFrames))) {
+            audioPrimeStableFrames = 0;
+            return;
+        }
+        // Only open the real-time consumer at an emulation frame boundary.
+        // Requiring two complete frames above the threshold prevents a single
+        // unusually large libretro audio batch from starting AAudio mid-batch.
+        if (++audioPrimeStableFrames < 2) return;
+        if (AAudioStream_requestStart(audioStream) == AAUDIO_OK) {
+            audioStarted = true;
+            audioPrimeStableFrames = 0;
+            logPrint(ANDROID_LOG_INFO, "StartupAudioGate opened with %zu frames queued (target=%d)",
+                     availableFrames, audioPrimeFrames);
+        }
     }
 
     double audioSyncScale() {
@@ -1014,7 +1039,6 @@ struct LibretroHost::Impl {
         const double desiredOutRate = static_cast<double>(std::max(1, outputSampleRate)) * syncScale;
         if (std::abs(desiredOutRate - coreSampleRate) < 1.0) {
             audioRing.push(data, frames * 2u);
-            startAudioIfReady();
             updateAudioTelemetry();
             return;
         }
@@ -1036,7 +1060,6 @@ struct LibretroHost::Impl {
             }
         }
         flush();
-        startAudioIfReady();
         updateAudioTelemetry();
     }
 
@@ -1125,7 +1148,7 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     hwRenderRequested_ = false;
     hwRender_ = {};
     precisionGovernorMode_.store(0, std::memory_order_release);
-    setMessage("N64 BOOT 1/6 • Alpha 21 TransitionAudioShield + RacingComfort…");
+    setMessage("N64 BOOT 1/6 • Alpha 22 StartupAudioGate + ElasticAudioBridge…");
     try {
         thread_ = std::thread(&LibretroHost::run, this);
     } catch (...) {
@@ -1896,6 +1919,10 @@ void LibretroHost::run() {
             nextFrame.time_since_epoch()).count();
         const auto begin = std::chrono::steady_clock::now();
         impl_->core.run();
+        // StartupAudioGate is evaluated only after the whole libretro frame has
+        // delivered its PCM. This keeps AAudio from racing a partially produced
+        // first/menu frame and also applies after pause/load-state reprimes.
+        impl_->startAudioIfReady();
         const auto afterRun = std::chrono::steady_clock::now();
         const auto workNs = std::chrono::duration_cast<std::chrono::nanoseconds>(afterRun - begin).count();
         const float frameMs = std::chrono::duration<float, std::milli>(afterRun - begin).count();
