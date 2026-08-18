@@ -1,123 +1,227 @@
 # OmniCore
 
-> Android-first multi-system emulation frontend focused on clean architecture, stable frame pacing and device-aware performance.
+> Android-first multi-system emulation hub built around isolated console runtimes, clean touch controls and device-aware performance.
 
 [![Android](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
-[![Current DEV](https://img.shields.io/badge/current%20DEV-0.9.0-7C5CFF)](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.9.0-dev)
-[![PS1](https://img.shields.io/badge/PS1-functional-57D8FF)](https://github.com/libretro/pcsx_rearmed)
-[![Runtime](https://img.shields.io/badge/runtime-v7%20EGL%2FGLES-9879FF)](app/src/main/cpp/)
-[![License note](https://img.shields.io/badge/core%20license-GPL--2.0-important)](THIRD_PARTY_NOTICES.md)
+[![Stable DEV](https://img.shields.io/badge/stable%20DEV-0.9.4-57D8FF)](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.9.4-dev)
+[![N64 Alpha](https://img.shields.io/badge/N64%20alpha-0.10.5%20Alpha%206-9879FF)](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.10.5-n64-alpha6)
+[![PS1](https://img.shields.io/badge/PS1-device%20validated-57D8FF)](https://github.com/libretro/pcsx_rearmed)
+[![N64](https://img.shields.io/badge/N64-gameplay%20confirmed-F4C95D)](https://github.com/libretro/mupen64plus-libretro-nx)
+[![Native](https://img.shields.io/badge/native-16%20KB%20ready-3DDC84)](app/src/main/cpp/)
 
-OmniCore is a unified Android emulation hub built around **independent native backends** with one shared library, input layer, save system, performance manager, update system and user interface.
+OmniCore is a **multi-system Android emulation hub**, not a frontend built around a single console. Every supported system owns its own core integration, runtime policy, settings, storage and console-specific input behavior while sharing one library and one consistent Android experience.
 
-The project is intentionally progressive: **PlayStation 1 is the first functional backend**. N64, PSP, Wii / GameCube, PS2 and Switch remain roadmap targets and are not presented as working emulators yet.
+**PlayStation 1** is the current stable DEV backend. **Nintendo 64** is the second integrated backend and is now in active real-device Alpha development. PSP, Wii / GameCube, PlayStation 2 and Nintendo Switch remain roadmap targets.
 
-## Current status — v0.9.0 DEV
+## Current status
 
-The PS1 backend has crossed the first major runtime milestone: **real gameplay, video and audio have been validated on Android hardware** using the OmniCore frontend and the pinned PCSX-ReARMed core.
+| Channel | Version | Status |
+|---|---:|---|
+| Stable DEV | **0.9.4** | PS1 gameplay, video, audio and controls validated on Android hardware |
+| N64 Alpha | **0.10.5 Alpha 6** | Real-device N64 gameplay confirmed; performance/audio/touch tuning in active validation |
 
-The v0.9.0 line preserves the validated v0.7/v0.8 runtime foundation and focuses on input compatibility and frontend polish.
+### Real-device Nintendo 64 milestone
 
-### PlayStation 1
+The N64 runtime has now crossed its first real-device gameplay milestone.
 
-- **PCSX-ReARMed/libretro** pinned to a reproducible upstream revision.
-- Android builds for **arm64-v8a** and **armeabi-v7a**.
-- Native **C++20/JNI libretro host**.
-- **Runtime v7** with emulation, audio and presentation decoupled.
-- **EGL + OpenGL ES 2** texture presenter.
-- Stable **XRGB8888** core-output path with explicit GLES conversion.
-- `SurfaceView` no-draw composition path validated after real-device black-screen debugging.
-- AAudio output with priming, sample-rate adaptation and bounded adaptive buffering.
-- Real gameplay validated with stable video and non-stuttering audio on Android hardware.
-- Touch controls with D-pad, left analog stick, face buttons, shoulders, Start and Select.
-- **Intelligent left-stick mode**: native DualShock axes plus D-pad projection for early PS1 games that only understand digital movement.
-- Selectable left-stick modes: Intelligent, Native and D-pad.
-- Configurable touch size, opacity and optional haptics.
-- Android USB/Bluetooth controller axes through the native Android joystick path.
-- Save RAM / memory-card persistence and save states.
-- Optional user-supplied PS1 BIOS import; no BIOS is bundled.
-- Optional **classic PlayStation BIOS boot/logo** when a valid real BIOS is available.
-- CUE/BIN folder workflows plus supported single-file images such as CHD and PBP.
-- Persistent validated **CUE/BIN disc cache** so unchanged games do not need to copy large BIN tracks on every launch.
-- Library search, recent/A–Z/size sorting and confirmation before removing entries.
-- Presentation modes: **4:3 original, 16:9 expansion and fullscreen**.
-- Runtime diagnostics for produced, presented and dropped frames plus audio-buffer state.
+**Alpha 5 successfully booted and rendered a real Nintendo 64 game on Android hardware using OmniCore's own N64 runtime, Mupen64Plus-Next, GLideN64 and the dedicated touch layer.**
 
-> **16:9 note:** the current widescreen option changes frontend presentation. It is not presented as a universal per-game 3D geometry patch.
+That milestone validates the core loading path, ROM preparation, EGL/OpenGL ES 3 hardware rendering, isolated N64 process and basic controller path on a physical Android device.
 
-## Fast PS1 startup
+It does **not** mean N64 is finished or universally compatible. The current Alpha 6 cycle is focused on the next layer of work: sustained frame rate, audio stability, touch comfort, widescreen behavior and broader game compatibility.
 
-CUE/BIN compatibility originally required materializing CD tracks as real local files because PCSX-ReARMed reopens tracks through standard file I/O. That path is kept for compatibility, but v0.8.0 no longer repeats the expensive copy on every launch.
+## OmniCore 0.10.5 — N64 Alpha 6
 
-OmniCore now:
+Alpha 6 is the current experimental multi-system build.
 
-1. Reads the CUE and resolves every referenced track.
-2. Builds a fingerprint from the source metadata and CUE contents.
-3. Materializes and validates the local disc set once.
-4. Reuses the prepared disc cache while the source remains unchanged.
-5. Rebuilds automatically if the source fingerprint changes.
+### Performance focus
 
-The cache can be cleared manually from **Tuning → Início rápido PS1**.
+The N64 path now includes:
 
-## SmartPerf
+- **Dynarec-first execution** instead of using the diagnostic Cached Interpreter for normal play.
+- N64-specific **SmartPerf** telemetry and decisions.
+- Native-resolution fallback under sustained frame pressure.
+- Reduced GLideN64 buffer-copy / LOD work in the low-cost performance path.
+- Frame pacing that discards excessive timing debt instead of issuing aggressive catch-up frame bursts.
+- Dedicated **AAudio** output with adaptive buffering.
+- Live audio-buffer target changes based on runtime underruns and frame telemetry.
+- Thermal-aware performance policy.
+- No root requirement, forced clocks, hidden APIs or persistent vendor tweaks.
 
-OmniCore treats performance management as part of the runtime architecture rather than a collection of fixed “boost” switches.
+These Alpha 6 optimizations are still being evaluated on physical devices and should not yet be interpreted as a universal performance guarantee.
 
-Current performance systems include:
+### N64 rendering and widescreen
 
-- Conservative hardware profiling.
-- Per-session performance policy.
-- Android thermal-status adaptation.
-- Android Performance Hint / ADPF integration where available.
-- Emulation frame-time measurement.
-- Frame pacing based on the core refresh rate.
-- Surface refresh-rate hints when supported.
-- Adaptive AAudio buffering using platform xruns and frontend underrun telemetry.
-- Background content preparation.
-- Direct access to seekable Android document-provider files where safe.
-- Compatibility-first defaults on lower-end devices.
-- No root requirement, hidden APIs, forced CPU/GPU clocks or persistent vendor tweaks.
+The N64 renderer uses:
 
-See [OPTIMIZATION.md](OPTIMIZATION.md) for implementation details.
+- **Mupen64Plus-Next/libretro**
+- EGL + **OpenGL ES 3**
+- **GLideN64**
+- libretro hardware-render negotiation through `RETRO_ENVIRONMENT_SET_HW_RENDER`
+
+Presentation modes now include:
+
+- **Original 4:3**
+- **16:9 adjusted** using GLideN64's widescreen-aware aspect option
+- **16:9 stretched**
+
+The adjusted mode is intended to use the backend's widescreen behavior rather than simply stretching a 4:3 frontend image. Individual games may still expose visual quirks because original N64 software was generally authored around 4:3 output.
+
+### N64 touch controls
+
+Nintendo 64 has its own controller implementation rather than reusing PlayStation button semantics.
+
+Current controls include:
+
+- analog stick
+- A / B
+- Z
+- L / R
+- Start
+- four C-buttons
+- optional D-pad
+- stable multi-pointer ownership
+- slide retargeting between touch buttons
+- configurable touch scale
+- configurable opacity
+- optional haptics
+- **Clear**, Standard and Compact layouts
+- dynamic idle fade in the Clear layout
+- Android USB / Bluetooth physical-controller mapping
+
+The visual controls are deliberately smaller than their touch hitboxes so the screen can remain cleaner without making the buttons harder to hit.
+
+## Multi-system library
+
+The home screen is **OmniCore-first**, not PS1-first or N64-first.
+
+The app includes:
+
+- unified **Biblioteca**
+- **Sistemas** area
+- **Ajustes** area
+- system filters that act as library views rather than forced file classification
+- independent PS1 and N64 configuration surfaces
+- room for future systems without presenting planned cores as already functional
+
+### Mixed folder scanning
+
+A selected folder can contain supported content from more than one console.
+
+The scanner can currently:
+
+- keep PS1 `CUE/BIN` sets grouped correctly
+- continue scanning after finding a PS1 CUE
+- detect Nintendo 64 ROMs in the same selected folder
+- avoid listing CUE-referenced PS1 BIN tracks as separate games
+- perform import I/O away from the Compose/UI thread
+- keep ambiguous files away from the wrong backend when confidence is insufficient
+
+Recursive nested-folder discovery remains a future library improvement.
+
+## Nintendo 64 ROM support
+
+N64 recognition is **signature-first**, not extension-only.
+
+Recognized native byte orders:
+
+- big-endian `.z64` — header `80 37 12 40`
+- byte-swapped `.v64` — header `37 80 40 12`
+- little-endian `.n64` — header `40 12 37 80`
+
+Current preparation support includes:
+
+- `.z64`
+- `.n64`
+- `.v64`
+- valid `.rom` / `.bin` dumps when the actual N64 signature matches
+- ZIP containing a recognized N64 ROM
+- GZIP containing a recognized N64 ROM
+
+Byte-swapped and little-endian dumps are normalized into a canonical big-endian `.z64` file inside the N64-only cache. The original source file is not modified.
+
+`7z` is not advertised yet because OmniCore does not currently bundle a validated 7z extraction backend.
+
+## N64 crash isolation and diagnostics
+
+Nintendo 64 runs in a dedicated Android process:
+
+`com.omnicore.emulator:n64`
+
+This keeps an experimental N64 failure isolated from the main OmniCore library / PS1 process.
+
+The N64 path also records local boot breadcrumbs covering Activity creation, settings, UI, core probing, storage, ROM preparation, Surface creation and JNI/native startup. Java/Kotlin launch exceptions can be persisted and shown inside OmniCore after the N64 process exits.
+
+This diagnostic path was used during the Alpha cycle to identify and fix an Android `WindowInsetsController` launch crash before the emulator core itself had even started.
+
+## PlayStation 1 — stable DEV 0.9.4
+
+The PS1 backend has real-device validated gameplay, video, audio and controls using the pinned PCSX-ReARMed core.
+
+Highlights:
+
+- **PCSX-ReARMed/libretro** pinned reproducibly
+- ARM64 + ARMv7
+- native C++/JNI runtime
+- EGL / OpenGL ES presentation
+- adaptive AAudio
+- stable per-pointer multitouch controls
+- Android USB/Bluetooth controller input
+- save RAM / memory cards and save states
+- optional user-supplied PS1 BIOS
+- optional classic PS BIOS boot/logo with a valid real BIOS
+- CUE/BIN folder workflow
+- CHD/PBP single-file workflows where supported
+- persistent prepared-disc cache
+- 4:3, 16:9 presentation and fullscreen modes
+
+No PlayStation BIOS is bundled.
+
+## Console isolation
+
+OmniCore intentionally keeps console-specific behavior separate.
+
+PS1 and N64 do **not** share console-specific:
+
+- runtime knobs
+- core settings
+- save directories
+- controller semantics
+- firmware policy
+- performance tuning state
+
+The shared application layer provides the library, navigation and common Android experience, while each console backend remains independently maintainable.
 
 ## Multi-system roadmap
 
 | System | Backend direction | Status |
 |---|---|---|
-| PlayStation 1 | PCSX-ReARMed / libretro | **Functional / active development** |
-| Nintendo 64 | Mupen64Plus family | Planned |
+| PlayStation 1 | PCSX-ReARMed / libretro | **Functional / device validated** |
+| Nintendo 64 | Mupen64Plus-Next / libretro | **Integrated / gameplay confirmed / Alpha optimization** |
 | PSP | PPSSPP | Planned |
 | Wii / GameCube | Dolphin | Planned |
 | PlayStation 2 | Backend evaluation | Planned |
 | Nintendo Switch | Experimental backend evaluation | Long-term |
 
-The order is deliberate: each backend should integrate cleanly with the same library, input, save, performance and update systems instead of becoming a collection of unrelated emulator wrappers.
+Future systems are not considered functional until their own runtime has been integrated and validated.
 
-## In-app DEV updates
+## Downloads
 
-Starting with **v0.6.0**, OmniCore development builds include an in-app updater that:
+### Stable PS1 build
 
-1. Checks OmniCore GitHub Releases.
-2. Compares semantic versions.
-3. Downloads the matching DEV APK.
-4. Verifies its SHA-256 digest when available.
-5. Hands the verified APK to Android's `PackageInstaller`.
+**[OmniCore v0.9.4 DEV](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.9.4-dev)**
 
-Development builds from v0.6.0 onward use a stable **DEV-only** signing certificate so compatible future DEV builds can update over the installed app while preserving app data.
+**[Direct APK — OmniCore-v0.9.4-debug.apk](https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.9.4-dev/OmniCore-v0.9.4-debug.apk)**
 
-> **Migration note:** builds through v0.5.0 were produced with ephemeral GitHub-runner debug certificates. Moving from v0.5.0 or older to v0.6.0 required one final uninstall/reinstall. Builds from v0.6.0 onward share the stable DEV signing identity. This identity is not intended for Play Store production signing.
+### Experimental N64 / multi-system build
 
-## Download
+**[OmniCore v0.10.5 N64 Alpha 6](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.10.5-n64-alpha6)**
 
-The current development release is:
+**[Direct APK — OmniCore-v0.10.5-n64-alpha6-debug.apk](https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.10.5-n64-alpha6/OmniCore-v0.10.5-n64-alpha6-debug.apk)**
 
-**[OmniCore v0.9.0 DEV — Input & Frontend Polish](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.9.0-dev)**
+The Alpha uses the same stable DEV signing identity as modern OmniCore development builds, allowing compatible test installations to update in place.
 
-Direct APK:
-
-**[OmniCore-v0.9.0-debug.apk](https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.9.0-dev/OmniCore-v0.9.0-debug.apk)**
-
-Development releases are for testing and may still contain game-specific compatibility regressions. Keep important save data backed up while the runtime remains under active development.
+Development releases may still contain game-specific compatibility or performance regressions. Keep important save data backed up while the runtime remains under active development.
 
 ## Content and firmware policy
 
@@ -129,86 +233,101 @@ OmniCore does **not** include:
 - console encryption keys
 - proprietary game assets
 
-Users are responsible for providing content and firmware they are legally entitled to use.
+Users are responsible for supplying content and firmware they are legally entitled to use.
+
+Standard N64 cartridge ROMs do not require an external BIOS in the current Mupen64Plus-Next path. Future systems that require firmware will use their own isolated firmware management instead of a global shared BIOS folder.
 
 ## Android / build baseline
 
 - `compileSdk` / `targetSdk`: 36
 - `minSdk`: 26
-- Android NDK: 28.2.13676358
+- Android NDK: `28.2.13676358`
 - CMake: 3.31.5
 - Native runtime: C++20
-- ARM targets: `arm64-v8a`, `armeabi-v7a`
-- Native ELF / APK alignment validated for **16 KB page-size compatibility** in CI
+- ABIs: `arm64-v8a`, `armeabi-v7a`
+- Native ELF / APK **16 KB page-size compatibility** verified in CI
+- Stable DEV signing certificate verified in release CI
 
-## Reproducible PS1 core build
+## Reproducible cores
 
-The PCSX-ReARMed revision used by OmniCore is recorded in:
+PCSX-ReARMed pin:
 
-`third_party/PCSX_REARMED_PIN.txt`
+`da2cb8ecd17fd0932ab6d94774c0522beebce6e3`
 
-The Android workflow fetches that exact revision, builds the ARM libraries and publishes the corresponding PCSX-ReARMed source bundle alongside the APK.
+Mupen64Plus-Next pin:
 
-This keeps the binary/core source relationship explicit and reproducible.
+`f275caf4b2bfa1e6d1c51636746ea793f3d80320`
+
+Corresponding source archives are published beside applicable development APKs.
+
+## Alpha 6 CI validation
+
+The Alpha 6 release pipeline validates:
+
+- multi-system architecture checks
+- Kotlin/native host compilation
+- PCSX-ReARMed build
+- Mupen64Plus-Next ARM64/ARMv7 build
+- PS1/N64 core coexistence
+- signed OmniCore 0.10.5 APK
+- stable DEV certificate
+- native 16 KB ELF alignment
+- APK `zipalign -P 16` validation
+- corresponding core source archives
+- GitHub Alpha prerelease publication
+
+CI does not use copyrighted ROMs, BIOS or firmware and therefore does not replace physical-device gameplay testing.
 
 ## Project structure
 
 ```text
 app/
   src/main/java/com/omnicore/emulator/
-    core/          Core registry and backend integration
-    emulation/     Emulation activity and touch/controller input
-    performance/   SmartPerf runtime policy
-    settings/      Core/user settings and presentation modes
-    storage/       Library, BIOS, SAF and disc preparation
-    ui/            Compose frontend
-    update/        DEV update system
+    core/
+      n64/           Nintendo 64 core integration and ROM preparation
+    emulation/       PS1/N64 activities and console-specific touch input
+    library/         Multi-system import / recognition
+    performance/     Per-console SmartPerf policies
+    settings/        Console-specific settings
+    storage/         Library, saves, BIOS/firmware and caches
+    ui/              Multi-system Compose frontend
 
   src/main/cpp/
     libretro_host_v7.cpp
     gl_presenter.cpp
     native_bridge.cpp
+    n64/
+      n64_libretro_host.cpp
+      n64_native_bridge.cpp
 
 third_party/
   PCSX_REARMED_PIN.txt
+  MUPEN64PLUS_NEXT_PIN.txt
   licenses/
 
 tools/
   fetch_ps1_core.sh
   build_ps1_core_android.sh
+  fetch_n64_core.sh
+  build_n64_core_android.sh
 ```
-
-## CI validation
-
-The `Android Build` workflow validates the full development path:
-
-- project/runtime version consistency
-- Android/JDK/NDK toolchain
-- pinned PCSX-ReARMed checkout
-- ARM64 and ARMv7 PS1-core builds
-- OmniCore APK compilation
-- stable DEV signing certificate
-- native 16 KB alignment
-- APK `zipalign` validation
-- GitHub development Release publication
-- corresponding PCSX-ReARMed source archive
 
 ## Licensing
 
-PCSX-ReARMed is distributed under **GNU GPL v2** terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the bundled license text for details.
+PCSX-ReARMed and Mupen64Plus-Next are distributed under GNU GPL v2 terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the corresponding source archives published with development builds.
 
-OmniCore's final distribution/licensing model must remain compatible with every backend included in a public build. Core licensing is treated as an architectural requirement, not an afterthought.
+OmniCore's distribution model must remain compatible with every backend included in a public build. Core licensing is treated as an architectural requirement.
 
-## Development priorities
+## Immediate development priorities
 
-1. Expand PS1 real-device and per-game compatibility testing without destabilizing the working v0.7 renderer/runtime foundation.
-2. Refine startup latency, disc caching and BIOS behavior.
-3. Improve touch-control ergonomics, remapping and per-game profiles.
-4. Add proper presentation/scaling controls and evaluate safe game-specific widescreen mechanisms.
-5. Improve library metadata, covers and diagnostics/exportable logs.
-6. Harden save-state/memory-card behavior and recovery.
-7. Begin the first non-PS1 backend only after the PS1 foundation remains stable across a broader test set.
-8. Prepare production signing and store-distribution strategy after the runtime and licensing model are mature.
+1. Validate Alpha 6 N64 frame pacing and audio behavior on physical Android hardware.
+2. Tune SmartPerf using real-device telemetry without destabilizing the now-working boot/render path.
+3. Refine N64 Clear touch controls, hitboxes, layouts and per-device ergonomics.
+4. Expand N64 ROM/game compatibility testing.
+5. Add N64 save persistence and save states after runtime stability is sufficient.
+6. Improve multi-system recursive folder scanning and library metadata.
+7. Continue PS1 regression testing against the stable 0.9.4 foundation.
+8. Integrate future consoles only behind their own isolated runtime/settings/storage boundary.
 
 ---
 
