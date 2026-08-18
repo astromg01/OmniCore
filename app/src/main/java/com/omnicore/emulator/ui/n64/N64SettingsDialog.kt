@@ -84,25 +84,13 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                     }
                 }
                 item {
-                    Text("CPU N64", fontWeight = FontWeight.Bold)
+                    Text("CPU", fontWeight = FontWeight.Bold)
+                    Text("Dynarec é o caminho recomendado para gameplay. Cached Interpreter fica disponível para diagnóstico/compatibilidade.", style = MaterialTheme.typography.bodySmall)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(N64Settings.CpuMode.entries) { mode ->
                             FilterChip(
                                 selected = config.cpuMode == mode,
                                 onClick = { saveCore(config.copy(cpuMode = mode)) },
-                                label = { Text(mode.label) }
-                            )
-                        }
-                    }
-                }
-                item {
-                    Text("RSP", fontWeight = FontWeight.Bold)
-                    Text("HLE é o backend ativo neste build. LLE é autocorrigido para HLE até ser validado no Android.", style = MaterialTheme.typography.bodySmall)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(N64Settings.RspMode.entries) { mode ->
-                            FilterChip(
-                                selected = config.rspMode == mode,
-                                onClick = { saveCore(config.copy(rspMode = mode)) },
                                 label = { Text(mode.label) }
                             )
                         }
@@ -120,36 +108,37 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                         }
                     }
                     if (device.tier == N64PerformanceProfile.Tier.LOW) {
-                        Text("Auto-correção ativa: hardware limitado permanece em resolução nativa.", style = MaterialTheme.typography.bodySmall)
+                        Text("Hardware limitado permanece em resolução nativa para proteger FPS e áudio.", style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 item {
-                    N64Toggle(
-                        title = "Framebuffer emulation",
-                        subtitle = "Melhora compatibilidade visual, com custo adicional de GPU.",
-                        checked = config.framebufferEmulation
-                    ) { saveCore(config.copy(framebufferEmulation = it)) }
-                    N64Toggle(
-                        title = "Renderer em thread",
-                        subtitle = "Mantém trabalho gráfico fora do caminho principal quando seguro.",
-                        checked = config.threadedRenderer
-                    ) { saveCore(config.copy(threadedRenderer = it)) }
-                }
-                item {
-                    Text("Expansion Pak", fontWeight = FontWeight.Bold)
+                    Text("Formato da imagem", fontWeight = FontWeight.Bold)
+                    Text("Widescreen ajustado usa o hack de aspect ratio do próprio GLideN64; não é só imagem esticada.", style = MaterialTheme.typography.bodySmall)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(N64Settings.ExpansionPak.entries) { mode ->
+                        items(N64Settings.AspectRatio.entries) { mode ->
                             FilterChip(
-                                selected = config.expansionPak == mode,
-                                onClick = { saveCore(config.copy(expansionPak = mode)) },
+                                selected = config.aspectRatio == mode,
+                                onClick = { saveCore(config.copy(aspectRatio = mode)) },
                                 label = { Text(mode.label) }
                             )
                         }
                     }
                 }
                 item {
+                    N64Toggle(
+                        title = "Framebuffer emulation",
+                        subtitle = "Ative para efeitos que dependem de framebuffer. Desligado reduz custo e input lag em muitos jogos.",
+                        checked = config.framebufferEmulation
+                    ) { saveCore(config.copy(framebufferEmulation = it)) }
+                    Text(
+                        "RSP HLE, Expansion Pak automático e renderer GL single-thread permanecem protegidos nesta fase para evitar regressões de compatibilidade.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+                item {
                     Text("Controle N64", fontWeight = FontWeight.Bold)
-                    Text("Mapa próprio: A/B, Z, L/R, Start, D-pad, analógico e quatro C-buttons.", style = MaterialTheme.typography.bodySmall)
+                    Text("A/B, Z, L/R, Start, analógico, D-pad e quatro C-buttons com multitouch independente.", style = MaterialTheme.typography.bodySmall)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(N64InputSettings.CButtonMode.entries) { mode ->
                             FilterChip(
@@ -159,6 +148,50 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                             )
                         }
                     }
+                }
+                item {
+                    Text("Overlay touch", fontWeight = FontWeight.Bold)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(N64InputSettings.OverlayPreset.entries) { preset ->
+                            FilterChip(
+                                selected = input.overlayPreset == preset,
+                                onClick = { saveInput(input.copy(overlayPreset = preset)) },
+                                label = { Text(preset.label) }
+                            )
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AssistChip(
+                            onClick = { saveInput(input.copy(touchOpacity = (input.touchOpacity - 0.08f).coerceAtLeast(0.25f))) },
+                            label = { Text("Opacidade −") }
+                        )
+                        Text("${(input.touchOpacity * 100).toInt()}%")
+                        AssistChip(
+                            onClick = { saveInput(input.copy(touchOpacity = (input.touchOpacity + 0.08f).coerceAtMost(1f))) },
+                            label = { Text("Opacidade +") }
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        AssistChip(
+                            onClick = { saveInput(input.copy(touchScale = (input.touchScale - 0.06f).coerceAtLeast(0.72f))) },
+                            label = { Text("Tamanho −") }
+                        )
+                        Text("${(input.touchScale * 100).toInt()}%")
+                        AssistChip(
+                            onClick = { saveInput(input.copy(touchScale = (input.touchScale + 0.06f).coerceAtMost(1.28f))) },
+                            label = { Text("Tamanho +") }
+                        )
+                    }
+                    N64Toggle(
+                        title = "Fade automático",
+                        subtitle = "Diminui a presença dos controles quando você não está tocando.",
+                        checked = input.dynamicOpacity
+                    ) { saveInput(input.copy(dynamicOpacity = it)) }
+                    N64Toggle(
+                        title = "Mostrar D-pad",
+                        subtitle = "Pode ser ocultado em jogos que usam apenas o analógico.",
+                        checked = input.showDpad
+                    ) { saveInput(input.copy(showDpad = it)) }
                 }
                 item {
                     Text("Analógico", fontWeight = FontWeight.Bold)
