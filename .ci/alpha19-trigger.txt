@@ -1,4 +1,4 @@
-OmniCore N64 Alpha 20 bridge trigger
-version=0.10.19
-focus=TransitionAudioShield + RacingComfort + menu audio continuity
-revision=1-registered-bridge
+OmniCore N64 Alpha 21 registered bridge trigger
+version=0.10.20
+focus=ElasticAudioBridge + hard-underrun telemetry + continuity rescue
+revision=1-alpha19-history
