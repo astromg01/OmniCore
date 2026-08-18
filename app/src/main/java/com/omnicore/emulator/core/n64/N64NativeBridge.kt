@@ -146,6 +146,10 @@ object N64NativeBridge {
                                 "verified=${System.currentTimeMillis()}\n$message\n"
                             )
                         }
+                        // Boot diagnostics are no longer needed once a real frame
+                        // is confirmed. Stop the 40 ms JNI poll so gameplay gets
+                        // every available scheduler slice.
+                        break
                     }
                 }
 
