@@ -5,7 +5,7 @@ import android.content.Context
 /** Nintendo 64 settings live in their own preference namespace. */
 object N64Settings {
     enum class Preset(val storage: String, val label: String, val subtitle: String) {
-        AUTO("auto", "Inteligente", "Escolhe opções seguras conforme o hardware"),
+        AUTO("auto", "Inteligente", "Prioriza FPS sustentável e ajusta a carga ao hardware"),
         PERFORMANCE("performance", "Desempenho", "Prioriza estabilidade, FPS e áudio"),
         BALANCED("balanced", "Equilibrado", "Boa compatibilidade com custo gráfico moderado"),
         QUALITY("quality", "Qualidade", "Aumenta qualidade somente quando existe margem"),
@@ -108,61 +108,61 @@ object N64Settings {
             .apply()
     }
 
-    private fun presetConfig(preset: Preset, device: N64PerformanceProfile.Profile): Config = when (preset) {
-        Preset.PERFORMANCE -> Config(
-            preset = preset,
-            cpuMode = CpuMode.DYNAREC,
-            rspMode = RspMode.HLE,
-            internalResolution = InternalResolution.NATIVE,
-            aspectRatio = AspectRatio.ORIGINAL_4_3,
-            framebufferEmulation = false,
-            expansionPak = ExpansionPak.AUTO,
-            threadedRenderer = false
-        )
-        Preset.BALANCED -> Config(
-            preset = preset,
-            cpuMode = CpuMode.DYNAREC,
-            rspMode = RspMode.HLE,
-            internalResolution = InternalResolution.NATIVE,
-            aspectRatio = AspectRatio.ORIGINAL_4_3,
-            framebufferEmulation = true,
-            expansionPak = ExpansionPak.AUTO,
-            threadedRenderer = false
-        )
-        Preset.QUALITY -> Config(
-            preset = preset,
-            cpuMode = CpuMode.DYNAREC,
-            rspMode = RspMode.HLE,
-            internalResolution = if (device.tier == N64PerformanceProfile.Tier.HIGH) InternalResolution.X2 else InternalResolution.NATIVE,
-            aspectRatio = AspectRatio.ORIGINAL_4_3,
-            framebufferEmulation = true,
-            expansionPak = ExpansionPak.AUTO,
-            threadedRenderer = false
-        )
-        Preset.AUTO, Preset.CUSTOM -> Config(
-            preset = Preset.AUTO,
-            cpuMode = CpuMode.DYNAREC,
-            rspMode = RspMode.HLE,
-            internalResolution = if (device.tier == N64PerformanceProfile.Tier.HIGH) InternalResolution.X2 else InternalResolution.NATIVE,
-            aspectRatio = AspectRatio.ORIGINAL_4_3,
-            framebufferEmulation = device.tier != N64PerformanceProfile.Tier.LOW,
-            expansionPak = ExpansionPak.AUTO,
-            threadedRenderer = false
-        )
-    }.sanitized(device)
+    private fun presetConfig(preset: Preset, device: N64PerformanceProfile.Profile): Config {
+        val canThread = device.is64Bit && device.cpuCores >= 6
+        return when (preset) {
+            Preset.PERFORMANCE -> Config(
+                preset = preset,
+                cpuMode = CpuMode.DYNAREC,
+                rspMode = RspMode.HLE,
+                internalResolution = InternalResolution.NATIVE,
+                aspectRatio = AspectRatio.ORIGINAL_4_3,
+                framebufferEmulation = false,
+                expansionPak = ExpansionPak.AUTO,
+                threadedRenderer = canThread
+            )
+            Preset.BALANCED -> Config(
+                preset = preset,
+                cpuMode = CpuMode.DYNAREC,
+                rspMode = RspMode.HLE,
+                internalResolution = InternalResolution.NATIVE,
+                aspectRatio = AspectRatio.ORIGINAL_4_3,
+                framebufferEmulation = true,
+                expansionPak = ExpansionPak.AUTO,
+                threadedRenderer = canThread && device.tier != N64PerformanceProfile.Tier.LOW
+            )
+            Preset.QUALITY -> Config(
+                preset = preset,
+                cpuMode = CpuMode.DYNAREC,
+                rspMode = RspMode.HLE,
+                internalResolution = if (device.tier == N64PerformanceProfile.Tier.HIGH) InternalResolution.X2 else InternalResolution.NATIVE,
+                aspectRatio = AspectRatio.ORIGINAL_4_3,
+                framebufferEmulation = true,
+                expansionPak = ExpansionPak.AUTO,
+                threadedRenderer = canThread && device.tier == N64PerformanceProfile.Tier.HIGH
+            )
+            Preset.AUTO, Preset.CUSTOM -> Config(
+                preset = Preset.AUTO,
+                cpuMode = CpuMode.DYNAREC,
+                rspMode = RspMode.HLE,
+                // AUTO starts cheap. Quality promotion should happen only after
+                // telemetry proves that there is sustained margin.
+                internalResolution = InternalResolution.NATIVE,
+                aspectRatio = AspectRatio.ORIGINAL_4_3,
+                framebufferEmulation = device.tier == N64PerformanceProfile.Tier.HIGH,
+                expansionPak = ExpansionPak.AUTO,
+                threadedRenderer = canThread
+            )
+        }.sanitized(device)
+    }
 
     private fun Config.sanitized(device: N64PerformanceProfile.Profile): Config {
         val safeRsp = RspMode.HLE
         val safeResolution = if (
             device.tier == N64PerformanceProfile.Tier.LOW && internalResolution == InternalResolution.X2
-        ) {
-            InternalResolution.NATIVE
-        } else {
-            internalResolution
-        }
-        // Keep threaded GLideN64 opt-in until the single-thread path has wider
-        // device coverage. Dynarec is now the default performance path.
-        val safeThreadedRenderer = false
+        ) InternalResolution.NATIVE else internalResolution
+        val canThread = device.is64Bit && device.cpuCores >= 6
+        val safeThreadedRenderer = threadedRenderer && canThread
         val safeExpansionPak = ExpansionPak.AUTO
         return copy(
             rspMode = safeRsp,
