@@ -1,0 +1,4 @@
+OmniCore N64 Alpha 20 build trigger
+version=0.10.19
+focus=TransitionAudioShield + RacingComfort + menu audio continuity
+revision=1
