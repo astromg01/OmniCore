@@ -14,7 +14,11 @@ if [[ ! -f "$CORE/libretro/jni/Android.mk" ]]; then
   exit 1
 fi
 
-READELF="$(find "$NDK/toolchains/llvm/prebuilt" -type f -path '*/bin/llvm-readelf' -print -quit)"
+# llvm-readelf in recent NDKs can be a symlink, so do not restrict lookup to -type f.
+READELF="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+if [[ ! -x "$READELF" ]]; then
+  READELF="$(find -L "$NDK/toolchains/llvm/prebuilt" -path '*/bin/llvm-readelf' -print -quit 2>/dev/null || true)"
+fi
 if [[ -z "$READELF" || ! -x "$READELF" ]]; then
   echo "llvm-readelf not found in Android NDK." >&2
   exit 1
