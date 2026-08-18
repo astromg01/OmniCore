@@ -1,6 +1,6 @@
 package com.omnicore.emulator.core.ps2
 
-/** Minimal native foundation probe. No PS2 game code is loaded here yet. */
+/** Native PS2 foundation/bring-up probe. Gameplay boot stays behind PS2Backend. */
 object PS2NativeBridge {
     init {
         System.loadLibrary("omnicore_ps2_runtime")
@@ -13,7 +13,9 @@ object PS2NativeBridge {
         val architecture: String,
         val vulkanLoader: Boolean,
         val gles3Build: Boolean,
-        val foundationVersion: String
+        val playBackend: Boolean,
+        val foundationVersion: String,
+        val playRevision: String
     )
 
     fun descriptor(): String = nativeDescriptor()
@@ -34,7 +36,9 @@ object PS2NativeBridge {
             architecture = values["arch"].orEmpty().ifBlank { "unknown" },
             vulkanLoader = values["vulkan"] == "1",
             gles3Build = values["gles3"] == "1",
-            foundationVersion = values["version"].orEmpty().ifBlank { "unknown" }
+            playBackend = values["play"] == "1",
+            foundationVersion = values["version"].orEmpty().ifBlank { "unknown" },
+            playRevision = values["playrev"].orEmpty().ifBlank { "unknown" }
         )
     }
 
