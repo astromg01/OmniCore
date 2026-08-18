@@ -39,6 +39,10 @@ class N64Core : EmulatorCore {
     }
 
     companion object {
-        val SUPPORTED_EXTENSIONS = setOf("z64", "n64", "v64", "rom", "bin", "zip", "gz", "gzip")
+        // u1 is advertised by the pinned Mupen64Plus-Next core itself. rom/bin
+        // remain accepted only after the signature validator proves N64 content.
+        val SUPPORTED_EXTENSIONS = setOf(
+            "z64", "n64", "v64", "u1", "rom", "bin", "zip", "gz", "gzip"
+        )
     }
 }
