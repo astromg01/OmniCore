@@ -1,6 +1,6 @@
 # OmniCore — Copyright and Ownership Notice
 
-Copyright © 2026 **@astromg01**. All rights reserved in the original OmniCore material except where an applicable license expressly grants additional rights.
+Copyright © 2026 **@mauricio-gamedev**. All rights reserved in the original OmniCore material except where an applicable license expressly grants additional rights.
 
 ## Original OmniCore material
 
@@ -33,6 +33,6 @@ OmniCore does not bundle copyrighted games, ROMs, BIOS files, firmware or consol
 
 ## Project attribution
 
-Original OmniCore project authorship and rights notice: **@astromg01**.
+Original OmniCore project authorship and rights notice: **@mauricio-gamedev**.
 
 Repository: `mauricio-gamedev/OmniCore`
