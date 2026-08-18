@@ -19,6 +19,7 @@
             android:name=".emulation.N64EmulationActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize"
             android:exported="false"
+            android:process=":n64"
             android:screenOrientation="sensorLandscape" />
 
         <activity
