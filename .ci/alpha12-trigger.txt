@@ -1,0 +1,3 @@
+OmniCore N64 Alpha 12 official validation
+version=0.10.11
+focus=general warm-start, persistent shader cache, transient ADPF headroom, stable 1.5x quality
