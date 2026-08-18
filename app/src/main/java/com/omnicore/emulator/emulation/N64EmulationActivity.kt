@@ -109,7 +109,6 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         N64Diagnostics.mark(this, "activity:onCreate_after_super")
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        enterImmersiveMode()
 
         N64Diagnostics.mark(this, "activity:decode_intent")
         val game = gameFromIntent() ?: run {
@@ -130,6 +129,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             "cpu=${launchDecision.effective.cpuMode.storage},threaded=${launchDecision.effective.threadedRenderer},fb=${launchDecision.effective.framebufferEmulation}"
         )
         buildUi(game.title)
+        scheduleImmersiveMode()
         handler.post(statusPoll)
         N64Diagnostics.mark(this, "activity:prepare_requested")
         prepareGameAsync(game)
@@ -331,9 +331,14 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
 
     override fun onResume() {
         super.onResume()
-        enterImmersiveMode()
+        scheduleImmersiveMode()
         if (started) N64NativeBridge.setPaused(false)
         else if (::surfaceView.isInitialized) tryStartSession()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) scheduleImmersiveMode()
     }
 
     override fun onDestroy() {
@@ -423,21 +428,33 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         )
     }
 
-    private fun enterImmersiveMode() {
-        if (android.os.Build.VERSION.SDK_INT >= 30) {
-            window.insetsController?.let { controller ->
-                controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-                controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    private fun scheduleImmersiveMode() {
+        val decor = window.decorView
+        decor.post {
+            if (destroyed || isFinishing || !decor.isAttachedToWindow) return@post
+            runCatching {
+                if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    decor.windowInsetsController?.let { controller ->
+                        controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                        controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    decor.systemUiVisibility =
+                        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                            View.SYSTEM_UI_FLAG_FULLSCREEN or
+                            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                }
+            }.onFailure { error ->
+                N64Diagnostics.mark(
+                    this,
+                    "ui:immersive_skipped",
+                    "${error.javaClass.simpleName}: ${error.message.orEmpty()}"
+                )
             }
-        } else {
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility =
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                    View.SYSTEM_UI_FLAG_FULLSCREEN or
-                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         }
     }
 
