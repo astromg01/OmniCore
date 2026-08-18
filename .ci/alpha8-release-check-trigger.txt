@@ -1,0 +1,1 @@
+verify=v0.10.7-n64-alpha8
