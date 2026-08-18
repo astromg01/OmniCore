@@ -1,4 +1,4 @@
-OmniCore N64 Alpha 21 registered bridge trigger
-version=0.10.20
-focus=ElasticAudioBridge + hard-underrun telemetry + continuity rescue
+OmniCore N64 Alpha 22 registered bridge trigger
+version=0.10.21
+focus=StartupAudioGate + frame-boundary AAudio start + startup reserve
 revision=1-alpha19-history
