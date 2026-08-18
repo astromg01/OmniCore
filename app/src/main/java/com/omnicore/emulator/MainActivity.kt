@@ -1,8 +1,10 @@
 package com.omnicore.emulator
 
+import android.app.AlertDialog
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import com.omnicore.emulator.core.n64.N64Diagnostics
 import com.omnicore.emulator.core.nativebridge.NativeBridge
 import com.omnicore.emulator.performance.PerformanceManager
 import com.omnicore.emulator.ui.OmniCoreV4App
@@ -17,6 +19,22 @@ class MainActivity : ComponentActivity() {
                 OmniCoreV4App()
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Android records process-death metadata asynchronously. Waiting a short
+        // moment lets the hub explain a :n64 native crash immediately after the
+        // game Activity disappears, with no PC/ADB required.
+        window.decorView.postDelayed({
+            if (isFinishing || isDestroyed) return@postDelayed
+            val report = N64Diagnostics.consumeRecentProcessExit(this) ?: return@postDelayed
+            AlertDialog.Builder(this)
+                .setTitle("Diagnóstico Nintendo 64")
+                .setMessage(report)
+                .setPositiveButton("OK", null)
+                .show()
+        }, 850L)
     }
 
     private fun warmSafeMainRuntimeCaches() {
