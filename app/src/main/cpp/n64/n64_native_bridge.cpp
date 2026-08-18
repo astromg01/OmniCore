@@ -38,7 +38,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeHasCore(JNIEnv*, jobje
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeRuntimeInfo(JNIEnv* env, jobject) {
-    const std::string value = std::string("OmniCore N64 Runtime 0.10.21 • Mupen64Plus-Next • GLES3 + AAudio host v18 • StartupAudioGate + ElasticAudioBridge + TransitionAudioShield + PrecisionGovernor v2.1 + RacingComfort + MicroBurstShield + CruiseGuard + PassiveWarmCache + DirectPresenter • ") +
+    const std::string value = std::string("OmniCore N64 Runtime 0.10.22 • Mupen64Plus-Next • GLES3 + AAudio host v19 • StartupAudioGate + SmoothAudioResampler + SyncSlew + ElasticAudioBridge + TransitionAudioShield + PrecisionGovernor v2.1 + RacingComfort + MicroBurstShield + CruiseGuard + PassiveWarmCache + DirectPresenter • ") +
         (hasLibretroCore() ? "core ready" : "core missing");
     return env->NewStringUTF(value.c_str());
 }

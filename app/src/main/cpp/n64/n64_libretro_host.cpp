@@ -656,7 +656,14 @@ struct LibretroHost::Impl {
     std::chrono::steady_clock::time_point transitionAudioShieldUntil{};
     std::int16_t lastAudioLeft = 0;
     std::int16_t lastAudioRight = 0;
-    double resampleAccumulator = 0.0;
+    // Alpha 23 SmoothAudioResampler: keep one continuous source timeline so
+    // tiny pacing corrections never duplicate/drop whole PCM samples.
+    double audioSyncScaleSmoothed = 1.0;
+    double resampleNextOutputPos = 0.0;
+    std::uint64_t resampleInputFramesSeen = 0;
+    std::int16_t resamplePrevLeft = 0;
+    std::int16_t resamplePrevRight = 0;
+    bool resampleHavePrev = false;
     std::array<std::int16_t, 8192> resampleScratch{};
     // Callback-only fixed storage: no allocation, locks or I/O on AAudio's
     // real-time thread. Keeps one recent output tail for very short source gaps.
@@ -898,7 +905,12 @@ struct LibretroHost::Impl {
         audioPrimeStableFrames = 0;
         coreSampleRate = sampleRate > 1000.0 ? sampleRate : 44100.0;
         requestedBursts = std::clamp(requestedBursts, 2, 8);
-        resampleAccumulator = 0.0;
+        audioSyncScaleSmoothed = 1.0;
+        resampleNextOutputPos = 0.0;
+        resampleInputFramesSeen = 0;
+        resamplePrevLeft = 0;
+        resamplePrevRight = 0;
+        resampleHavePrev = false;
 
         auto tryMode = [&](aaudio_sharing_mode_t sharing) -> bool {
             AAudioStreamBuilder* builder = nullptr;
@@ -966,7 +978,12 @@ struct LibretroHost::Impl {
         audioBufferFrames = 0;
         audioPrimeFrames = 0;
         audioPrimeStableFrames = 0;
-        resampleAccumulator = 0.0;
+        audioSyncScaleSmoothed = 1.0;
+        resampleNextOutputPos = 0.0;
+        resampleInputFramesSeen = 0;
+        resamplePrevLeft = 0;
+        resamplePrevRight = 0;
+        resampleHavePrev = false;
         audioRing.clear();
         if (owner) {
             owner->audioFillMs_.store(0.0f, std::memory_order_release);
@@ -982,7 +999,12 @@ struct LibretroHost::Impl {
         callbackHistorySamples = 0;
         consecutiveStarvedCallbacks = 0;
         audioPrimeStableFrames = 0;
-        resampleAccumulator = 0.0;
+        audioSyncScaleSmoothed = 1.0;
+        resampleNextOutputPos = 0.0;
+        resampleInputFramesSeen = 0;
+        resamplePrevLeft = 0;
+        resamplePrevRight = 0;
+        resampleHavePrev = false;
         lastRingUnderruns = 0;
         stableAudioChecks = 0;
         armTransitionAudioShield(std::chrono::milliseconds(2200));
@@ -1018,30 +1040,47 @@ struct LibretroHost::Impl {
         const float targetFillMs = transitionShield
             ? std::max(steadyTargetFillMs, 76.0f)
             : steadyTargetFillMs;
-        double scale = 1.0;
-        if (transitionShield && fillMs < targetFillMs * 0.42f) scale = 1.0180;
-        else if (transitionShield && fillMs < targetFillMs * 0.68f) scale = 1.0120;
-        else if (transitionShield && fillMs < targetFillMs * 0.90f) scale = 1.0065;
-        else if (fillMs < targetFillMs * 0.55f) scale = 1.0075;
-        else if (fillMs < targetFillMs * 0.80f) scale = 1.0035;
-        else if (fillMs > targetFillMs * 1.75f) scale = 0.9945;
-        else if (fillMs > targetFillMs * 1.40f) scale = 0.9975;
+
+        // SyncSlew: keep the existing reserve policy, but never jump instantly
+        // between correction ratios. Dense N64 mixes make abrupt sample-rate
+        // steps much easier to hear than simple music or ambience.
+        double targetScale = 1.0;
+        if (transitionShield && fillMs < targetFillMs * 0.42f) targetScale = 1.0180;
+        else if (transitionShield && fillMs < targetFillMs * 0.68f) targetScale = 1.0120;
+        else if (transitionShield && fillMs < targetFillMs * 0.90f) targetScale = 1.0065;
+        else if (fillMs < targetFillMs * 0.55f) targetScale = 1.0075;
+        else if (fillMs < targetFillMs * 0.80f) targetScale = 1.0035;
+        else if (fillMs > targetFillMs * 1.75f) targetScale = 0.9945;
+        else if (fillMs > targetFillMs * 1.40f) targetScale = 0.9975;
+
+        const bool criticallyLow = fillMs < targetFillMs * 0.42f;
+        const double maxStep = criticallyLow ? 0.0035 : (transitionShield ? 0.0020 : 0.0012);
+        const double delta = targetScale - audioSyncScaleSmoothed;
+        if (std::abs(delta) <= maxStep) {
+            audioSyncScaleSmoothed = targetScale;
+        } else {
+            audioSyncScaleSmoothed += std::copysign(maxStep, delta);
+        }
+        if (std::abs(targetScale - 1.0) < 0.000001 &&
+            std::abs(audioSyncScaleSmoothed - 1.0) < 0.0006) {
+            audioSyncScaleSmoothed = 1.0;
+        }
+        audioSyncScaleSmoothed = std::clamp(audioSyncScaleSmoothed, 0.9945, 1.0180);
         if (owner) {
             owner->pacingCorrectionPct_.store(
-                static_cast<float>((scale - 1.0) * 100.0), std::memory_order_release);
+                static_cast<float>((audioSyncScaleSmoothed - 1.0) * 100.0),
+                std::memory_order_release);
         }
-        return scale;
+        return audioSyncScaleSmoothed;
     }
 
     void pushAudio(const std::int16_t* data, std::size_t frames) {
         if (!data || frames == 0 || !audioStream) return;
         const double syncScale = audioSyncScale();
-        const double desiredOutRate = static_cast<double>(std::max(1, outputSampleRate)) * syncScale;
-        if (std::abs(desiredOutRate - coreSampleRate) < 1.0) {
-            audioRing.push(data, frames * 2u);
-            updateAudioTelemetry();
-            return;
-        }
+        const double desiredOutRate =
+            static_cast<double>(std::max(1, outputSampleRate)) * syncScale;
+        const double inputRate = std::max(1.0, coreSampleRate);
+        const double sourceStep = inputRate / std::max(1.0, desiredOutRate);
 
         std::size_t scratchCount = 0;
         auto flush = [&]() {
@@ -1050,14 +1089,53 @@ struct LibretroHost::Impl {
                 scratchCount = 0;
             }
         };
+        auto append = [&](double left, double right) {
+            if (scratchCount + 2 > resampleScratch.size()) flush();
+            const auto clamp16 = [](double sample) -> std::int16_t {
+                return static_cast<std::int16_t>(std::lround(
+                    std::clamp(sample, -32768.0, 32767.0)));
+            };
+            resampleScratch[scratchCount++] = clamp16(left);
+            resampleScratch[scratchCount++] = clamp16(right);
+        };
+
+        // Continuous streaming linear interpolation. At exactly 1.0x this is
+        // effectively bit-transparent; when SyncSlew asks for a tiny correction,
+        // output positions slide between adjacent source frames instead of
+        // duplicating or deleting an entire PCM frame.
         for (std::size_t i = 0; i < frames; ++i) {
-            resampleAccumulator += desiredOutRate;
-            while (resampleAccumulator >= coreSampleRate) {
-                if (scratchCount + 2 > resampleScratch.size()) flush();
-                resampleScratch[scratchCount++] = data[i * 2u];
-                resampleScratch[scratchCount++] = data[i * 2u + 1u];
-                resampleAccumulator -= coreSampleRate;
+            const std::int16_t currentLeft = data[i * 2u];
+            const std::int16_t currentRight = data[i * 2u + 1u];
+            if (!resampleHavePrev) {
+                resamplePrevLeft = currentLeft;
+                resamplePrevRight = currentRight;
+                resampleHavePrev = true;
+                if (resampleInputFramesSeen == 0 && resampleNextOutputPos <= 0.0) {
+                    append(currentLeft, currentRight);
+                    resampleNextOutputPos += sourceStep;
+                }
+                ++resampleInputFramesSeen;
+                continue;
             }
+
+            const double segmentEnd = static_cast<double>(resampleInputFramesSeen);
+            const double segmentStart = segmentEnd - 1.0;
+            while (resampleNextOutputPos <= segmentEnd + 1.0e-9) {
+                if (resampleNextOutputPos < segmentStart) {
+                    resampleNextOutputPos = segmentStart;
+                }
+                const double t = std::clamp(
+                    resampleNextOutputPos - segmentStart, 0.0, 1.0);
+                const double left = static_cast<double>(resamplePrevLeft) +
+                    (static_cast<double>(currentLeft) - static_cast<double>(resamplePrevLeft)) * t;
+                const double right = static_cast<double>(resamplePrevRight) +
+                    (static_cast<double>(currentRight) - static_cast<double>(resamplePrevRight)) * t;
+                append(left, right);
+                resampleNextOutputPos += sourceStep;
+            }
+            resamplePrevLeft = currentLeft;
+            resamplePrevRight = currentRight;
+            ++resampleInputFramesSeen;
         }
         flush();
         updateAudioTelemetry();
