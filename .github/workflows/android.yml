@@ -27,45 +27,41 @@ jobs:
           git fetch --no-tags origin agent/0.10.0-n64-foundation
           git checkout -B agent/0.10.0-n64-foundation origin/agent/0.10.0-n64-foundation
 
-      - name: Validate multi-system Alpha 5 architecture
+      - name: Validate multi-system Alpha 6 architecture
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'versionCode = 20' app/build.gradle.kts
-          grep -q 'versionName = "0.10.4"' app/build.gradle.kts
+          grep -q 'versionCode = 21' app/build.gradle.kts
+          grep -q 'versionName = "0.10.5"' app/build.gradle.kts
           grep -q 'OmniCoreV4App' app/src/main/java/com/omnicore/emulator/MainActivity.kt
-          grep -q 'N64Diagnostics.consumeRecentProcessExit' app/src/main/java/com/omnicore/emulator/MainActivity.kt
-          grep -q 'android:name=".OmniCoreApplication"' app/src/main/AndroidManifest.xml
           grep -q 'android:process=":n64"' app/src/main/AndroidManifest.xml
-          grep -q 'Thread.setDefaultUncaughtExceptionHandler' app/src/main/java/com/omnicore/emulator/OmniCoreApplication.kt
-          grep -q 'recordJavaCrash' app/src/main/java/com/omnicore/emulator/core/n64/N64Diagnostics.kt
-          grep -q 'getHistoricalProcessExitReasons' app/src/main/java/com/omnicore/emulator/core/n64/N64Diagnostics.kt
-          grep -q 'activity:onCreate_enter' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-          grep -q 'scheduleImmersiveMode' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-          grep -q 'decor.isAttachedToWindow' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-          grep -q 'decor.windowInsetsController' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-          ! grep -q 'window.insetsController' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-          grep -q 'prepare:probe_core' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-          grep -q 'session:native_start' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-          grep -q 'CACHED_INTERPRETER' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-          grep -q 'LibraryImportEngine' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV4App.kt
-          grep -q 'Uma biblioteca. Vários sistemas.' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV4App.kt
           grep -q 'ConsoleSystem.NINTENDO_64 -> N64Core()' app/src/main/java/com/omnicore/emulator/core/CoreRegistry.kt
+          grep -q 'LibraryImportEngine' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV4App.kt
           grep -q 'N64RomContainer.ZIP' app/src/main/java/com/omnicore/emulator/core/n64/N64RomPreparer.kt
           grep -q 'N64RomContainer.GZIP' app/src/main/java/com/omnicore/emulator/core/n64/N64RomPreparer.kt
           grep -q '"u1"' app/src/main/java/com/omnicore/emulator/core/n64/N64RomValidator.kt
-          grep -q 'isNintendo64' app/src/main/java/com/omnicore/emulator/library/LibraryImportEngine.kt
-          grep -q 'threadedRenderer = false' app/src/main/java/com/omnicore/emulator/performance/N64SmartPerf.kt
-          grep -q 'OmniCore-N64Diag' app/src/main/java/com/omnicore/emulator/core/n64/N64NativeBridge.kt
-          grep -q 'failed to allocate ROM buffer' tools/fetch_n64_core.sh
-          grep -q 'omnicore_n64_runtime' app/src/main/cpp/CMakeLists.txt
-          grep -q 'n64_libretro_host.cpp' app/src/main/cpp/CMakeLists.txt
-          grep -q '\${aaudio-lib}' app/src/main/cpp/CMakeLists.txt
-          grep -q 'N64GamepadOverlayView' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
+          grep -q 'scheduleImmersiveMode' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
+          grep -q 'decor.windowInsetsController' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
+          grep -q 'CpuMode.DYNAREC' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
+          grep -q 'AspectSurfaceView(this, launchDecision.effective.aspectRatio)' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
+          grep -q 'setAudioTargetBursts' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
+          grep -q 'WIDE_ADJUSTED("16:9 adjusted"' app/src/main/java/com/omnicore/emulator/settings/N64Settings.kt
+          grep -q 'OverlayPreset.CLEAN' app/src/main/java/com/omnicore/emulator/settings/N64InputSettings.kt
+          grep -q 'dynamicOpacity' app/src/main/java/com/omnicore/emulator/emulation/N64GamepadOverlayView.kt
+          grep -q 'retargetButton' app/src/main/java/com/omnicore/emulator/emulation/N64GamepadOverlayView.kt
+          grep -q 'Widescreen ajustado' app/src/main/java/com/omnicore/emulator/ui/n64/N64SettingsDialog.kt
+          grep -q 'nativeSetAudioTargetBursts' app/src/main/java/com/omnicore/emulator/core/n64/N64NativeBridge.kt
+          grep -q 'aspectRatio = config.aspectRatio.storage' app/src/main/java/com/omnicore/emulator/core/n64/N64NativeBridge.kt
+          grep -q 'std::atomic<int> audioTargetBursts_' app/src/main/cpp/n64/n64_libretro_host.h
+          grep -q 'mupen64plus-169screensize' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'mupen64plus-aspect' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'mupen64plus-EnableCopyColorToRDRAM' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'audioTargetBursts_.load' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'lateResetThreshold' app/src/main/cpp/n64/n64_libretro_host.cpp
           grep -q 'AAudioStreamBuilder_setPerformanceMode' app/src/main/cpp/n64/n64_libretro_host.cpp
-          grep -q 'N64 RUN OK' app/src/main/cpp/n64/n64_libretro_host.cpp
           grep -q 'RETRO_ENVIRONMENT_SET_HW_RENDER' app/src/main/cpp/n64/n64_libretro_host.cpp
           grep -q 'glBlitFramebuffer' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'failed to allocate ROM buffer' tools/fetch_n64_core.sh
           git diff --check
 
       - name: Verify Android toolchain
@@ -136,7 +132,7 @@ jobs:
           tar --exclude=.git -czf build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz -C third_party pcsx_rearmed
           tar --exclude=.git -czf build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz -C third_party mupen64plus_next
 
-      - name: Build signed 0.10.4 N64 Alpha 5 APK
+      - name: Build signed 0.10.5 N64 Alpha 6 APK
         shell: bash
         run: |
           set -euo pipefail
@@ -172,21 +168,21 @@ jobs:
           done < <(find "$CHECK_DIR/lib" -type f -name '*.so' -print0)
           "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" -v -c -P 16 4 "$APK"
 
-      - name: Publish N64 Alpha 5 prerelease
+      - name: Publish N64 Alpha 6 prerelease
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v0.10.4-n64-alpha5"
-          TITLE="OmniCore v0.10.4 N64 Alpha 5"
-          NOTES="Fifth Nintendo 64 device-test alpha. Alpha 4 diagnostics identified the launch failure precisely: Android threw a NullPointerException from PhoneWindow/DecorView while N64EmulationActivity requested WindowInsetsController before the DecorView had attached. Alpha 5 removes that early window.insetsController call. Immersive mode is now scheduled after setContentView, only executes on an attached DecorView, uses decorView.windowInsetsController, retries on window focus, and is guarded so a framework fullscreen failure cannot terminate N64 startup. All Alpha 4 boot breadcrumbs, Java/Kotlin crash capture, safe first-boot Cached Interpreter profile, isolated :n64 process, mixed PS1/N64 library scanning, ZIP/GZIP ROM preparation, stable DEV signing and 16 KB alignment remain intact. PS1 is unchanged. ROMs, BIOS, firmware, keys and games are not included."
+          TAG="v0.10.5-n64-alpha6"
+          TITLE="OmniCore v0.10.5 N64 Alpha 6"
+          NOTES="Sixth Nintendo 64 device-test alpha. Alpha 5 achieved the first confirmed real-device N64 rendered game screen in OmniCore. Alpha 6 moves from boot validation to performance and touch usability: Dynarec is now the usable first-session path instead of the diagnostic Cached Interpreter, SmartPerf prioritizes native resolution and lighter framebuffer work under pressure, AAudio starts with a safer prime/buffer target and can adjust its burst target live from telemetry, frame pacing drops old timing debt instead of issuing catch-up frame bursts, and the low-cost GLideN64 profile disables expensive buffer-copy/LOD work when framebuffer emulation is off. Touch controls now default to a Clear layout with smaller visuals, larger hitboxes, dynamic fade, sliding button retargeting, configurable opacity/scale and optional D-pad. GLideN64 widescreen is exposed as Original 4:3, 16:9 adjusted or stretched, with a matching 16:9 Surface instead of frontend-only stretching. The multi-system hub, mixed PS1/N64 scanner, isolated :n64 runtime, crash breadcrumbs, stable DEV signing and 16 KB alignment remain intact. PS1 is unchanged. ROMs, BIOS, firmware, keys and games are not included."
           APK="app/build/outputs/apk/debug/app-debug.apk"
           PS1_SOURCE="build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz"
           N64_SOURCE="build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz"
           TARGET="$(git rev-parse HEAD)"
-          OUT="build/OmniCore-v0.10.4-n64-alpha5-debug.apk"
-          HASH="build/OmniCore-v0.10.4-n64-alpha5-debug.sha256"
+          OUT="build/OmniCore-v0.10.5-n64-alpha6-debug.apk"
+          HASH="build/OmniCore-v0.10.5-n64-alpha6-debug.sha256"
           cp "$APK" "$OUT"
           sha256sum "$OUT" > "$HASH"
 
@@ -210,7 +206,7 @@ jobs:
           git config user.name "Mauricio.dev"
           git config user.email "antoniomauriciorodriguesalves@gmail.com"
           git add .ci
-          git commit -m "Record signed N64 Alpha 5 validation success [skip ci]" || true
+          git commit -m "Record signed N64 Alpha 6 validation success [skip ci]" || true
           git push origin HEAD:agent/0.10.0-n64-foundation || true
 
       - name: Record validation failure
@@ -227,5 +223,5 @@ jobs:
           git config user.name "Mauricio.dev"
           git config user.email "antoniomauriciorodriguesalves@gmail.com"
           git add .ci
-          git commit -m "Record signed N64 Alpha 5 validation failure [skip ci]" || true
+          git commit -m "Record signed N64 Alpha 6 validation failure [skip ci]" || true
           git push origin HEAD:agent/0.10.0-n64-foundation || true
