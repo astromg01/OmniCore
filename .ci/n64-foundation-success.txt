@@ -1,3 +1,5 @@
-run_id=32095500215
-commit=1f38db26a147eeb90463984954e0203caae62bde
+run_id=32104946245
+commit=7518479425b4943c3c2b76f029d15bd82c04918e
 status=success
+version=0.10.8
+tag=v0.10.8-n64-alpha9
