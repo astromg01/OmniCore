@@ -17,6 +17,8 @@ struct RuntimeConfig {
     std::string romPath;
     std::string systemDir;
     std::string saveDir;
+    std::string diagnosticPath;
+    std::string verificationPath;
     std::string cpuMode;
     std::string rspMode;
     std::string pakMode;
