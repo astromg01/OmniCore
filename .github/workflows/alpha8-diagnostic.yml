@@ -24,101 +24,116 @@ jobs:
           git fetch --no-tags origin agent/0.10.0-n64-foundation
           git checkout -B agent/0.10.0-n64-foundation origin/agent/0.10.0-n64-foundation
 
-      - name: Pinpoint validation gate
+      - name: Diagnose signed Alpha 8 packaging
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set +e
-          mkdir -p .ci
-          python3 tools/agent_0107_alpha8.py >/tmp/migration.log 2>&1
-          MIG=$?
-          : > /tmp/checks.log
-          FAIL=""
-          check() {
-            local name="$1"; shift
-            if "$@"; then
-              echo "PASS $name" >> /tmp/checks.log
-            else
-              echo "FAIL $name :: $*" >> /tmp/checks.log
-              if [ -z "$FAIL" ]; then FAIL="$name"; fi
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+          mkdir -p .ci build/signing build/source-artifacts
+          STAGE="migration"
+          CODE=0
+          : > /tmp/alpha8-signed.log
+
+          python3 tools/agent_0107_alpha8.py >> /tmp/alpha8-signed.log 2>&1
+          CODE=$?
+
+          if [ "$CODE" -eq 0 ]; then
+            STAGE="prepare_signing"
+            base64 -d config/omnicore-dev.keystore.b64 > build/signing/omnicore-dev.jks 2>> /tmp/alpha8-signed.log
+            CODE=$?
+            if [ "$CODE" -eq 0 ]; then
+              chmod 600 build/signing/omnicore-dev.jks
+              export OMNICORE_DEV_KEYSTORE="$GITHUB_WORKSPACE/build/signing/omnicore-dev.jks"
+              export OMNICORE_DEV_STORE_PASSWORD="omnicore-dev-2026"
+              export OMNICORE_DEV_KEY_ALIAS="omnicore-dev"
+              export OMNICORE_DEV_KEY_PASSWORD="omnicore-dev-2026"
+              keytool -list -keystore "$OMNICORE_DEV_KEYSTORE" -storepass "$OMNICORE_DEV_STORE_PASSWORD" -alias "$OMNICORE_DEV_KEY_ALIAS" >> /tmp/alpha8-signed.log 2>&1
+              CODE=$?
             fi
-          }
-          check_not_grep() {
-            local name="$1" pattern="$2" file="$3"
-            if grep -q "$pattern" "$file"; then
-              echo "FAIL $name :: unexpected pattern $pattern in $file" >> /tmp/checks.log
-              if [ -z "$FAIL" ]; then FAIL="$name"; fi
-            else
-              echo "PASS $name" >> /tmp/checks.log
-            fi
-          }
-          if [ "$MIG" -eq 0 ]; then
-            check version_code grep -q 'versionCode = 23' app/build.gradle.kts
-            check version_name grep -q 'versionName = "0.10.7"' app/build.gradle.kts
-            check app_v4 grep -q 'OmniCoreV4App' app/src/main/java/com/omnicore/emulator/MainActivity.kt
-            check process_n64 grep -q 'android:process=":n64"' app/src/main/AndroidManifest.xml
-            check registry grep -q 'ConsoleSystem.NINTENDO_64 -> N64Core()' app/src/main/java/com/omnicore/emulator/core/CoreRegistry.kt
-            check library_engine grep -q 'LibraryImportEngine' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV4App.kt
-            check zip grep -q 'N64RomContainer.ZIP' app/src/main/java/com/omnicore/emulator/core/n64/N64RomPreparer.kt
-            check gzip grep -q 'N64RomContainer.GZIP' app/src/main/java/com/omnicore/emulator/core/n64/N64RomPreparer.kt
-            check smart_session grep -q 'N64SmartPerf.Session' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-            check frame_rate_hint grep -q 'Surface.FRAME_RATE_COMPATIBILITY_DEFAULT' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-            check activity_present grep -q 'presentP95Ms' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-            check edit_touch grep -q 'Editar controles touch' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-            check save_state_ui grep -q 'Salvar estado' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-            check load_state_ui grep -q 'Carregar estado' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
-            check edit_mode grep -q 'setEditMode' app/src/main/java/com/omnicore/emulator/emulation/N64GamepadOverlayView.kt
-            check control_position grep -q 'saveControlPosition' app/src/main/java/com/omnicore/emulator/settings/N64InputSettings.kt
-            check state_file grep -q 'stateFile' app/src/main/java/com/omnicore/emulator/storage/N64Storage.kt
-            check smart_class grep -q 'class Session' app/src/main/java/com/omnicore/emulator/performance/N64SmartPerf.kt
-            check gpu_bound grep -q 'gpuBound' app/src/main/java/com/omnicore/emulator/performance/N64SmartPerf.kt
-            check smart_present grep -q 'presentP95Ms' app/src/main/java/com/omnicore/emulator/performance/N64SmartPerf.kt
-            check native_save grep -q 'nativeRequestSaveState' app/src/main/java/com/omnicore/emulator/core/n64/N64NativeBridge.kt
-            check bridge_present grep -q 'presentP95Ms' app/src/main/java/com/omnicore/emulator/core/n64/N64NativeBridge.kt
-            check bridge_adpf grep -q 'adpfActive' app/src/main/java/com/omnicore/emulator/core/n64/N64NativeBridge.kt
-            check present_window grep -q 'presentWindow_' app/src/main/cpp/n64/n64_libretro_host.h
-            check adpf_atomic grep -q 'adpfActive_' app/src/main/cpp/n64/n64_libretro_host.h
-            check adpf_create grep -q 'APerformanceHint_createSession' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check adpf_report grep -q 'APerformanceHint_reportActualWorkDuration' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check egl_presentation grep -q 'eglPresentationTimeANDROID' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check fadvise grep -q 'POSIX_FADV_WILLNEED' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check madvise grep -q 'MADV_WILLNEED' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check_not_grep no_sequential 'MADV_SEQUENTIAL' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check nearest grep -q 'GL_NEAREST' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check native_texrect grep -q 'mupen64plus-EnableNativeResTexrects' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check lod_true grep -q 'mupen64plus-EnableLODEmulation.*"True"' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check persist_safe grep -q 'persistSaveRam(false)' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check_not_grep no_save_counter 'saveCounter' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check swap_zero grep -q 'eglSwapInterval(display, 0)' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check_not_grep no_swap_one 'eglSwapInterval(display, 1)' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check_not_grep no_forced_sample_rate 'AAudioStreamBuilder_setSampleRate' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check audio_buffer_frames grep -q 'audioBufferFrames' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check aaudio_latency grep -q 'AAUDIO_PERFORMANCE_MODE_LOW_LATENCY' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check aaudio_exclusive grep -q 'AAUDIO_SHARING_MODE_EXCLUSIVE' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check audio_sync grep -q 'audioSyncScale' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check serialize grep -q 'retro_serialize_size' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check memory_data grep -q 'retro_get_memory_data' app/src/main/cpp/n64/n64_libretro_host.cpp
-            check runtime_version grep -q 'OmniCore N64 Runtime 0.10.7' app/src/main/cpp/n64/n64_native_bridge.cpp
-            check telemetry_12 grep -q 'const jfloat values\[12\]' app/src/main/cpp/n64/n64_native_bridge.cpp
-            check rom_alloc_patch grep -q 'failed to allocate ROM buffer' tools/fetch_n64_core.sh
-            git diff --check >/tmp/diffcheck.log 2>&1
-            if [ $? -eq 0 ]; then echo 'PASS diff_check' >> /tmp/checks.log; else echo 'FAIL diff_check' >> /tmp/checks.log; [ -n "$FAIL" ] || FAIL="diff_check"; fi
           fi
+
+          if [ "$CODE" -eq 0 ]; then
+            STAGE="fast_compile"
+            gradle :app:externalNativeBuildDebug :app:compileDebugKotlin --stacktrace --no-daemon >> /tmp/alpha8-signed.log 2>&1
+            CODE=$?
+          fi
+
+          if [ "$CODE" -eq 0 ]; then
+            STAGE="build_ps1"
+            chmod +x tools/fetch_ps1_core.sh tools/build_ps1_core_android.sh
+            (./tools/fetch_ps1_core.sh && ./tools/build_ps1_core_android.sh) >> /tmp/alpha8-signed.log 2>&1
+            CODE=$?
+          fi
+
+          if [ "$CODE" -eq 0 ]; then
+            STAGE="build_n64"
+            chmod +x tools/fetch_n64_core.sh tools/build_n64_core_android.sh
+            (./tools/fetch_n64_core.sh && ./tools/build_n64_core_android.sh) >> /tmp/alpha8-signed.log 2>&1
+            CODE=$?
+          fi
+
+          if [ "$CODE" -eq 0 ]; then
+            STAGE="assemble"
+            gradle :app:assembleDebug --stacktrace --no-daemon >> /tmp/alpha8-signed.log 2>&1
+            CODE=$?
+          fi
+
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          if [ "$CODE" -eq 0 ]; then
+            STAGE="signing"
+            APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+            EXPECTED="9490d1ad4666312d6dd9e5b2a20699583919ae80a5536882bcd3f9accc793547"
+            "$APKSIGNER" verify --print-certs "$APK" >> /tmp/alpha8-signed.log 2>&1
+            VERIFY=$?
+            ACTUAL="$("$APKSIGNER" verify --print-certs "$APK" 2>/dev/null | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n1 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+            echo "SIGNER_ACTUAL=$ACTUAL" >> /tmp/alpha8-signed.log
+            if [ "$VERIFY" -ne 0 ] || [ "$ACTUAL" != "$EXPECTED" ]; then CODE=1; else CODE=0; fi
+          fi
+
+          if [ "$CODE" -eq 0 ]; then
+            STAGE="alignment"
+            CHECK_DIR="build/apk-alignment-check"
+            rm -rf "$CHECK_DIR" && mkdir -p "$CHECK_DIR"
+            unzip -q "$APK" -d "$CHECK_DIR"
+            READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+            CODE=0
+            while IFS= read -r -d '' SO; do
+              while IFS= read -r LOAD_LINE; do
+                ALIGN_HEX="$(awk '{print $NF}' <<< "$LOAD_LINE")"
+                if ! [[ "$ALIGN_HEX" =~ ^0x[0-9A-Fa-f]+$ ]] || (( ALIGN_HEX < 0x4000 )); then
+                  echo "BAD ALIGN: $SO :: $LOAD_LINE" >> /tmp/alpha8-signed.log
+                  CODE=1
+                fi
+              done < <("$READELF" -lW "$SO" | grep -E '^[[:space:]]*LOAD[[:space:]]')
+            done < <(find "$CHECK_DIR/lib" -type f -name '*.so' -print0)
+            if [ "$CODE" -eq 0 ]; then
+              "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" -v -c -P 16 4 "$APK" >> /tmp/alpha8-signed.log 2>&1
+              CODE=$?
+            fi
+          fi
+
           {
-            echo "migration_exit=$MIG"
-            echo "first_failure=${FAIL:-none}"
+            if [ "$CODE" -eq 0 ]; then
+              echo "stage=all_signed_pre_publish_success"
+            else
+              echo "stage=$STAGE"
+            fi
+            echo "exit_code=$CODE"
             echo "run_id=$GITHUB_RUN_ID"
             echo "commit=$GITHUB_SHA"
-            echo "--- checks ---"
-            cat /tmp/checks.log
-            echo "--- migration tail ---"
-            tail -n 40 /tmp/migration.log
-            echo "--- diff check ---"
-            cat /tmp/diffcheck.log 2>/dev/null || true
+            echo "--- focused ---"
+            grep -nEi "ERROR|FAILURE|FAILED|BAD ALIGN|SIGNER_ACTUAL|expected exactly one match" /tmp/alpha8-signed.log | tail -n 160 || true
+            echo "--- tail ---"
+            tail -n 260 /tmp/alpha8-signed.log
           } > /tmp/result.txt
+
           git reset --hard HEAD
-          cp /tmp/result.txt .ci/alpha8-validation-gates.txt
+          cp /tmp/result.txt .ci/alpha8-diagnostic-result.txt
           git config user.name "Mauricio.dev"
           git config user.email "antoniomauriciorodriguesalves@gmail.com"
-          git add .ci/alpha8-validation-gates.txt
-          git commit -m "Record Alpha 8 validation gate diagnostic [skip ci]" || true
+          git add .ci/alpha8-diagnostic-result.txt
+          git commit -m "Record Alpha 8 signed packaging diagnostic [skip ci]" || true
           git push origin HEAD:agent/0.10.0-n64-foundation
