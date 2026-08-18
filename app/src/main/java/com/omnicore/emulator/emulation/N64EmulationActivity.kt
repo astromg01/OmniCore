@@ -22,6 +22,7 @@ import android.widget.FrameLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
+import com.omnicore.emulator.core.n64.N64Core
 import com.omnicore.emulator.core.n64.N64NativeBridge
 import com.omnicore.emulator.core.n64.N64RomPreparer
 import com.omnicore.emulator.model.ConsoleSystem
@@ -33,7 +34,11 @@ import com.omnicore.emulator.storage.N64Storage
 import java.io.File
 import kotlin.math.abs
 
-/** Nintendo 64 owns a separate Android surface, input layer and runtime policy. */
+/**
+ * Nintendo 64 owns a separate Activity/process, surface, input layer and runtime.
+ * Native N64 failures are therefore contained and cannot terminate the hub/PS1
+ * process with them.
+ */
 class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var root: FrameLayout
     private lateinit var surfaceView: AspectSurfaceView
@@ -86,7 +91,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                     statusView.setBackgroundColor(Color.argb(230, 92, 16, 28))
                 }
             }
-            handler.postDelayed(this, if (started) 700L else 300L)
+            handler.postDelayed(this, if (started) 700L else 350L)
         }
     }
 
@@ -118,43 +123,34 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             setWillNotDraw(true)
             holder.addCallback(this@N64EmulationActivity)
         }
-        root.addView(
-            surfaceView,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                Gravity.CENTER
-            )
-        )
+        root.addView(surfaceView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            Gravity.CENTER
+        ))
 
         controls = N64GamepadOverlayView(this, inputConfig.haptics)
-        root.addView(
-            controls,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
+        root.addView(controls, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
 
         statusView = TextView(this).apply {
             text = "Preparando $title • ${launchDecision.level.name}…"
             setTextColor(Color.WHITE)
             textSize = 11f
             gravity = Gravity.CENTER
-            maxLines = 3
+            maxLines = 4
             setPadding(dp(12), dp(7), dp(12), dp(7))
             setBackgroundColor(Color.argb(190, 15, 17, 29))
         }
-        root.addView(
-            statusView,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            ).apply { topMargin = dp(10) }
-        )
+        root.addView(statusView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        ).apply { topMargin = dp(10) })
 
-        val menu = TextView(this).apply {
+        val menuButton = TextView(this).apply {
             text = "⋮"
             setTextColor(Color.argb(225, 245, 245, 255))
             textSize = 26f
@@ -162,13 +158,10 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             setBackgroundColor(Color.argb(78, 20, 22, 36))
             setOnClickListener { showQuickMenu(this) }
         }
-        root.addView(
-            menu,
-            FrameLayout.LayoutParams(dp(42), dp(42), Gravity.TOP or Gravity.END).apply {
-                topMargin = dp(8)
-                rightMargin = dp(8)
-            }
-        )
+        root.addView(menuButton, FrameLayout.LayoutParams(dp(42), dp(42), Gravity.TOP or Gravity.END).apply {
+            topMargin = dp(8)
+            rightMargin = dp(8)
+        })
     }
 
     private fun showQuickMenu(anchor: View) {
@@ -190,10 +183,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                         runOkPolls = 0
                         true
                     }
-                    "Sair do jogo" -> {
-                        finish()
-                        true
-                    }
+                    "Sair do jogo" -> { finish(); true }
                     else -> false
                 }
             }
@@ -202,9 +192,12 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun prepareGameAsync(game: GameEntry) {
-        statusView.text = "N64 • validando e preparando ROM…"
+        statusView.text = "N64 • verificando core e ROM…"
         prepareThread = Thread({
             val result = runCatching {
+                check(N64NativeBridge.hasCore()) {
+                    "O core Mupen64Plus-Next não pôde ser carregado neste aparelho."
+                }
                 val paths = N64Storage.prepare(applicationContext)
                 val prepared = N64RomPreparer.prepare(applicationContext, game).getOrThrow()
                 paths to prepared
@@ -217,15 +210,15 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                     preparedRom = prepared.file
                     statusView.text = buildString {
                         append("N64 • ")
+                        append(prepared.sourceContainer.label)
+                        append(" • ")
                         append(prepared.sourceOrder.label)
                         append(" → z64")
                         if (prepared.reusedCache) append(" • cache")
                     }
                     tryStartSession()
                 }.onFailure { error ->
-                    statusView.text = "N64 BOOT E00 • ${error.message ?: "falha ao preparar ROM"}"
-                    statusView.setBackgroundColor(Color.argb(230, 92, 16, 28))
-                    Toast.makeText(this, error.message ?: "Falha ao preparar ROM N64.", Toast.LENGTH_LONG).show()
+                    showBootError(error.message ?: "falha ao preparar ROM")
                 }
             }
         }, "OmniCore-N64Prepare").apply {
@@ -245,16 +238,16 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         val decision = pendingDecision ?: launchDecision
         statusView.text = "N64 • ${decision.level.name} / ${decision.effective.cpuMode.label} / GLES3 + AAudio…"
         started = N64NativeBridge.start(surface, rom, paths, decision, inputConfig)
-        if (!started) {
-            statusView.text = "N64 BOOT E00 • runtime recusou iniciar a sessão"
-            statusView.setBackgroundColor(Color.argb(230, 92, 16, 28))
-        }
+        if (!started) showBootError("runtime recusou iniciar a sessão")
     }
 
-    override fun surfaceCreated(holder: SurfaceHolder) {
-        tryStartSession()
+    private fun showBootError(message: String) {
+        statusView.text = "N64 BOOT E00 • $message"
+        statusView.setBackgroundColor(Color.argb(230, 92, 16, 28))
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
+    override fun surfaceCreated(holder: SurfaceHolder) = tryStartSession()
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -341,10 +334,9 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         return if (abs(value) > flat) value.coerceIn(-1f, 1f) else 0f
     }
 
-    private fun isGamepadSource(source: Int): Boolean {
-        return source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+    private fun isGamepadSource(source: Int): Boolean =
+        source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
             source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
-    }
 
     private fun gameFromIntent(): GameEntry? {
         val id = intent.getStringExtra(EXTRA_GAME_ID).orEmpty()
@@ -353,7 +345,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         val fileName = intent.getStringExtra(EXTRA_FILE_NAME).orEmpty()
         if (id.isBlank() || uri.isBlank() || fileName.isBlank()) return null
         val extension = fileName.substringAfterLast('.', "").lowercase()
-        if (extension !in setOf("z64", "n64", "v64")) return null
+        if (extension.isNotBlank() && extension !in N64Core.SUPPORTED_EXTENSIONS) return null
         return GameEntry(
             id = id,
             title = title.ifBlank { fileName.substringBeforeLast('.') },
@@ -407,12 +399,13 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         private const val EXTRA_FILE_NAME = "n64_file_name"
         private const val EXTRA_SIZE_BYTES = "n64_size_bytes"
 
-        fun intent(context: Context, game: GameEntry): Intent = Intent(context, N64EmulationActivity::class.java).apply {
-            putExtra(EXTRA_GAME_ID, game.id)
-            putExtra(EXTRA_GAME_TITLE, game.title)
-            putExtra(EXTRA_GAME_URI, game.uri)
-            putExtra(EXTRA_FILE_NAME, game.fileName)
-            putExtra(EXTRA_SIZE_BYTES, game.sizeBytes)
-        }
+        fun intent(context: Context, game: GameEntry): Intent =
+            Intent(context, N64EmulationActivity::class.java).apply {
+                putExtra(EXTRA_GAME_ID, game.id)
+                putExtra(EXTRA_GAME_TITLE, game.title)
+                putExtra(EXTRA_GAME_URI, game.uri)
+                putExtra(EXTRA_FILE_NAME, game.fileName)
+                putExtra(EXTRA_SIZE_BYTES, game.sizeBytes)
+            }
     }
 }
