@@ -1,2 +1,2 @@
-OmniCore 0.10.7 N64 Alpha 8 validation trigger.
-Focus: readability floor, ROM prefaulting, no gameplay fsync, EGL presentation timing, ADPF hints, GPU-aware SmartPerf and cached AAudio buffer telemetry.
+OmniCore 0.10.7 N64 Alpha 8 robust validation trigger.
+Pipeline: idempotent migration, architecture gates, Kotlin/C++ compile, isolated PS1 + N64 cores, DEV signing, 16 KB alignment, source commit, prerelease publish and validation marker.
