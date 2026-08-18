@@ -19,11 +19,6 @@ class N64Core : EmulatorCore {
         version = "pinned f275caf"
     )
 
-    /**
-     * The N64 native runtime is verified inside N64EmulationActivity's isolated
-     * process. Avoid dlopen/probing Mupen from the main library process: a native
-     * crash must never take the OmniCore hub down with it.
-     */
     override fun isAvailable(): Boolean = true
 
     override fun launch(context: Context, game: GameEntry): Result<Unit> = runCatching {
@@ -32,20 +27,15 @@ class N64Core : EmulatorCore {
             "Formato Nintendo 64 não reconhecido: .$extension"
         }
 
-        // Save a breadcrumb before Android even starts the isolated N64 process.
-        // If native library loading itself crashes, the hub can still distinguish
-        // that from a later ROM/core/GLideN64 failure without requiring ADB.
-        N64Diagnostics.mark(context, "main:launch_requested", game.fileName)
+        N64Diagnostics.beginLaunch(context, game.fileName)
 
-        // Warm only Kotlin-owned N64 policy state. ROM signature validation,
-        // native runtime probing and game I/O happen in the isolated N64 process.
+        // Warm only Kotlin-owned policy state. Core probing and ROM I/O remain
+        // isolated inside the N64 process.
         N64SmartPerf.initial(context, N64Settings.resolve(context))
         context.startActivity(N64EmulationActivity.intent(context, game))
     }
 
     companion object {
-        // u1 is advertised by the pinned Mupen64Plus-Next core itself. rom/bin
-        // remain accepted only after the signature validator proves N64 content.
         val SUPPORTED_EXTENSIONS = setOf(
             "z64", "n64", "v64", "u1", "rom", "bin", "zip", "gz", "gzip"
         )
