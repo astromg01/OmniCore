@@ -66,8 +66,6 @@ object N64SmartPerf {
         val severeThermal = thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE
         val warmThermal = thermalStatus >= PowerManager.THERMAL_STATUS_MODERATE
 
-        // Do not react to one bad frame. Runtime adaptation starts only after a
-        // meaningful window and requires repeated symptoms (p95/drop/audio).
         val framePressure = telemetry.hasUsefulWindow && (
             telemetry.p95FrameMs >= 22.5f ||
                 telemetry.droppedFrames >= 6 ||
@@ -79,16 +77,21 @@ object N64SmartPerf {
                 telemetry.audioUnderruns >= 8
             )
 
+        // Early real-device validation deliberately keeps GLideN64's threaded
+        // renderer disabled. Upstream defaults it off and it changes the core's
+        // thread/coroutine lifecycle. SmartPerf must not silently re-enable it
+        // before the base GLES3 path has repeatable successful boots.
+        fun safe(config: N64Settings.Config): N64Settings.Config =
+            config.copy(threadedRenderer = false, rspMode = N64Settings.RspMode.HLE)
+
         if (severeThermal || heavyPressure) {
             return Decision(
                 level = Level.ECO,
-                effective = requested.copy(
+                effective = safe(requested.copy(
                     internalResolution = N64Settings.InternalResolution.NATIVE,
                     framebufferEmulation = false,
-                    threadedRenderer = true,
-                    cpuMode = N64Settings.CpuMode.DYNAREC,
-                    rspMode = N64Settings.RspMode.HLE
-                ),
+                    cpuMode = N64Settings.CpuMode.DYNAREC
+                )),
                 audioBufferBursts = 4,
                 preferPowerEfficiency = true,
                 aggressiveFramePacing = false,
@@ -104,12 +107,10 @@ object N64SmartPerf {
         if (warmThermal || framePressure || profile.tier == N64PerformanceProfile.Tier.LOW) {
             return Decision(
                 level = Level.BALANCED,
-                effective = requested.copy(
+                effective = safe(requested.copy(
                     internalResolution = N64Settings.InternalResolution.NATIVE,
-                    threadedRenderer = true,
-                    cpuMode = N64Settings.CpuMode.DYNAREC,
-                    rspMode = N64Settings.RspMode.HLE
-                ),
+                    cpuMode = N64Settings.CpuMode.DYNAREC
+                )),
                 audioBufferBursts = 3,
                 preferPowerEfficiency = warmThermal,
                 aggressiveFramePacing = false,
@@ -131,15 +132,10 @@ object N64SmartPerf {
 
         return Decision(
             level = if (highMargin) Level.TURBO else Level.BALANCED,
-            effective = requested.copy(
-                threadedRenderer = true,
-                cpuMode = N64Settings.CpuMode.DYNAREC
-            ),
+            effective = safe(requested.copy(cpuMode = N64Settings.CpuMode.DYNAREC)),
             audioBufferBursts = if (highMargin) 2 else 3,
             preferPowerEfficiency = false,
             aggressiveFramePacing = highMargin,
-            // Promotion is only permission. The host must wait for a safe point
-            // and the selected preset must allow quality changes.
             allowResolutionPromotion = highMargin && requested.preset == N64Settings.Preset.AUTO,
             reason = if (highMargin) {
                 "SmartPerf N64 detectou margem para baixa latência"
