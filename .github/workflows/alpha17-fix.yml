@@ -1,0 +1,98 @@
+name: N64 Alpha 17 Compile Fix
+
+on:
+  push:
+    branches: [ "agent/0.10.0-n64-foundation" ]
+    paths:
+      - ".ci/alpha17-fix-trigger.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-n64-alpha17-fix
+  cancel-in-progress: true
+
+jobs:
+  compile-fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone N64 foundation branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin agent/0.10.0-n64-foundation
+          git checkout -B agent/0.10.0-n64-foundation origin/agent/0.10.0-n64-foundation
+
+      - name: Apply Alpha 17 migration and compile postfix
+        shell: bash
+        run: |
+          set -euo pipefail
+          HOST="app/src/main/cpp/n64/n64_libretro_host.cpp"
+          HOST_BEFORE="$(sha256sum "$HOST" | awk '{print $1}')"
+          grep -q 'versionName = "0.10.15"' app/build.gradle.kts
+          python3 tools/agent_01016_alpha17.py
+          python3 tools/agent_01016_alpha17_postfix.py
+          HOST_AFTER="$(sha256sum "$HOST" | awk '{print $1}')"
+          test "$HOST_BEFORE" = "$HOST_AFTER"
+          grep -q 'versionName = "0.10.16"' app/build.gradle.kts
+          grep -q '@Synchronized' app/src/main/java/com/omnicore/emulator/achievements/OmniAchievements.kt
+          ! grep -q '^import androidx.compose.foundation.layout.weight$' app/src/main/java/com/omnicore/emulator/ui/achievements/AchievementsScreen.kt
+          CHANGED="$(git status --porcelain | sed -E 's/^.. //')"
+          if grep -Eiq '(^|/)(ps1|pcsx)' <<< "$CHANGED"; then
+            echo "Alpha 17 compile fix attempted to modify PS1-owned source" >&2
+            exit 1
+          fi
+          git diff --check
+
+      - name: Verify Android toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
+          test -d "$ANDROID_SDK_ROOT/platforms/android-36"
+
+      - name: Compile corrected Alpha 17 Kotlin and native runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:externalNativeBuildDebug :app:compileDebugKotlin --stacktrace --no-daemon
+
+      - name: Commit compiled Alpha 17 source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -f tools/agent_01016_alpha17.py tools/agent_01016_alpha17_postfix.py
+          rm -f .ci/alpha17-fix-failure.txt
+          git config user.name "Mauricio.dev"
+          git config user.email "antoniomauriciorodriguesalves@gmail.com"
+          git add app
+          git add -u tools/agent_01016_alpha17.py tools/agent_01016_alpha17_postfix.py .ci/alpha17-fix-failure.txt 2>/dev/null || true
+          git diff --cached --check
+          git commit -m "Apply compiled OmniCore 0.10.16 Alpha 17 StarUI and achievements [skip ci]"
+          git push origin HEAD:agent/0.10.0-n64-foundation
+
+      - name: Record compile-fix failure
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          git reset --hard HEAD
+          mkdir -p .ci
+          printf 'run_id=%s\nstatus=failure\nversion=0.10.16-alpha17-fix\n' "$GITHUB_RUN_ID" > .ci/alpha17-fix-failure.txt
+          git config user.name "Mauricio.dev"
+          git config user.email "antoniomauriciorodriguesalves@gmail.com"
+          git add .ci/alpha17-fix-failure.txt
+          git commit -m "Record Alpha 17 compile-fix failure [skip ci]" || true
+          git push origin HEAD:agent/0.10.0-n64-foundation || true
