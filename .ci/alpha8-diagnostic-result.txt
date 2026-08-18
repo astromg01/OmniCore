@@ -1,0 +1,38 @@
+stage=compile_success
+exit_code=0
+run_id=32098538217
+commit=85529a5c217f227c49ba5fa0b6682c87a74335fd
+--- focused errors ---
+--- log tail ---
+
+Welcome to Gradle 9.7.0!
+
+Here are the highlights of this release:
+ - Isolated Projects graduates to incubating
+ - Broader Configuration Cache compatibility
+ - More source locations in problem reports
+
+For more details see https://docs.gradle.org/9.7.0/release-notes.html
+
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/9.7.0/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:configureCMakeDebug[arm64-v8a]
+> Task :app:buildCMakeDebug[arm64-v8a]
+> Task :app:configureCMakeDebug[armeabi-v7a]
+> Task :app:buildCMakeDebug[armeabi-v7a]
+> Task :app:externalNativeBuildDebug
+> Task :app:generateDebugBuildConfig
+> Task :app:generateDebugResources
+> Task :app:packageDebugResources
+> Task :app:processDebugNavigationResources
+> Task :app:parseDebugLocalResources
+> Task :app:generateDebugRFile
+> Task :app:compileDebugKotlin
+w: file:///home/runner/work/OmniCore/OmniCore/app/src/main/java/com/omnicore/emulator/emulation/N64GamepadOverlayView.kt:57:45 'field scaledDensity: Float' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/OmniCore/OmniCore/app/src/main/java/com/omnicore/emulator/update/UpdateManager.kt:78:80 Unnecessary non-null assertion (!!) on a non-null receiver of type 'UpdateManager.ReleaseInfo'.
+
+BUILD SUCCESSFUL in 2m 25s
+12 actionable tasks: 12 executed
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.7.0/userguide/configuration_cache_enabling.html
