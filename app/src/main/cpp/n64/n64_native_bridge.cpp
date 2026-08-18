@@ -38,7 +38,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeHasCore(JNIEnv*, jobje
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeRuntimeInfo(JNIEnv* env, jobject) {
-    const std::string value = std::string("OmniCore N64 Runtime 0.10.2 • Mupen64Plus-Next • GLES3 + AAudio host v3 • ") +
+    const std::string value = std::string("OmniCore N64 Runtime 0.10.5 • Mupen64Plus-Next • GLES3 + AAudio host v4 • ") +
         (hasLibretroCore() ? "core ready" : "core missing");
     return env->NewStringUTF(value.c_str());
 }
@@ -57,6 +57,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     jstring rspMode,
     jstring pakMode,
     jstring expansionPak,
+    jstring aspectRatio,
     jboolean framebufferEmulation,
     jboolean threadedRenderer,
     jint internalResolution,
@@ -77,6 +78,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     config.rspMode = fromJString(env, rspMode);
     config.pakMode = fromJString(env, pakMode);
     config.expansionPak = fromJString(env, expansionPak);
+    config.aspectRatio = fromJString(env, aspectRatio);
     config.framebufferEmulation = framebufferEmulation == JNI_TRUE;
     config.threadedRenderer = threadedRenderer == JNI_TRUE;
     config.internalResolution = internalResolution;
@@ -88,6 +90,12 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     const bool started = valid && omnicore::n64::LibretroHost::instance().start(window, std::move(config));
     ANativeWindow_release(window);
     return started ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeSetAudioTargetBursts(
+    JNIEnv*, jobject, jint bursts) {
+    omnicore::n64::LibretroHost::instance().setAudioTargetBursts(static_cast<int>(bursts));
 }
 
 extern "C" JNIEXPORT void JNICALL
