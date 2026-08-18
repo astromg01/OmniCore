@@ -20,6 +20,7 @@ struct RuntimeConfig {
     std::string cpuMode;
     std::string rspMode;
     std::string pakMode;
+    std::string expansionPak;
     bool framebufferEmulation = true;
     bool threadedRenderer = false;
     int internalResolution = 1;
