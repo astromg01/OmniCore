@@ -38,7 +38,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeHasCore(JNIEnv*, jobje
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeRuntimeInfo(JNIEnv* env, jobject) {
-    const std::string value = std::string("OmniCore N64 Runtime 0.10.19 • Mupen64Plus-Next • GLES3 + AAudio host v16 • TransitionAudioShield + PrecisionGovernor v2.1 + RacingComfort + MicroBurstShield + CruiseGuard + PassiveWarmCache + DirectPresenter • ") +
+    const std::string value = std::string("OmniCore N64 Runtime 0.10.20 • Mupen64Plus-Next • GLES3 + AAudio host v17 • ElasticAudioBridge + TransitionAudioShield + PrecisionGovernor v2.1 + RacingComfort + MicroBurstShield + CruiseGuard + PassiveWarmCache + DirectPresenter • ") +
         (hasLibretroCore() ? "core ready" : "core missing");
     return env->NewStringUTF(value.c_str());
 }
@@ -155,7 +155,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeLastMessage(JNIEnv* en
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeTelemetry(JNIEnv* env, jobject) {
     const auto telemetry = omnicore::n64::LibretroHost::instance().telemetry();
-    const jfloat values[22] = {
+    const jfloat values[23] = {
         telemetry.averageFrameMs,
         telemetry.p95FrameMs,
         static_cast<jfloat>(telemetry.droppedFrames),
@@ -177,10 +177,11 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeTelemetry(JNIEnv* env,
         telemetry.passiveWarmCacheReady,
         telemetry.precisionGovernorMode,
         telemetry.precisionGovernorConfidence,
-        telemetry.frameJitterMs
+        telemetry.frameJitterMs,
+        static_cast<jfloat>(telemetry.audioRescues)
     };
-    jfloatArray result = env->NewFloatArray(22);
-    if (result) env->SetFloatArrayRegion(result, 0, 22, values);
+    jfloatArray result = env->NewFloatArray(23);
+    if (result) env->SetFloatArrayRegion(result, 0, 23, values);
     return result;
 }
 

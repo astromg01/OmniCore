@@ -538,6 +538,8 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             append("%.0f".format(t.audioBufferMs))
             append(" ms • underruns ")
             append(t.audioUnderruns)
+            append(" • rescues ")
+            append(t.audioRescues)
             append(" • sync ")
             append("%+.2f".format(t.pacingCorrectionPct))
             append("%")

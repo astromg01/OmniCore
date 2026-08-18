@@ -31,7 +31,8 @@ object N64NativeBridge {
         val passiveWarmCacheReady: Boolean = false,
         val precisionGovernorMode: Int = 0,
         val precisionGovernorConfidence: Float = 0f,
-        val frameJitterMs: Float = 0f
+        val frameJitterMs: Float = 0f,
+        val audioRescues: Int = 0
     ) {
         fun smartPerf(): N64SmartPerf.Telemetry = N64SmartPerf.Telemetry(
             averageFrameMs = averageFrameMs,
@@ -233,7 +234,8 @@ object N64NativeBridge {
             passiveWarmCacheReady = raw.getOrElse(18) { 0f } >= 0.5f,
             precisionGovernorMode = raw.getOrElse(19) { 0f }.roundToInt(),
             precisionGovernorConfidence = raw.getOrElse(20) { 0f }.coerceIn(0f, 1f),
-            frameJitterMs = raw.getOrElse(21) { 0f }.coerceAtLeast(0f)
+            frameJitterMs = raw.getOrElse(21) { 0f }.coerceAtLeast(0f),
+            audioRescues = raw.getOrElse(22) { 0f }.roundToInt()
         )
     }
 

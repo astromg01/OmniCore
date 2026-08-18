@@ -61,6 +61,7 @@ struct Telemetry {
     float precisionGovernorMode = 0.0f;
     float precisionGovernorConfidence = 0.0f;
     float frameJitterMs = 0.0f;
+    int audioRescues = 0;
 };
 
 class LibretroHost final {
@@ -138,6 +139,7 @@ private:
     std::size_t presentWindowCount_ = 0;
     std::size_t presentWindowWrite_ = 0;
     std::atomic<int> audioUnderruns_{0};
+    std::atomic<int> audioRescues_{0};
     std::atomic<float> targetFrameMs_{1000.0f / 60.0f};
     std::atomic<bool> adpfActive_{false};
     std::atomic<bool> burstShieldActive_{false};

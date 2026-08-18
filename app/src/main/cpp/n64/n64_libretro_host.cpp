@@ -400,8 +400,9 @@ public:
         if (!output || samples == 0) return 0;
         const std::uint64_t read = read_.load(std::memory_order_relaxed);
         const std::uint64_t write = write_.load(std::memory_order_acquire);
-        const std::size_t count = static_cast<std::size_t>(
+        std::size_t count = static_cast<std::size_t>(
             std::min<std::uint64_t>(samples, write - read));
+        count &= ~static_cast<std::size_t>(1);
         if (count > 0) {
             const std::size_t start = static_cast<std::size_t>(read % data_.size());
             const std::size_t first = std::min(count, data_.size() - start);
@@ -410,13 +411,13 @@ public:
                 std::memcpy(output + first, data_.data(), (count - first) * sizeof(std::int16_t));
             }
         }
-        if (count < samples) {
-            std::fill(output + count, output + samples, 0);
-            underruns_.fetch_add(1, std::memory_order_relaxed);
-        }
+        // The real-time callback owns concealment. Do not inject zeroes here;
+        // doing so made every short producer gap immediately audible.
         read_.store(read + count, std::memory_order_release);
         return count;
     }
+
+    void noteUnderrun() { underruns_.fetch_add(1, std::memory_order_relaxed); }
 
     std::size_t availableSamples() const {
         const std::uint64_t read = read_.load(std::memory_order_acquire);
@@ -657,31 +658,124 @@ struct LibretroHost::Impl {
     std::int16_t lastAudioRight = 0;
     double resampleAccumulator = 0.0;
     std::array<std::int16_t, 8192> resampleScratch{};
+    // Callback-only fixed storage: no allocation, locks or I/O on AAudio's
+    // real-time thread. Keeps one recent output tail for very short source gaps.
+    std::array<std::int16_t, 2048> callbackHistory{};
+    std::size_t callbackHistorySamples = 0;
+    int consecutiveStarvedCallbacks = 0;
 
     static aaudio_data_callback_result_t audioCallback(
         AAudioStream*, void* userData, void* audioData, std::int32_t numFrames) {
         auto* self = static_cast<Impl*>(userData);
         if (!self || !audioData || numFrames <= 0) return AAUDIO_CALLBACK_RESULT_CONTINUE;
-        const std::size_t requested = static_cast<std::size_t>(numFrames) * 2u;
+
+        const std::size_t requestedFrames = static_cast<std::size_t>(numFrames);
+        const std::size_t requestedSamples = requestedFrames * 2u;
         auto* output = static_cast<std::int16_t*>(audioData);
-        const std::size_t read = self->audioRing.pop(output, requested);
-        if (read >= 2) {
-            self->lastAudioLeft = output[read - 2];
-            self->lastAudioRight = output[read - 1];
-        }
-        if (read < requested) {
-            // Conceal a short scheduler underrun with a tiny fade instead of an
-            // abrupt block of zeroes. This cannot invent missing game audio, but
-            // it removes the harsh click/freeze sensation while SmartPerf grows
-            // the real AAudio cushion on the next telemetry pass.
-            const std::size_t missingFrames = (requested - read) / 2u;
-            for (std::size_t frame = 0; frame < missingFrames; ++frame) {
-                const float gain = 1.0f - static_cast<float>(frame + 1u) /
-                    static_cast<float>(missingFrames + 1u);
-                output[read + frame * 2u] = static_cast<std::int16_t>(self->lastAudioLeft * gain);
-                output[read + frame * 2u + 1u] = static_cast<std::int16_t>(self->lastAudioRight * gain);
+        const std::size_t availableFrames = self->audioRing.availableSamples() / 2u;
+        std::size_t producedSamples = 0;
+        bool rescued = false;
+        bool hardUnderrun = false;
+
+        if (availableFrames >= requestedFrames) {
+            producedSamples = self->audioRing.pop(output, requestedSamples);
+            self->consecutiveStarvedCallbacks = 0;
+        } else {
+            // Source starvation is still fed to the native AAudio adaptation,
+            // even if ElasticAudioBridge makes it inaudible to the user.
+            self->audioRing.noteUnderrun();
+            ++self->consecutiveStarvedCallbacks;
+
+            const std::size_t minimumElasticFrames = std::max<std::size_t>(
+                8u, (requestedFrames * 70u + 99u) / 100u);
+            if (availableFrames >= minimumElasticFrames && requestedFrames > 1u) {
+                // Consume only ~82% of the callback when possible, leaving a tiny
+                // reserve in the ring. Expand that bounded slice to this callback
+                // with linear interpolation. Processing backwards keeps it safe
+                // in-place and avoids any temporary allocation on the RT thread.
+                const std::size_t desiredConsume = std::max<std::size_t>(
+                    8u, (requestedFrames * 82u + 99u) / 100u);
+                const std::size_t consumeFrames = std::min(availableFrames, desiredConsume);
+                producedSamples = self->audioRing.pop(output, consumeFrames * 2u);
+                const std::size_t sourceFrames = producedSamples / 2u;
+                if (sourceFrames >= 2u) {
+                    for (std::size_t dst = requestedFrames; dst-- > 0u;) {
+                        const double sourcePos = static_cast<double>(dst) *
+                            static_cast<double>(sourceFrames - 1u) /
+                            static_cast<double>(requestedFrames - 1u);
+                        const std::size_t i0 = static_cast<std::size_t>(sourcePos);
+                        const std::size_t i1 = std::min(i0 + 1u, sourceFrames - 1u);
+                        const float frac = static_cast<float>(sourcePos - static_cast<double>(i0));
+                        const float left = static_cast<float>(output[i0 * 2u]) +
+                            (static_cast<float>(output[i1 * 2u]) - static_cast<float>(output[i0 * 2u])) * frac;
+                        const float right = static_cast<float>(output[i0 * 2u + 1u]) +
+                            (static_cast<float>(output[i1 * 2u + 1u]) - static_cast<float>(output[i0 * 2u + 1u])) * frac;
+                        output[dst * 2u] = static_cast<std::int16_t>(std::lround(std::clamp(left, -32768.0f, 32767.0f)));
+                        output[dst * 2u + 1u] = static_cast<std::int16_t>(std::lround(std::clamp(right, -32768.0f, 32767.0f)));
+                    }
+                    producedSamples = requestedSamples;
+                    rescued = true;
+                }
             }
-            if (self->owner) self->owner->audioUnderruns_.fetch_add(1, std::memory_order_relaxed);
+
+            if (!rescued) {
+                // A deeper gap cannot be safely time-stretched. Use the most
+                // recent callback tail as a bounded continuity patch instead of
+                // fading abruptly to silence. Repeated starvation beyond three
+                // callbacks is counted as a hard underrun because it can become
+                // perceptible even with concealment.
+                producedSamples = self->audioRing.pop(output, requestedSamples);
+                const std::size_t missingFrames = (requestedSamples - producedSamples) / 2u;
+                const std::size_t historyFrames = self->callbackHistorySamples / 2u;
+                const std::int16_t seamLeft = producedSamples >= 2u
+                    ? output[producedSamples - 2u] : self->lastAudioLeft;
+                const std::int16_t seamRight = producedSamples >= 2u
+                    ? output[producedSamples - 1u] : self->lastAudioRight;
+
+                for (std::size_t frame = 0; frame < missingFrames; ++frame) {
+                    std::int16_t sourceLeft = seamLeft;
+                    std::int16_t sourceRight = seamRight;
+                    if (historyFrames > 0u) {
+                        const std::size_t replayCount = std::min(historyFrames, std::max<std::size_t>(1u, missingFrames));
+                        const std::size_t replayStart = historyFrames - replayCount;
+                        const std::size_t src = replayStart + (frame % replayCount);
+                        sourceLeft = self->callbackHistory[src * 2u];
+                        sourceRight = self->callbackHistory[src * 2u + 1u];
+                    }
+                    const float blend = std::min(1.0f, static_cast<float>(frame + 1u) / 8.0f);
+                    const float hold = 1.0f - 0.10f * static_cast<float>(frame + 1u) /
+                        static_cast<float>(missingFrames + 1u);
+                    const float left = (static_cast<float>(seamLeft) * (1.0f - blend) +
+                        static_cast<float>(sourceLeft) * blend) * hold;
+                    const float right = (static_cast<float>(seamRight) * (1.0f - blend) +
+                        static_cast<float>(sourceRight) * blend) * hold;
+                    output[producedSamples + frame * 2u] = static_cast<std::int16_t>(
+                        std::lround(std::clamp(left, -32768.0f, 32767.0f)));
+                    output[producedSamples + frame * 2u + 1u] = static_cast<std::int16_t>(
+                        std::lround(std::clamp(right, -32768.0f, 32767.0f)));
+                }
+                producedSamples = requestedSamples;
+                if (self->callbackHistorySamples >= 2u && self->consecutiveStarvedCallbacks <= 3) {
+                    rescued = true;
+                } else {
+                    hardUnderrun = true;
+                }
+            }
+        }
+
+        if (requestedSamples >= 2u) {
+            self->lastAudioLeft = output[requestedSamples - 2u];
+            self->lastAudioRight = output[requestedSamples - 1u];
+            const std::size_t keep = std::min(requestedSamples, self->callbackHistory.size());
+            std::memcpy(
+                self->callbackHistory.data(),
+                output + (requestedSamples - keep),
+                keep * sizeof(std::int16_t));
+            self->callbackHistorySamples = keep;
+        }
+        if (self->owner) {
+            if (rescued) self->owner->audioRescues_.fetch_add(1, std::memory_order_relaxed);
+            if (hardUnderrun) self->owner->audioUnderruns_.fetch_add(1, std::memory_order_relaxed);
         }
         return AAUDIO_CALLBACK_RESULT_CONTINUE;
     }
@@ -798,6 +892,8 @@ struct LibretroHost::Impl {
     bool openAudio(double sampleRate, int requestedBursts) {
         closeAudio();
         audioRing.clear();
+        callbackHistorySamples = 0;
+        consecutiveStarvedCallbacks = 0;
         coreSampleRate = sampleRate > 1000.0 ? sampleRate : 44100.0;
         requestedBursts = std::clamp(requestedBursts, 2, 8);
         resampleAccumulator = 0.0;
@@ -872,6 +968,8 @@ struct LibretroHost::Impl {
         if (audioStream && audioStarted) AAudioStream_requestPause(audioStream);
         audioStarted = false;
         audioRing.clear();
+        callbackHistorySamples = 0;
+        consecutiveStarvedCallbacks = 0;
         resampleAccumulator = 0.0;
         lastRingUnderruns = 0;
         stableAudioChecks = 0;
@@ -1009,6 +1107,7 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     }
     lastSaveRamHash_ = 0;
     audioUnderruns_.store(0, std::memory_order_release);
+    audioRescues_.store(0, std::memory_order_release);
     audioFillMs_.store(0.0f, std::memory_order_release);
     audioBufferMs_.store(0.0f, std::memory_order_release);
     targetFps_.store(60.0f, std::memory_order_release);
@@ -1026,7 +1125,7 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     hwRenderRequested_ = false;
     hwRender_ = {};
     precisionGovernorMode_.store(0, std::memory_order_release);
-    setMessage("N64 BOOT 1/6 • Alpha 20 TransitionAudioShield + RacingComfort…");
+    setMessage("N64 BOOT 1/6 • Alpha 21 TransitionAudioShield + RacingComfort…");
     try {
         thread_ = std::thread(&LibretroHost::run, this);
     } catch (...) {
@@ -1442,6 +1541,7 @@ Telemetry LibretroHost::telemetry() const {
     Telemetry out;
     out.sampleWindowFrames = static_cast<int>(count);
     out.audioUnderruns = audioUnderruns_.load(std::memory_order_acquire);
+    out.audioRescues = audioRescues_.load(std::memory_order_acquire);
     out.audioFillMs = audioFillMs_.load(std::memory_order_acquire);
     out.audioBufferMs = audioBufferMs_.load(std::memory_order_acquire);
     out.targetFps = targetFps_.load(std::memory_order_acquire);
