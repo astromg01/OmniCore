@@ -14,14 +14,22 @@ object N64NativeBridge {
         val p95FrameMs: Float = 0f,
         val droppedFrames: Int = 0,
         val audioUnderruns: Int = 0,
-        val sampleWindowFrames: Int = 0
+        val sampleWindowFrames: Int = 0,
+        val audioFillMs: Float = 0f,
+        val audioBufferMs: Float = 0f,
+        val targetFps: Float = 0f,
+        val pacingCorrectionPct: Float = 0f
     ) {
         fun smartPerf(): N64SmartPerf.Telemetry = N64SmartPerf.Telemetry(
             averageFrameMs = averageFrameMs,
             p95FrameMs = p95FrameMs,
             droppedFrames = droppedFrames,
             audioUnderruns = audioUnderruns,
-            sampleWindowFrames = sampleWindowFrames
+            sampleWindowFrames = sampleWindowFrames,
+            audioFillMs = audioFillMs,
+            audioBufferMs = audioBufferMs,
+            targetFps = targetFps,
+            pacingCorrectionPct = pacingCorrectionPct
         )
     }
 
@@ -51,6 +59,7 @@ object N64NativeBridge {
         surface: Surface,
         rom: File,
         paths: N64Storage.Paths,
+        gameKey: String,
         decision: N64SmartPerf.Decision,
         input: N64InputSettings.Config
     ): Boolean {
@@ -64,6 +73,7 @@ object N64NativeBridge {
         }
         val diagnosticFile = File(paths.root, "last_boot_stage.txt")
         val verificationFile = File(paths.root, "boot_verified.flag")
+        val saveRamFile = N64Storage.saveRamFile(paths, gameKey)
         val diagnosticPath = diagnosticFile.absolutePath
         val verificationPath = verificationFile.absolutePath
         runCatching {
@@ -79,6 +89,7 @@ object N64NativeBridge {
                 romPath = rom.absolutePath,
                 systemDir = paths.system.absolutePath,
                 saveDir = paths.saves.absolutePath,
+                saveRamPath = saveRamFile.absolutePath,
                 diagnosticPath = diagnosticPath,
                 verificationPath = verificationPath,
                 cpuMode = config.cpuMode.storage,
@@ -91,7 +102,7 @@ object N64NativeBridge {
                 internalResolution = config.internalResolution.multiplier,
                 analogDeadzonePercent = (input.analogDeadzone * 100f).roundToInt(),
                 analogSensitivityPercent = (input.analogSensitivity * 100f).roundToInt(),
-                audioBufferBursts = decision.audioBufferBursts.coerceIn(2, 7)
+                audioBufferBursts = decision.audioBufferBursts.coerceIn(2, 8)
             )
         }.getOrDefault(false)
         if (started) startDiagnosticPoll(diagnosticFile, verificationFile)
@@ -99,8 +110,19 @@ object N64NativeBridge {
     }
 
     fun setAudioTargetBursts(bursts: Int) {
-        if (runtimeLoaded) runCatching { nativeSetAudioTargetBursts(bursts.coerceIn(2, 7)) }
+        if (runtimeLoaded) runCatching { nativeSetAudioTargetBursts(bursts.coerceIn(2, 8)) }
     }
+
+    fun saveState(file: File): Boolean {
+        file.parentFile?.mkdirs()
+        return runtimeLoaded && runCatching { nativeRequestSaveState(file.absolutePath) }.getOrDefault(false)
+    }
+
+    fun loadState(file: File): Boolean =
+        runtimeLoaded && file.isFile && file.length() > 0L &&
+            runCatching { nativeRequestLoadState(file.absolutePath) }.getOrDefault(false)
+
+    fun resetGame(): Boolean = runtimeLoaded && runCatching { nativeRequestReset() }.getOrDefault(false)
 
     private fun startDiagnosticPoll(diagnosticFile: File, verificationFile: File) {
         val generation = System.nanoTime()
@@ -168,7 +190,11 @@ object N64NativeBridge {
             p95FrameMs = raw.getOrElse(1) { 0f },
             droppedFrames = raw.getOrElse(2) { 0f }.roundToInt(),
             audioUnderruns = raw.getOrElse(3) { 0f }.roundToInt(),
-            sampleWindowFrames = raw.getOrElse(4) { 0f }.roundToInt()
+            sampleWindowFrames = raw.getOrElse(4) { 0f }.roundToInt(),
+            audioFillMs = raw.getOrElse(5) { 0f },
+            audioBufferMs = raw.getOrElse(6) { 0f },
+            targetFps = raw.getOrElse(7) { 0f },
+            pacingCorrectionPct = raw.getOrElse(8) { 0f }
         )
     }
 
@@ -187,6 +213,7 @@ object N64NativeBridge {
         romPath: String,
         systemDir: String,
         saveDir: String,
+        saveRamPath: String,
         diagnosticPath: String,
         verificationPath: String,
         cpuMode: String,
@@ -202,6 +229,9 @@ object N64NativeBridge {
         audioBufferBursts: Int
     ): Boolean
     private external fun nativeSetAudioTargetBursts(bursts: Int)
+    private external fun nativeRequestSaveState(path: String): Boolean
+    private external fun nativeRequestLoadState(path: String): Boolean
+    private external fun nativeRequestReset(): Boolean
     private external fun nativeStop()
     private external fun nativeSetPaused(paused: Boolean)
     private external fun nativeIsRunning(): Boolean
