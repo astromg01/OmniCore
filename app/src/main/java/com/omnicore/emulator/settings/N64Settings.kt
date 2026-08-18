@@ -136,9 +136,6 @@ object N64Settings {
     }.sanitized(device)
 
     private fun Config.sanitized(device: N64PerformanceProfile.Profile): Config {
-        // Corrections remain local to the N64 backend. The current Android
-        // Mupen build intentionally excludes LLE RSP, so custom LLE requests
-        // are converted to HLE instead of producing a misleading/broken boot.
         val safeRsp = if (rspMode == RspMode.LLE) RspMode.HLE else rspMode
         val safeResolution = if (
             device.tier == N64PerformanceProfile.Tier.LOW && internalResolution == InternalResolution.X2
@@ -147,7 +144,14 @@ object N64Settings {
         } else {
             internalResolution
         }
-        return copy(rspMode = safeRsp, internalResolution = safeResolution)
+        // First Android alpha: never force-disable extra RDRAM globally. The
+        // core's automatic per-game behaviour is safer until compatibility is measured.
+        val safeExpansionPak = ExpansionPak.AUTO
+        return copy(
+            rspMode = safeRsp,
+            internalResolution = safeResolution,
+            expansionPak = safeExpansionPak
+        )
     }
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
