@@ -1,0 +1,4 @@
+OmniCore N64 Alpha 18 R2 build trigger
+version=0.10.17
+focus=CadencePolish + StarUI smooth + achievements v2
+revision=2-kotlin-context-fix
