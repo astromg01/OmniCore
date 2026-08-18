@@ -1,1 +1,1 @@
-diagnose=alpha8
+diagnose=alpha8-full-2
