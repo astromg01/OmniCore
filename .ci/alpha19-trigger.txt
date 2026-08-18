@@ -1,4 +1,4 @@
-OmniCore N64 Alpha 19 build trigger
-version=0.10.18
-focus=MicroBurstShield + CruiseGuard + NonBlockingTelemetry + ComfortAnalog
-revision=2-workflow-recognized
+OmniCore N64 Alpha 20 bridge trigger
+version=0.10.19
+focus=TransitionAudioShield + RacingComfort + menu audio continuity
+revision=1-registered-bridge
