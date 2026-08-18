@@ -24,7 +24,7 @@ jobs:
           git fetch --no-tags origin agent/0.10.0-n64-foundation
           git checkout -B agent/0.10.0-n64-foundation origin/agent/0.10.0-n64-foundation
 
-      - name: Diagnose migration and compile
+      - name: Diagnose full Alpha 8 pipeline
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -32,42 +32,125 @@ jobs:
           set +e
           export JAVA_HOME="$JAVA_HOME_17_X64"
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
-          mkdir -p .ci
+          mkdir -p .ci build/source-artifacts
+          STAGE="start"
+          CODE=0
+          : > /tmp/alpha8.log
 
-          python3 tools/agent_0107_alpha8.py > /tmp/alpha8-migration.log 2>&1
-          MIG=$?
-          if [ "$MIG" -ne 0 ]; then
-            {
-              echo "stage=migration"
-              echo "exit_code=$MIG"
-              echo "run_id=$GITHUB_RUN_ID"
-              echo "commit=$GITHUB_SHA"
-              echo "--- log ---"
-              tail -n 180 /tmp/alpha8-migration.log
-            } > /tmp/alpha8-result.txt
-          else
-            gradle :app:externalNativeBuildDebug :app:compileDebugKotlin --stacktrace --no-daemon > /tmp/alpha8-compile.log 2>&1
-            COMPILE=$?
-            {
-              if [ "$COMPILE" -eq 0 ]; then
-                echo "stage=compile_success"
-              else
-                echo "stage=compile"
-              fi
-              echo "exit_code=$COMPILE"
-              echo "run_id=$GITHUB_RUN_ID"
-              echo "commit=$GITHUB_SHA"
-              echo "--- focused errors ---"
-              grep -nEi "error:|FAILURE:|Compilation error|^e:|undefined reference|FAILED" /tmp/alpha8-compile.log | tail -n 120
-              echo "--- log tail ---"
-              tail -n 220 /tmp/alpha8-compile.log
-            } > /tmp/alpha8-result.txt
+          run_stage() {
+            STAGE="$1"
+            shift
+            echo "===== $STAGE =====" >> /tmp/alpha8.log
+            "$@" >> /tmp/alpha8.log 2>&1
+            CODE=$?
+            return $CODE
+          }
+
+          run_stage migration python3 tools/agent_0107_alpha8.py || true
+
+          if [ "$CODE" -eq 0 ]; then
+            STAGE="validate"
+            bash -c '
+              set -euo pipefail
+              grep -q '\''versionCode = 23'\'' app/build.gradle.kts
+              grep -q '\''versionName = "0.10.7"'\'' app/build.gradle.kts
+              grep -q '\''presentP95Ms'\'' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
+              grep -q '\''gpuBound'\'' app/src/main/java/com/omnicore/emulator/performance/N64SmartPerf.kt
+              grep -q '\''adpfActive'\'' app/src/main/java/com/omnicore/emulator/core/n64/N64NativeBridge.kt
+              grep -q '\''presentWindow_'\'' app/src/main/cpp/n64/n64_libretro_host.h
+              grep -q '\''APerformanceHint_createSession'\'' app/src/main/cpp/n64/n64_libretro_host.cpp
+              grep -q '\''APerformanceHint_reportActualWorkDuration'\'' app/src/main/cpp/n64/n64_libretro_host.cpp
+              grep -q '\''eglPresentationTimeANDROID'\'' app/src/main/cpp/n64/n64_libretro_host.cpp
+              grep -q '\''POSIX_FADV_WILLNEED'\'' app/src/main/cpp/n64/n64_libretro_host.cpp
+              grep -q '\''MADV_WILLNEED'\'' app/src/main/cpp/n64/n64_libretro_host.cpp
+              ! grep -q '\''MADV_SEQUENTIAL'\'' app/src/main/cpp/n64/n64_libretro_host.cpp
+              grep -q '\''GL_NEAREST'\'' app/src/main/cpp/n64/n64_libretro_host.cpp
+              grep -q '\''mupen64plus-EnableNativeResTexrects'\'' app/src/main/cpp/n64/n64_libretro_host.cpp
+              grep -q '\''mupen64plus-EnableLODEmulation.*"True"'\'' app/src/main/cpp/n64/n64_libretro_host.cpp
+              ! grep -q '\''saveCounter'\'' app/src/main/cpp/n64/n64_libretro_host.cpp
+              grep -q '\''audioBufferFrames'\'' app/src/main/cpp/n64/n64_libretro_host.cpp
+              grep -q '\''OmniCore N64 Runtime 0.10.7'\'' app/src/main/cpp/n64/n64_native_bridge.cpp
+              grep -q '\''const jfloat values\[12\]'\'' app/src/main/cpp/n64/n64_native_bridge.cpp
+              git diff --check
+            ' >> /tmp/alpha8.log 2>&1
+            CODE=$?
           fi
+
+          if [ "$CODE" -eq 0 ]; then
+            run_stage fast_compile gradle :app:externalNativeBuildDebug :app:compileDebugKotlin --stacktrace --no-daemon || true
+          fi
+          if [ "$CODE" -eq 0 ]; then
+            chmod +x tools/fetch_ps1_core.sh tools/build_ps1_core_android.sh
+            STAGE="build_ps1"
+            (./tools/fetch_ps1_core.sh && ./tools/build_ps1_core_android.sh) >> /tmp/alpha8.log 2>&1
+            CODE=$?
+          fi
+          if [ "$CODE" -eq 0 ]; then
+            chmod +x tools/fetch_n64_core.sh tools/build_n64_core_android.sh
+            STAGE="build_n64"
+            (./tools/fetch_n64_core.sh && ./tools/build_n64_core_android.sh) >> /tmp/alpha8.log 2>&1
+            CODE=$?
+          fi
+          if [ "$CODE" -eq 0 ]; then
+            STAGE="coexistence"
+            bash -c 'for ABI in arm64-v8a armeabi-v7a; do test -f "app/src/main/jniLibs/$ABI/libpcsx_rearmed_libretro.so"; test -f "app/src/main/jniLibs/$ABI/libmupen64plus_next_libretro.so"; done' >> /tmp/alpha8.log 2>&1
+            CODE=$?
+          fi
+          if [ "$CODE" -eq 0 ]; then
+            STAGE="archive"
+            (tar --exclude=.git -czf build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz -C third_party pcsx_rearmed && tar --exclude=.git -czf build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz -C third_party mupen64plus_next) >> /tmp/alpha8.log 2>&1
+            CODE=$?
+          fi
+          if [ "$CODE" -eq 0 ]; then
+            run_stage assemble gradle :app:assembleDebug --stacktrace --no-daemon || true
+          fi
+          if [ "$CODE" -eq 0 ]; then
+            STAGE="signing"
+            APK="app/build/outputs/apk/debug/app-debug.apk"
+            APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+            EXPECTED="9490d1ad4666312d6dd9e5b2a20699583919ae80a5536882bcd3f9accc793547"
+            ACTUAL="$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n1 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+            test "$ACTUAL" = "$EXPECTED" >> /tmp/alpha8.log 2>&1
+            CODE=$?
+          fi
+          if [ "$CODE" -eq 0 ]; then
+            STAGE="alignment"
+            APK="app/build/outputs/apk/debug/app-debug.apk"
+            CHECK_DIR="build/apk-alignment-check"
+            rm -rf "$CHECK_DIR" && mkdir -p "$CHECK_DIR"
+            unzip -q "$APK" -d "$CHECK_DIR"
+            READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+            CODE=0
+            while IFS= read -r -d '' SO; do
+              while IFS= read -r LOAD_LINE; do
+                ALIGN_HEX="$(awk '{print $NF}' <<< "$LOAD_LINE")"
+                if ! [[ "$ALIGN_HEX" =~ ^0x[0-9A-Fa-f]+$ ]] || (( ALIGN_HEX < 0x4000 )); then
+                  echo "BAD ALIGN: $SO :: $LOAD_LINE" >> /tmp/alpha8.log
+                  CODE=1
+                fi
+              done < <("$READELF" -lW "$SO" | grep -E '^[[:space:]]*LOAD[[:space:]]')
+            done < <(find "$CHECK_DIR/lib" -type f -name '*.so' -print0)
+            if [ "$CODE" -eq 0 ]; then
+              "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" -v -c -P 16 4 "$APK" >> /tmp/alpha8.log 2>&1
+              CODE=$?
+            fi
+          fi
+
+          {
+            if [ "$CODE" -eq 0 ]; then echo "stage=all_pre_publish_success"; else echo "stage=$STAGE"; fi
+            echo "exit_code=$CODE"
+            echo "run_id=$GITHUB_RUN_ID"
+            echo "commit=$GITHUB_SHA"
+            echo "--- focused errors ---"
+            grep -nEi "error:|FAILURE:|Compilation error|^e:|undefined reference|FAILED|BAD ALIGN|expected exactly one match" /tmp/alpha8.log | tail -n 160
+            echo "--- log tail ---"
+            tail -n 260 /tmp/alpha8.log
+          } > /tmp/alpha8-result.txt
 
           git reset --hard HEAD
           cp /tmp/alpha8-result.txt .ci/alpha8-diagnostic-result.txt
           git config user.name "Mauricio.dev"
           git config user.email "antoniomauriciorodriguesalves@gmail.com"
           git add .ci/alpha8-diagnostic-result.txt
-          git commit -m "Record Alpha 8 CI diagnostic [skip ci]" || true
+          git commit -m "Record Alpha 8 full CI diagnostic [skip ci]" || true
           git push origin HEAD:agent/0.10.0-n64-foundation
