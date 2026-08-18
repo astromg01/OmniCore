@@ -4,21 +4,26 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.os.SystemClock
 import android.util.SparseIntArray
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import com.omnicore.emulator.core.n64.N64NativeBridge
+import com.omnicore.emulator.settings.N64InputSettings
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.min
 
 /**
- * Nintendo 64 touch controller. Pointer ownership is stable from DOWN to UP:
- * moving the analog stick never steals or releases a simultaneously held button.
+ * Nintendo 64 touch controller focused on comfortable phone play.
+ * Visual regions stay intentionally light while hit areas are larger than the
+ * artwork. Pointer ownership remains stable and button fingers may slide between
+ * neighbouring buttons without breaking another simultaneous pointer.
  */
 class N64GamepadOverlayView(
     context: Context,
-    private val haptics: Boolean
+    private val config: N64InputSettings.Config
 ) : View(context) {
 
     private data class ButtonRegion(
@@ -33,7 +38,7 @@ class N64GamepadOverlayView(
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = resources.displayMetrics.density * 1.35f
+        strokeWidth = resources.displayMetrics.density * 1.25f
     }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -50,6 +55,7 @@ class N64GamepadOverlayView(
 
     private val pointerButtons = SparseIntArray()
     private val pressed = BooleanArray(16)
+    private var activeUntilMs = 0L
 
     // Alternate Mupen mapping: A=B(0), B=Y(1), L=SELECT(2), Start=3,
     // C-down=A(8), C-up=X(9), C-left=L(10), C-right=R(11), Z=L2(12), R=R2(13).
@@ -70,45 +76,72 @@ class N64GamepadOverlayView(
         ButtonRegion(7, "→")
     )
 
+    private val fadeRunnable = Runnable { postInvalidateOnAnimation() }
+
     init {
         isClickable = true
         isFocusable = true
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
         setBackgroundColor(Color.TRANSPARENT)
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(fadeRunnable)
+        releaseAll()
+        super.onDetachedFromWindow()
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
+        if (w <= 0 || h <= 0) return
+
         val short = min(w, h).toFloat().coerceAtLeast(1f)
-        val standard = short * 0.060f
-        val small = short * 0.047f
-        val cRadius = short * 0.043f
+        val presetScale = when (config.overlayPreset) {
+            N64InputSettings.OverlayPreset.CLEAN -> 0.90f
+            N64InputSettings.OverlayPreset.STANDARD -> 1f
+            N64InputSettings.OverlayPreset.COMPACT -> 0.80f
+        }
+        val scale = config.touchScale * presetScale
+        val standard = short * 0.057f * scale
+        val small = short * 0.044f * scale
+        val cRadius = short * 0.041f * scale
 
-        analogCenterX = w * 0.18f
-        analogCenterY = h * 0.73f
-        analogRadius = short * 0.135f
+        val analogPos = when (config.overlayPreset) {
+            N64InputSettings.OverlayPreset.CLEAN -> 0.135f to 0.76f
+            N64InputSettings.OverlayPreset.STANDARD -> 0.17f to 0.74f
+            N64InputSettings.OverlayPreset.COMPACT -> 0.105f to 0.80f
+        }
+        analogCenterX = w * analogPos.first
+        analogCenterY = h * analogPos.second
+        analogRadius = short * 0.108f * scale
 
-        place(0, w * 0.86f, h * 0.72f, standard * 1.12f)
-        place(1, w * 0.75f, h * 0.80f, standard)
+        val aX = when (config.overlayPreset) {
+            N64InputSettings.OverlayPreset.CLEAN -> 0.90f
+            N64InputSettings.OverlayPreset.STANDARD -> 0.87f
+            N64InputSettings.OverlayPreset.COMPACT -> 0.93f
+        }
+        place(0, w * aX, h * 0.76f, standard * 1.08f)
+        place(1, w * (aX - 0.10f), h * 0.82f, standard)
 
         val cx = w * 0.84f
-        val cy = h * 0.43f
-        place(8, cx, cy + cRadius * 1.42f, cRadius)
-        place(9, cx, cy - cRadius * 1.42f, cRadius)
-        place(10, cx - cRadius * 1.42f, cy, cRadius)
-        place(11, cx + cRadius * 1.42f, cy, cRadius)
+        val cy = h * 0.47f
+        place(8, cx, cy + cRadius * 1.48f, cRadius)
+        place(9, cx, cy - cRadius * 1.48f, cRadius)
+        place(10, cx - cRadius * 1.48f, cy, cRadius)
+        place(11, cx + cRadius * 1.48f, cy, cRadius)
 
-        place(12, w * 0.33f, h * 0.84f, standard * 0.92f)
-        place(2, w * 0.10f, h * 0.12f, small)
-        place(13, w * 0.90f, h * 0.12f, small)
-        place(3, w * 0.50f, h * 0.87f, small * 1.08f)
+        place(12, w * 0.39f, h * 0.88f, standard * 0.86f)
+        place(2, w * 0.075f, h * 0.11f, small)
+        place(13, w * 0.925f, h * 0.11f, small)
+        place(3, w * 0.52f, h * 0.91f, small * 1.03f)
 
-        val dx = w * 0.19f
-        val dy = h * 0.43f
-        val dr = small * 0.84f
-        place(4, dx, dy - dr * 1.35f, dr)
-        place(5, dx, dy + dr * 1.35f, dr)
-        place(6, dx - dr * 1.35f, dy, dr)
-        place(7, dx + dr * 1.35f, dy, dr)
+        val dx = w * 0.275f
+        val dy = h * 0.70f
+        val dr = small * 0.78f
+        place(4, dx, dy - dr * 1.42f, dr)
+        place(5, dx, dy + dr * 1.42f, dr)
+        place(6, dx - dr * 1.42f, dy, dr)
+        place(7, dx + dr * 1.42f, dy, dr)
     }
 
     private fun place(id: Int, x: Float, y: Float, radius: Float) {
@@ -121,53 +154,81 @@ class N64GamepadOverlayView(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        fillPaint.color = Color.argb(52, 226, 228, 242)
-        strokePaint.color = Color.argb(115, 240, 241, 255)
+        val opacity = effectiveOpacity()
+        drawAnalog(canvas, opacity)
+        for (button in buttons) {
+            if (!config.showDpad && button.id in 4..7) continue
+            drawButton(canvas, button, opacity)
+        }
+    }
+
+    private fun effectiveOpacity(): Float {
+        val now = SystemClock.uptimeMillis()
+        val active = analogPointerId != INVALID_POINTER || pointerButtons.size() > 0 || now <= activeUntilMs
+        val idleFactor = if (config.dynamicOpacity && !active) 0.42f else 1f
+        return (config.touchOpacity * idleFactor).coerceIn(0.12f, 1f)
+    }
+
+    private fun scaledAlpha(base: Int, opacity: Float): Int =
+        (base * opacity).toInt().coerceIn(0, 255)
+
+    private fun drawAnalog(canvas: Canvas, opacity: Float) {
+        fillPaint.color = Color.argb(scaledAlpha(48, opacity), 226, 228, 242)
+        strokePaint.color = Color.argb(scaledAlpha(132, opacity), 240, 241, 255)
         canvas.drawCircle(analogCenterX, analogCenterY, analogRadius, fillPaint)
         canvas.drawCircle(analogCenterX, analogCenterY, analogRadius, strokePaint)
 
-        val knobRadius = analogRadius * 0.43f
-        fillPaint.color = Color.argb(if (analogPointerId == INVALID_POINTER) 72 else 125, 236, 237, 250)
+        val knobRadius = analogRadius * 0.40f
+        fillPaint.color = Color.argb(
+            scaledAlpha(if (analogPointerId == INVALID_POINTER) 95 else 165, opacity),
+            236, 237, 250
+        )
         canvas.drawCircle(
-            analogCenterX + analogX * analogRadius * 0.52f,
-            analogCenterY + analogY * analogRadius * 0.52f,
+            analogCenterX + analogX * analogRadius * 0.54f,
+            analogCenterY + analogY * analogRadius * 0.54f,
             knobRadius,
             fillPaint
         )
-
-        for (button in buttons) drawButton(canvas, button)
     }
 
-    private fun drawButton(canvas: Canvas, button: ButtonRegion) {
+    private fun drawButton(canvas: Canvas, button: ButtonRegion, opacity: Float) {
         val active = pressed.getOrElse(button.id) { false }
-        val alpha = if (active) 150 else 55
+        val fillBase = if (active) 156 else 34
+        val strokeBase = if (active) 220 else 126
         fillPaint.color = if (button.accent) {
-            Color.argb(alpha, 226, 187, 48)
+            Color.argb(scaledAlpha(fillBase, opacity), 226, 187, 48)
         } else {
-            Color.argb(alpha, 226, 228, 242)
+            Color.argb(scaledAlpha(fillBase, opacity), 226, 228, 242)
         }
         strokePaint.color = if (button.accent) {
-            Color.argb(155, 255, 222, 88)
+            Color.argb(scaledAlpha(strokeBase, opacity), 255, 222, 88)
         } else {
-            Color.argb(115, 242, 243, 255)
+            Color.argb(scaledAlpha(strokeBase, opacity), 242, 243, 255)
         }
         canvas.drawCircle(button.x, button.y, button.radius, fillPaint)
         canvas.drawCircle(button.x, button.y, button.radius, strokePaint)
-        textPaint.textSize = (button.radius * if (button.label.length > 2) 0.46f else 0.65f).coerceAtLeast(9f)
+        textPaint.alpha = scaledAlpha(if (active) 255 else 215, opacity)
+        textPaint.textSize = (button.radius * if (button.label.length > 2) 0.44f else 0.63f).coerceAtLeast(9f)
         val baseline = button.y - (textPaint.ascent() + textPaint.descent()) / 2f
         canvas.drawText(button.label, button.x, baseline, textPaint)
+        textPaint.alpha = 255
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        markActive()
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val index = event.actionIndex
                 capture(event.getPointerId(index), event.getX(index), event.getY(index))
             }
             MotionEvent.ACTION_MOVE -> {
-                if (analogPointerId != INVALID_POINTER) {
-                    val index = event.findPointerIndex(analogPointerId)
-                    if (index >= 0) updateAnalog(event.getX(index), event.getY(index))
+                for (index in 0 until event.pointerCount) {
+                    val pointerId = event.getPointerId(index)
+                    if (pointerId == analogPointerId) {
+                        updateAnalog(event.getX(index), event.getY(index))
+                    } else {
+                        retargetButton(pointerId, event.getX(index), event.getY(index))
+                    }
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
@@ -178,6 +239,13 @@ class N64GamepadOverlayView(
         return true
     }
 
+    private fun markActive() {
+        activeUntilMs = SystemClock.uptimeMillis() + ACTIVE_HOLD_MS
+        removeCallbacks(fadeRunnable)
+        postDelayed(fadeRunnable, ACTIVE_HOLD_MS + 40L)
+        postInvalidateOnAnimation()
+    }
+
     private fun capture(pointerId: Int, x: Float, y: Float) {
         if (analogPointerId == INVALID_POINTER && insideAnalog(x, y)) {
             analogPointerId = pointerId
@@ -185,11 +253,22 @@ class N64GamepadOverlayView(
             haptic()
             return
         }
-        val button = findButton(x, y) ?: return
+        val button = findButton(x, y, currentId = -1) ?: return
         if (button.id in pressed.indices && pressed[button.id]) return
         pointerButtons.put(pointerId, button.id)
         setPressed(button.id, true)
         haptic()
+    }
+
+    private fun retargetButton(pointerId: Int, x: Float, y: Float) {
+        val index = pointerButtons.indexOfKey(pointerId)
+        val currentId = if (index >= 0) pointerButtons.valueAt(index) else -1
+        val candidate = findButton(x, y, currentId) ?: return
+        if (candidate.id == currentId) return
+
+        if (currentId >= 0) setPressed(currentId, false)
+        pointerButtons.put(pointerId, candidate.id)
+        setPressed(candidate.id, true)
     }
 
     private fun release(pointerId: Int) {
@@ -207,6 +286,7 @@ class N64GamepadOverlayView(
             pointerButtons.removeAt(index)
             setPressed(id, false)
         }
+        postInvalidateOnAnimation()
     }
 
     fun releaseAll() {
@@ -229,9 +309,8 @@ class N64GamepadOverlayView(
         postInvalidateOnAnimation()
     }
 
-    private fun insideAnalog(x: Float, y: Float): Boolean {
-        return hypot(x - analogCenterX, y - analogCenterY) <= analogRadius * 1.18f
-    }
+    private fun insideAnalog(x: Float, y: Float): Boolean =
+        hypot(x - analogCenterX, y - analogCenterY) <= analogRadius * 1.42f
 
     private fun updateAnalog(x: Float, y: Float) {
         val dx = x - analogCenterX
@@ -240,20 +319,26 @@ class N64GamepadOverlayView(
         val scale = if (length > analogRadius && length > 0f) analogRadius / length else 1f
         val nextX = (dx * scale / analogRadius).coerceIn(-1f, 1f)
         val nextY = (dy * scale / analogRadius).coerceIn(-1f, 1f)
-        if (kotlin.math.abs(nextX - analogX) < 0.0025f && kotlin.math.abs(nextY - analogY) < 0.0025f) return
+        if (abs(nextX - analogX) < 0.0025f && abs(nextY - analogY) < 0.0025f) return
         analogX = nextX
         analogY = nextY
         N64NativeBridge.setAnalog(analogX, analogY)
         postInvalidateOnAnimation()
     }
 
-    private fun findButton(x: Float, y: Float): ButtonRegion? {
+    private fun findButton(x: Float, y: Float, currentId: Int): ButtonRegion? {
         var best: ButtonRegion? = null
         var bestDistance = Float.MAX_VALUE
         for (button in buttons) {
-            if (button.id in pressed.indices && pressed[button.id]) continue
+            if (!config.showDpad && button.id in 4..7) continue
+            if (button.id in pressed.indices && pressed[button.id] && button.id != currentId) continue
             val distance = hypot(x - button.x, y - button.y)
-            if (distance <= button.radius * 1.22f && distance < bestDistance) {
+            val multiplier = when {
+                button.id in 8..11 -> 1.34f
+                button.id in 4..7 -> 1.30f
+                else -> 1.46f
+            }
+            if (distance <= button.radius * multiplier && distance < bestDistance) {
                 best = button
                 bestDistance = distance
             }
@@ -262,10 +347,11 @@ class N64GamepadOverlayView(
     }
 
     private fun haptic() {
-        if (haptics) performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        if (config.haptics) performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
     companion object {
         private const val INVALID_POINTER = -1
+        private const val ACTIVE_HOLD_MS = 1050L
     }
 }
