@@ -25,6 +25,14 @@ object N64Storage {
         return Paths(root, saves, states, system, cache)
     }
 
+    fun stateFile(paths: Paths, gameKey: String, slot: Int): File {
+        val safeSlot = slot.coerceIn(1, 5)
+        return File(paths.states, "${safeGameKey(gameKey)}.slot$safeSlot.state")
+    }
+
+    fun saveRamFile(paths: Paths, gameKey: String): File =
+        File(paths.saves, "${safeGameKey(gameKey)}.srm")
+
     fun safeGameKey(value: String): String = buildString(value.length) {
         value.forEach { char -> append(if (char.isLetterOrDigit() || char == '-' || char == '_') char else '_') }
     }.ifBlank { "n64-game" }
