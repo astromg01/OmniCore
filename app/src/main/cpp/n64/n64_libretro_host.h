@@ -58,6 +58,8 @@ struct Telemetry {
     float smartAnalogDpadActive = 0.0f;
     float passiveWarmCacheReady = 0.0f;
     float precisionGovernorMode = 0.0f;
+    float precisionGovernorConfidence = 0.0f;
+    float frameJitterMs = 0.0f;
 };
 
 class LibretroHost final {
@@ -144,6 +146,8 @@ private:
     std::atomic<bool> passiveWarmCacheReady_{false};
     std::atomic<bool> smartAnalogDpadActive_{false};
     std::atomic<int> precisionGovernorMode_{0};
+    std::atomic<float> precisionGovernorConfidence_{0.0f};
+    std::atomic<float> frameJitterMs_{0.0f};
     std::atomic<float> lastPresentMs_{0.0f};
     mutable std::mutex optionMutex_;
     std::unordered_map<std::string, std::string> options_;

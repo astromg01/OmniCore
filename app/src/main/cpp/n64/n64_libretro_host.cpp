@@ -1392,6 +1392,8 @@ Telemetry LibretroHost::telemetry() const {
     out.smartAnalogDpadActive = smartAnalogDpadActive_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
     out.passiveWarmCacheReady = passiveWarmCacheReady_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
     out.precisionGovernorMode = static_cast<float>(precisionGovernorMode_.load(std::memory_order_acquire));
+    out.precisionGovernorConfidence = precisionGovernorConfidence_.load(std::memory_order_acquire);
+    out.frameJitterMs = frameJitterMs_.load(std::memory_order_acquire);
     if (presentCount > 0) {
         float totalPresent = 0.0f;
         for (std::size_t i = 0; i < presentCount; ++i) totalPresent += presentSnapshot[i];
@@ -1525,6 +1527,8 @@ void LibretroHost::run() {
             burstShieldActive_.store(false, std::memory_order_release);
             warmStartActive_.store(false, std::memory_order_release);
             precisionGovernorMode_.store(0, std::memory_order_release);
+            precisionGovernorConfidence_.store(0.0f, std::memory_order_release);
+            frameJitterMs_.store(0.0f, std::memory_order_release);
             impl_->closeAudio();
             if (impl_->gameLoaded && impl_->core.unloadGame) {
                 impl_->core.unloadGame();
@@ -1640,7 +1644,7 @@ void LibretroHost::run() {
     if (adpfReady) {
         impl_->perfHint.notifyReset(true, true, "omnicore-n64-session");
         impl_->perfHint.bindSurface(window_);
-        impl_->perfHint.setTargetScale(0.94);
+        impl_->perfHint.setTargetScale(0.96);
     }
 
     const bool audioReady = impl_->openAudio(
@@ -1666,13 +1670,19 @@ void LibretroHost::run() {
 
     auto nextFrame = std::chrono::steady_clock::now() + targetDuration;
     std::uint32_t adaptationCounter = 0;
-    int pressureStreak = 0;
     int stableStreak = 0;
     int warmStableFrames = 0;
-    float frameEwma = targetMs;
-    float presentEwma = 0.0f;
+    int candidateMode = 0;
+    int candidateStreak = 0;
+    float fastFrameEwma = targetMs;
+    float slowFrameEwma = targetMs;
+    float fastPresentEwma = 0.0f;
+    float slowPresentEwma = 0.0f;
+    float jitterEwma = 0.0f;
+    float previousFrameMs = targetMs;
+    float pressureDebt = 0.0f;
     const auto warmStartBegan = std::chrono::steady_clock::now();
-    auto lastGovernorChange = warmStartBegan - std::chrono::seconds(2);
+    auto lastGovernorChange = warmStartBegan - std::chrono::seconds(5);
     auto governorHeadroomUntil = std::chrono::steady_clock::time_point{};
     int governorMode = 0;  // 0 stable, 1 CPU, 2 GPU/present, 3 mixed.
     bool wasPaused = false;
@@ -1715,22 +1725,32 @@ void LibretroHost::run() {
 
         const auto controlNow = std::chrono::steady_clock::now();
         const float presentMs = lastPresentMs_.load(std::memory_order_acquire);
-        frameEwma += (frameMs - frameEwma) * 0.08f;
-        presentEwma += (presentMs - presentEwma) * 0.12f;
 
-        const bool sustainedSlow = frameEwma > targetMs * 1.10f;
-        const bool presentHeavy = presentEwma >= std::max(3.5f, targetMs * 0.22f) &&
-            presentEwma >= frameEwma * 0.25f;
-        const float cpuSideMs = std::max(0.0f, frameEwma - presentEwma);
+        // PrecisionGovernor v2 uses a fast signal for responsiveness and a slow
+        // signal for confidence. A mode change requires both sustained pressure
+        // and a stable bottleneck identity, so scene transitions do not make the
+        // governor bounce between CPU/GPU/MIX.
+        fastFrameEwma += (frameMs - fastFrameEwma) * 0.12f;
+        slowFrameEwma += (frameMs - slowFrameEwma) * 0.025f;
+        fastPresentEwma += (presentMs - fastPresentEwma) * 0.14f;
+        slowPresentEwma += (presentMs - slowPresentEwma) * 0.030f;
+        const float instantJitter = std::abs(frameMs - previousFrameMs);
+        previousFrameMs = frameMs;
+        jitterEwma += (instantJitter - jitterEwma) * 0.08f;
+        frameJitterMs_.store(jitterEwma, std::memory_order_release);
 
-        if (sustainedSlow) {
-            ++pressureStreak;
+        const float fastRatio = fastFrameEwma / std::max(1.0f, targetMs);
+        const float slowRatio = slowFrameEwma / std::max(1.0f, targetMs);
+        const bool framePressure = fastRatio > 1.10f || slowRatio > 1.065f;
+        const float severity = std::max(fastRatio - 1.08f, slowRatio - 1.045f);
+        if (framePressure) {
+            pressureDebt = std::min(1.0f, pressureDebt + 0.018f + std::max(0.0f, severity) * 0.10f);
             stableStreak = 0;
             warmStableFrames = 0;
         } else {
-            pressureStreak = std::max(0, pressureStreak - 1);
-            if (frameEwma <= targetMs * 1.06f) {
-                stableStreak = std::min(stableStreak + 1, 240);
+            pressureDebt = std::max(0.0f, pressureDebt - (slowRatio <= 1.03f ? 0.018f : 0.008f));
+            if (slowRatio <= 1.045f && jitterEwma <= targetMs * 0.16f) {
+                stableStreak = std::min(stableStreak + 1, 300);
                 warmStableFrames = std::min(warmStableFrames + 1, 240);
             } else {
                 stableStreak = std::max(0, stableStreak - 1);
@@ -1738,44 +1758,83 @@ void LibretroHost::run() {
             }
         }
 
-        // A single catastrophic frame gets one bounded spike hint. It does not
-        // change quality, threading or audio policy.
-        if (frameMs > targetMs * 1.70f) {
-            impl_->perfHint.notifySpike(
-                !presentHeavy,
-                presentHeavy,
-                presentHeavy ? "omnicore-n64-single-gpu-spike" : "omnicore-n64-single-cpu-spike");
+        const float presentShare = slowPresentEwma / std::max(1.0f, slowFrameEwma);
+        const bool presentHeavy = slowPresentEwma >= std::max(3.2f, targetMs * 0.20f) &&
+            presentShare >= 0.235f;
+        const float cpuSideMs = std::max(0.0f, slowFrameEwma - slowPresentEwma);
+        const bool cpuHeavy = cpuSideMs >= targetMs * 0.74f;
+        const int observedMode = presentHeavy ? (cpuHeavy ? 3 : 2) : 1;
+
+        if (framePressure || pressureDebt >= 0.20f) {
+            if (candidateMode == observedMode) {
+                candidateStreak = std::min(candidateStreak + 1, 180);
+            } else {
+                // A new diagnosis starts with low confidence instead of replacing
+                // the active mode immediately.
+                candidateMode = observedMode;
+                candidateStreak = 1;
+            }
+        } else if (candidateStreak > 0) {
+            candidateStreak = std::max(0, candidateStreak - 2);
+            if (candidateStreak == 0) candidateMode = 0;
         }
 
-        const bool governorCooldownDone = controlNow - lastGovernorChange >= std::chrono::milliseconds(900);
-        if (pressureStreak >= 4 && governorCooldownDone) {
-            const int nextMode = presentHeavy
-                ? (cpuSideMs > targetMs * 0.72f ? 3 : 2)
-                : 1;
+        const float classifierConfidence = candidateMode == 0
+            ? 0.0f
+            : std::clamp(static_cast<float>(candidateStreak) / 45.0f, 0.0f, 1.0f);
+        precisionGovernorConfidence_.store(classifierConfidence, std::memory_order_release);
+
+        // Isolated catastrophic spikes receive only a bounded transient hint.
+        // They never change the governor mode by themselves.
+        if (frameMs > targetMs * 1.85f) {
+            const bool spikeGpu = presentMs >= std::max(4.0f, targetMs * 0.25f);
+            impl_->perfHint.notifySpike(
+                !spikeGpu,
+                spikeGpu,
+                spikeGpu ? "omnicore-n64-v2-single-gpu-spike" : "omnicore-n64-v2-single-cpu-spike");
+        }
+
+        const auto modeDwell = controlNow - lastGovernorChange;
+        const bool canEnter = governorMode == 0 && modeDwell >= std::chrono::milliseconds(2500);
+        const bool canSwitch = governorMode != 0 && modeDwell >= std::chrono::seconds(4);
+        const bool confidentPressure = pressureDebt >= 0.42f && candidateStreak >= 24;
+        const bool confidentSwitch = pressureDebt >= 0.50f && candidateStreak >= 45;
+        const bool shouldApply = candidateMode != 0 && candidateMode != governorMode &&
+            ((canEnter && confidentPressure) || (canSwitch && confidentSwitch));
+
+        if (shouldApply) {
+            const int nextMode = candidateMode;
             const bool cpuPressure = nextMode == 1 || nextMode == 3;
             const bool gpuPressure = nextMode == 2 || nextMode == 3;
-            const char* id = nextMode == 1 ? "omnicore-n64-precision-cpu" :
-                (nextMode == 2 ? "omnicore-n64-precision-gpu" : "omnicore-n64-precision-mixed");
+            const char* id = nextMode == 1 ? "omnicore-n64-precision-v2-cpu" :
+                (nextMode == 2 ? "omnicore-n64-precision-v2-gpu" : "omnicore-n64-precision-v2-mixed");
             impl_->perfHint.notifyIncrease(cpuPressure, gpuPressure, id);
             if (adpfReady) {
-                impl_->perfHint.setTargetScale(nextMode == 1 ? 0.90 : (nextMode == 2 ? 0.92 : 0.88));
+                // Smaller target changes than Alpha 15 reduce thermal oscillation.
+                impl_->perfHint.setTargetScale(nextMode == 1 ? 0.92 : (nextMode == 2 ? 0.94 : 0.90));
             }
             governorMode = nextMode;
             precisionGovernorMode_.store(nextMode, std::memory_order_release);
-            governorHeadroomUntil = controlNow + std::chrono::milliseconds(1500);
+            governorHeadroomUntil = controlNow + std::chrono::milliseconds(1800);
             lastGovernorChange = controlNow;
-            pressureStreak = 0;
+            stableStreak = 0;
         }
 
-        if (governorMode != 0 && stableStreak >= 90 && controlNow >= governorHeadroomUntil) {
+        const bool recoveryConfidence = slowRatio <= 1.045f && pressureDebt <= 0.12f &&
+            jitterEwma <= targetMs * 0.15f;
+        if (governorMode != 0 && recoveryConfidence && stableStreak >= 120 &&
+            controlNow >= governorHeadroomUntil && modeDwell >= std::chrono::seconds(3)) {
             governorMode = 0;
             precisionGovernorMode_.store(0, std::memory_order_release);
-            impl_->perfHint.notifyReset(true, true, "omnicore-n64-precision-recovery");
+            precisionGovernorConfidence_.store(0.0f, std::memory_order_release);
+            impl_->perfHint.notifyReset(true, true, "omnicore-n64-precision-v2-recovery");
             if (adpfReady) {
                 impl_->perfHint.setTargetScale(
-                    warmStartActive_.load(std::memory_order_acquire) ? 0.94 : 1.0);
+                    warmStartActive_.load(std::memory_order_acquire) ? 0.96 : 1.0);
             }
             stableStreak = 0;
+            candidateStreak = 0;
+            candidateMode = 0;
             lastGovernorChange = controlNow;
         }
 
@@ -1783,11 +1842,11 @@ void LibretroHost::run() {
             const auto warmElapsed = controlNow - warmStartBegan;
             const bool minimumWarmupDone = warmElapsed >= std::chrono::seconds(4);
             const bool stableEnough = warmStableFrames >= 90;
-            const bool maximumWarmupDone = warmElapsed >= std::chrono::seconds(12);
+            const bool maximumWarmupDone = warmElapsed >= std::chrono::seconds(10);
             if ((minimumWarmupDone && stableEnough) || maximumWarmupDone) {
                 warmStartActive_.store(false, std::memory_order_release);
                 if (governorMode == 0) {
-                    impl_->perfHint.notifyReset(true, true, "omnicore-n64-steady-state");
+                    impl_->perfHint.notifyReset(true, true, "omnicore-n64-v2-steady-state");
                     if (adpfReady) impl_->perfHint.setTargetScale(1.0);
                 }
             }

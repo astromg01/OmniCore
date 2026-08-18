@@ -112,7 +112,7 @@ object N64SmartPerf {
                     audioBufferBursts = max(decision.audioBufferBursts, target),
                     allowResolutionPromotion = false,
                     leanGraphics = false,
-                    reason = if (recentUnderruns > 0) "PrecisionGovernor: recuperando áudio medido" else decision.reason
+                    reason = if (recentUnderruns > 0) "PrecisionGovernor v2: recuperando áudio medido" else decision.reason
                 )
             }
 
@@ -140,7 +140,7 @@ object N64SmartPerf {
                 candidate.level.ordinal < current.level.ordinal -> {
                     pressureStreak++
                     healthyStreak = 0
-                    if (pressureStreak >= 2 && now - lastTransitionAt >= 3_500L) {
+                    if (pressureStreak >= 3 && now - lastTransitionAt >= 5_000L) {
                         current = candidate
                         lastTransitionAt = now
                         pressureStreak = 0
@@ -149,7 +149,7 @@ object N64SmartPerf {
                 candidate.level.ordinal > current.level.ordinal -> {
                     healthyStreak++
                     pressureStreak = 0
-                    if (healthyStreak >= 4 && now - lastTransitionAt >= 8_000L) {
+                    if (healthyStreak >= 5 && now - lastTransitionAt >= 10_000L) {
                         current = candidate
                         lastTransitionAt = now
                         healthyStreak = 0
@@ -230,10 +230,10 @@ object N64SmartPerf {
                 allowResolutionPromotion = false,
                 leanGraphics = false,
                 reason = when {
-                    severeThermal -> "PrecisionGovernor: pressão térmica, qualidade visual preservada"
-                    telemetry.audioCritical -> "PrecisionGovernor: pressão de áudio detectada"
-                    telemetry.gpuBound -> "PrecisionGovernor: gargalo de apresentação/GPU medido"
-                    else -> "PrecisionGovernor: pressão sustentada de emulação medida"
+                    severeThermal -> "PrecisionGovernor v2: pressão térmica, qualidade visual preservada"
+                    telemetry.audioCritical -> "PrecisionGovernor v2: pressão de áudio detectada"
+                    telemetry.gpuBound -> "PrecisionGovernor v2: gargalo de apresentação/GPU medido"
+                    else -> "PrecisionGovernor v2: pressão sustentada de emulação medida"
                 }
             )
         }
@@ -249,12 +249,12 @@ object N64SmartPerf {
                 allowResolutionPromotion = false,
                 leanGraphics = false,
                 reason = when {
-                    warmThermal -> "PrecisionGovernor: desempenho sustentável sem reduzir resolução"
-                    signals.memoryPressure -> "PrecisionGovernor: pressão de memória monitorada"
-                    signals.powerSave -> "PrecisionGovernor: economia de energia detectada"
-                    telemetry.gpuBound -> "PrecisionGovernor: pressão GPU/present detectada"
-                    framePressure -> "PrecisionGovernor: frame time fora do orçamento"
-                    else -> "PrecisionGovernor: perfil conservador de hardware"
+                    warmThermal -> "PrecisionGovernor v2: desempenho sustentável sem reduzir resolução"
+                    signals.memoryPressure -> "PrecisionGovernor v2: pressão de memória monitorada"
+                    signals.powerSave -> "PrecisionGovernor v2: economia de energia detectada"
+                    telemetry.gpuBound -> "PrecisionGovernor v2: pressão GPU/present detectada"
+                    framePressure -> "PrecisionGovernor v2: frame time fora do orçamento"
+                    else -> "PrecisionGovernor v2: perfil conservador de hardware"
                 }
             )
         }
@@ -272,7 +272,7 @@ object N64SmartPerf {
             allowResolutionPromotion = false,
             leanGraphics = false,
             reason = if (highMargin) {
-                "PrecisionGovernor: margem sustentada confirmada"
+                "PrecisionGovernor v2: margem sustentada confirmada"
             } else {
                 "PrecisionGovernor: equilíbrio medido"
             }

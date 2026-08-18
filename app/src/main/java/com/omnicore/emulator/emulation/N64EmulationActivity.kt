@@ -35,6 +35,7 @@ import com.omnicore.emulator.settings.N64Settings
 import com.omnicore.emulator.storage.N64Storage
 import java.io.File
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** Isolated Nintendo 64 runtime Activity with phone-only crash breadcrumbs. */
 class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
@@ -419,11 +420,17 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             append(if (t.shaderCacheReady) " ✓" else "")
             append(if (t.passiveWarmCacheReady) " • WarmCache ✓" else "")
             append(when (t.precisionGovernorMode) {
-                1 -> " • P-GOV CPU"
-                2 -> " • P-GOV GPU"
-                3 -> " • P-GOV MIX"
-                else -> " • P-GOV Stable"
+                1 -> " • P-GOV2 CPU"
+                2 -> " • P-GOV2 GPU"
+                3 -> " • P-GOV2 MIX"
+                else -> " • P-GOV2 Stable"
             })
+            append(" ")
+            append((t.precisionGovernorConfidence * 100f).roundToInt())
+            append("%")
+            append(" • jitter ")
+            append("%.2f".format(t.frameJitterMs))
+            append(" ms")
             append(if (t.directPresenterActive) " • DirectPresenter" else " • RenderBridge")
             append(if (t.smartAnalogDpadActive) " • SmartAnalog→D" else "")
             append("\nÁudio ")
