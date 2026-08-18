@@ -24,6 +24,8 @@ import android.widget.FrameLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
+import com.omnicore.emulator.achievements.AchievementBanner
+import com.omnicore.emulator.achievements.OmniAchievements
 import com.omnicore.emulator.core.n64.N64Diagnostics
 import com.omnicore.emulator.core.n64.N64NativeBridge
 import com.omnicore.emulator.core.n64.N64RomPreparer
@@ -55,6 +57,10 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
     private var controlsVisible = true
     private var manualPaused = false
     private var lastSurfaceFps = 0f
+    private var achievementLastProgressAt = 0L
+    private var stableAchievementStreak = 0
+    private var smartAnalogAchievementQueued = false
+    private var stableAchievementQueued = false
 
     private lateinit var currentGame: GameEntry
     private lateinit var currentGameKey: String
@@ -92,6 +98,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                 val telemetry = N64NativeBridge.telemetry()
                 applySurfaceFrameRateHint(telemetry.targetFps)
                 val now = SystemClock.elapsedRealtime()
+                trackAchievementTelemetry(telemetry, now)
                 if (telemetry.sampleWindowFrames >= 90 && now - lastAdaptAt >= 2200L) {
                     lastAdaptAt = now
                     val nextDecision = perfSession.adapt(telemetry.smartPerf())
@@ -105,6 +112,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                     runOkPolls++
                     if (runOkPolls == 1) {
                         bootStar.visibility = View.GONE
+                        unlockAchievementAsync("n64_first_run")
                         runCatching {
                             N64Diagnostics.verifiedBootFile(this@N64EmulationActivity).apply {
                                 parentFile?.mkdirs()
@@ -117,7 +125,12 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                     statusView.setBackgroundColor(Color.argb(230, 92, 16, 28))
                 }
             }
-            handler.postDelayed(this, if (started) 500L else 220L)
+            val nextPollMs = when {
+                !started -> 220L
+                runOkPolls < 5 -> 350L
+                else -> 750L
+            }
+            handler.postDelayed(this, nextPollMs)
         }
     }
 
@@ -317,6 +330,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                     item.itemId == MENU_EDIT_DONE -> {
                         controls.setEditMode(false)
                         if (started) N64NativeBridge.setPaused(manualPaused)
+                        unlockAchievementAsync("customizer")
                         Toast.makeText(this@N64EmulationActivity, "Layout N64 salvo.", Toast.LENGTH_SHORT).show()
                         true
                     }
@@ -373,6 +387,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         }
         val file = N64Storage.stateFile(paths, currentGameKey, slot)
         val queued = N64NativeBridge.saveState(file)
+        if (queued) unlockAchievementAsync("save_keeper")
         Toast.makeText(
             this,
             if (queued) "Salvando estado no slot $slot…" else "Runtime ocupado; tente novamente.",
@@ -399,7 +414,55 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         ).show()
     }
 
+    private fun unlockAchievementAsync(id: String) {
+        achievementAsync { listOfNotNull(OmniAchievements.unlock(this, id)) }
+    }
+
+    private fun achievementAsync(block: () -> List<OmniAchievements.Unlock>) {
+        Thread({
+            val unlocked = runCatching(block).getOrDefault(emptyList())
+            if (unlocked.isNotEmpty()) runOnUiThread {
+                if (!destroyed) AchievementBanner.show(this, unlocked.first())
+            }
+        }, "OmniCore-Achievement").apply {
+            priority = Thread.NORM_PRIORITY - 1
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun trackAchievementTelemetry(t: N64NativeBridge.Telemetry, now: Long) {
+        if (achievementLastProgressAt == 0L) achievementLastProgressAt = now
+        if (now - achievementLastProgressAt >= 60_000L) {
+            achievementLastProgressAt = now
+            if (started && !manualPaused && !controls.isEditMode()) {
+                achievementAsync { OmniAchievements.addCounter(this, "n64_active_seconds", 60) }
+            }
+        }
+
+        if (t.smartAnalogDpadActive && !smartAnalogAchievementQueued) {
+            smartAnalogAchievementQueued = true
+            unlockAchievementAsync("smart_analog")
+        }
+
+        val targetMs = if (t.targetFps in 40f..75f) 1000f / t.targetFps else 1000f / 60f
+        val stableWindow = t.sampleWindowFrames >= 90 &&
+            t.precisionGovernorMode == 0 &&
+            t.frameJitterMs in 0f..1.60f &&
+            t.p95FrameMs > 0f && t.p95FrameMs <= targetMs * 1.10f
+        stableAchievementStreak = if (stableWindow) {
+            (stableAchievementStreak + 1).coerceAtMost(12)
+        } else {
+            (stableAchievementStreak - 1).coerceAtLeast(0)
+        }
+        if (stableAchievementStreak >= 8 && !stableAchievementQueued) {
+            stableAchievementQueued = true
+            unlockAchievementAsync("silky_session")
+        }
+    }
+
     private fun showPerformanceStatus() {
+        unlockAchievementAsync("tuner")
         val t = N64NativeBridge.telemetry()
         val decision = pendingDecision ?: launchDecision
         statusView.setBackgroundColor(Color.argb(210, 15, 17, 29))

@@ -54,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.omnicore.emulator.BuildConfig
+import com.omnicore.emulator.achievements.OmniAchievements
 import com.omnicore.emulator.core.CoreRegistry
 import com.omnicore.emulator.core.CoreState
 import com.omnicore.emulator.library.LibraryImportEngine
@@ -62,21 +63,23 @@ import com.omnicore.emulator.model.GameEntry
 import com.omnicore.emulator.settings.Ps1Settings
 import com.omnicore.emulator.storage.GameLibraryStore
 import com.omnicore.emulator.storage.Ps1Files
+import com.omnicore.emulator.ui.achievements.AchievementsScreen
 import com.omnicore.emulator.ui.n64.N64SettingsDialog
+import com.omnicore.emulator.ui.theme.OmniStarfieldBackground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private enum class OmniHubScreen { LIBRARY, SYSTEMS, SETTINGS }
+private enum class OmniHubScreen { LIBRARY, SYSTEMS, ACHIEVEMENTS, SETTINGS }
 private enum class OmniSort { RECENT, TITLE, SIZE }
 
-private val OmniBgTop = Color(0xFF0A0C14)
-private val OmniBgBottom = Color(0xFF05060A)
-private val OmniPanel = Color(0xEE141722)
-private val OmniPanelStrong = Color(0xFF1B1F2C)
-private val OmniTextSoft = Color(0xFFAAB1C4)
-private val OmniAccent = Color(0xFF7C8CFF)
-private val OmniAccent2 = Color(0xFF5ED8C6)
+private val OmniBgTop = Color(0xFF0B0A1D)
+private val OmniBgBottom = Color(0xFF050711)
+private val OmniPanel = Color(0xE8171930)
+private val OmniPanelStrong = Color(0xFF1C1C35)
+private val OmniTextSoft = Color(0xFFB2B7CE)
+private val OmniAccent = Color(0xFFA58BFF)
+private val OmniAccent2 = Color(0xFF74DFFF)
 
 /**
  * System-neutral OmniCore shell. No single console owns the home screen.
@@ -99,7 +102,9 @@ fun OmniCoreV4App() {
 
     LaunchedEffect(Unit) {
         val startup = withContext(Dispatchers.IO) {
-            store.load() to Ps1Files.biosFiles(context).size
+            val loadedGames = store.load()
+            runCatching { OmniAchievements.setCounter(context, "library_games", loadedGames.size) }
+            loadedGames to Ps1Files.biosFiles(context).size
         }
         games = startup.first
         biosCount = startup.second
@@ -108,7 +113,10 @@ fun OmniCoreV4App() {
     fun saveSnapshot(next: List<GameEntry>) {
         games = next
         scope.launch(Dispatchers.IO) {
-            runCatching { store.save(next) }
+            runCatching {
+                store.save(next)
+                OmniAchievements.setCounter(context, "library_games", next.size)
+            }
         }
     }
 
@@ -191,6 +199,7 @@ fun OmniCoreV4App() {
             Brush.verticalGradient(listOf(OmniBgTop, OmniBgBottom))
         )
     ) {
+        OmniStarfieldBackground()
         Scaffold(
             containerColor = Color.Transparent,
             topBar = {
@@ -213,6 +222,12 @@ fun OmniCoreV4App() {
                         onClick = { screen = OmniHubScreen.SYSTEMS },
                         icon = { Text("◉") },
                         label = { Text("Sistemas") }
+                    )
+                    NavigationBarItem(
+                        selected = screen == OmniHubScreen.ACHIEVEMENTS,
+                        onClick = { screen = OmniHubScreen.ACHIEVEMENTS },
+                        icon = { Text("★") },
+                        label = { Text("Conquistas") }
                     )
                     NavigationBarItem(
                         selected = screen == OmniHubScreen.SETTINGS,
@@ -249,6 +264,7 @@ fun OmniCoreV4App() {
                         games = games,
                         onN64Settings = { showN64Settings = true }
                     )
+                    OmniHubScreen.ACHIEVEMENTS -> AchievementsScreen()
                     OmniHubScreen.SETTINGS -> OmniSettings(
                         biosCount = biosCount,
                         onImportBios = { biosPicker.launch(arrayOf("application/octet-stream", "*/*")) },
@@ -325,7 +341,7 @@ private fun OmniTopBar(gameCount: Int, importing: Boolean, onImport: () -> Unit)
                     .background(Brush.linearGradient(listOf(OmniAccent, OmniAccent2))),
                 contentAlignment = Alignment.Center
             ) {
-                Text("O", color = Color.White, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleLarge)
+                Text("★", color = Color(0xFFFFD85A), fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleLarge)
             }
             Column(Modifier.weight(1f)) {
                 Text("OmniCore", fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleLarge)
