@@ -5,29 +5,28 @@ import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
 import java.io.File
+import java.io.PrintWriter
+import java.io.StringWriter
 
-/**
- * Phone-first N64 crash diagnostics and boot validation state.
- *
- * The N64 runtime lives in :n64, so the main OmniCore process can inspect the
- * Android process-exit history after a native crash. Tiny files shared between
- * both processes keep the last boot stage and whether a real first frame has
- * ever been produced successfully on this installation.
- */
+/** Phone-first crash diagnostics and boot validation for the isolated N64 process. */
 object N64Diagnostics {
     private const val PREFS = "n64_diagnostics"
     private const val KEY_LAST_EXIT_TS = "last_exit_timestamp"
     private const val BREADCRUMB = "last_boot_stage.txt"
+    private const val JAVA_CRASH = "last_java_crash.txt"
     private const val VERIFIED_BOOT = "boot_verified.flag"
     private const val EXIT_ASSOCIATION_WINDOW_MS = 2L * 60L * 60L * 1000L
 
     private fun root(context: Context) = File(context.filesDir, "n64")
-
     fun breadcrumbFile(context: Context): File = File(root(context), BREADCRUMB)
-
     fun verifiedBootFile(context: Context): File = File(root(context), VERIFIED_BOOT)
-
+    private fun javaCrashFile(context: Context): File = File(root(context), JAVA_CRASH)
     fun hasVerifiedBoot(context: Context): Boolean = verifiedBootFile(context).isFile
+
+    fun beginLaunch(context: Context, detail: String) {
+        runCatching { javaCrashFile(context).delete() }
+        mark(context, "main:launch_requested", detail)
+    }
 
     fun mark(context: Context, stage: String, detail: String = "") {
         runCatching {
@@ -36,7 +35,7 @@ object N64Diagnostics {
             val payload = buildString {
                 append("stage=").append(stage.trim())
                 append('\n').append("timestamp=").append(System.currentTimeMillis())
-                if (detail.isNotBlank()) append('\n').append("detail=").append(detail.take(240))
+                if (detail.isNotBlank()) append('\n').append("detail=").append(detail.take(500))
                 append('\n')
             }
             val temp = File(file.parentFile, "${file.name}.tmp")
@@ -48,15 +47,34 @@ object N64Diagnostics {
         }
     }
 
+    fun recordJavaCrash(context: Context, threadName: String, throwable: Throwable) {
+        runCatching {
+            val file = javaCrashFile(context)
+            file.parentFile?.mkdirs()
+            val writer = StringWriter()
+            throwable.printStackTrace(PrintWriter(writer))
+            file.writeText(buildString {
+                append("thread=").append(threadName).append('\n')
+                append("type=").append(throwable.javaClass.name).append('\n')
+                append("message=").append(throwable.message.orEmpty()).append('\n')
+                append("stack=\n").append(writer.toString().take(12_000))
+            })
+            mark(
+                context,
+                "process:uncaught_exception",
+                "${throwable.javaClass.simpleName}: ${throwable.message.orEmpty()}"
+            )
+        }
+    }
+
     fun readBreadcrumb(context: Context): String? = runCatching {
         breadcrumbFile(context).takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotBlank() }
     }.getOrNull()
 
-    /**
-     * Returns a one-shot human readable crash report for the most recent :n64
-     * process death. Normal user exits/package updates and stale exits from an
-     * older build/session are intentionally hidden.
-     */
+    private fun readJavaCrash(context: Context): String? = runCatching {
+        javaCrashFile(context).takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotBlank() }
+    }.getOrNull()
+
     fun consumeRecentProcessExit(context: Context): String? {
         if (Build.VERSION.SDK_INT < 30) return null
         val manager = context.getSystemService(ActivityManager::class.java) ?: return null
@@ -71,9 +89,6 @@ object N64Diagnostics {
         if (exit.timestamp <= lastSeen) return null
         prefs.edit().putLong(KEY_LAST_EXIT_TS, exit.timestamp).apply()
 
-        // Associate Android's process exit with a launch breadcrumb created by
-        // this build/session. This prevents an old Alpha crash from being shown
-        // immediately after installing a newer diagnostic build.
         val breadcrumbFile = breadcrumbFile(context)
         val breadcrumbModified = breadcrumbFile.takeIf { it.isFile }?.lastModified() ?: return null
         val delta = exit.timestamp - breadcrumbModified
@@ -99,16 +114,14 @@ object N64Diagnostics {
             else -> "motivo ${exit.reason}"
         }
         val breadcrumb = readBreadcrumb(context)
+        val javaCrash = readJavaCrash(context)
         val description = exit.description?.trim()?.takeIf { it.isNotBlank() }
 
         return buildString {
             append("A sessão Nintendo 64 anterior terminou por ").append(reason).append('.')
-            if (breadcrumb != null) {
-                append("\n\nÚltimo rastro salvo:\n").append(breadcrumb)
-            }
-            if (description != null) {
-                append("\n\nAndroid: ").append(description.take(300))
-            }
+            if (breadcrumb != null) append("\n\nÚltimo rastro salvo:\n").append(breadcrumb)
+            if (javaCrash != null) append("\n\nExceção capturada:\n").append(javaCrash.take(4_500))
+            if (description != null) append("\n\nAndroid: ").append(description.take(500))
         }
     }
 }
