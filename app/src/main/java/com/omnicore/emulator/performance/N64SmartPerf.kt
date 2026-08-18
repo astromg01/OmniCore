@@ -3,18 +3,10 @@ package com.omnicore.emulator.performance
 import android.content.Context
 import android.os.Build
 import android.os.PowerManager
-import com.omnicore.emulator.core.n64.N64Diagnostics
 import com.omnicore.emulator.settings.N64PerformanceProfile
 import com.omnicore.emulator.settings.N64Settings
 
-/**
- * Nintendo 64 specific adaptive performance policy.
- *
- * This intentionally does not reuse PlayStation runtime knobs. N64 pressure is
- * dominated by R4300 dynarec, RSP/RDP work, framebuffer effects and internal
- * resolution. The policy only produces conservative recommendations; the N64
- * host decides when a recommendation can be applied safely between frames.
- */
+/** Nintendo 64 specific adaptive performance policy. */
 object N64SmartPerf {
     enum class Level { ECO, BALANCED, TURBO }
 
@@ -38,33 +30,12 @@ object N64SmartPerf {
         val reason: String
     )
 
-    fun initial(context: Context, requested: N64Settings.Config): Decision {
-        val normal = resolve(
-            profile = N64PerformanceProfile.detect(context),
-            requested = requested,
-            thermalStatus = currentThermalStatus(context),
-            telemetry = Telemetry()
-        )
-        if (N64Diagnostics.hasVerifiedBoot(context)) return normal
-
-        // First-frame safe boot: prove the core + GLES path before enabling the
-        // R4300 dynarec and heavier framebuffer work on this installation.
-        return normal.copy(
-            level = Level.BALANCED,
-            effective = normal.effective.copy(
-                cpuMode = N64Settings.CpuMode.CACHED_INTERPRETER,
-                internalResolution = N64Settings.InternalResolution.NATIVE,
-                framebufferEmulation = false,
-                threadedRenderer = false,
-                rspMode = N64Settings.RspMode.HLE
-            ),
-            audioBufferBursts = maxOf(3, normal.audioBufferBursts),
-            preferPowerEfficiency = true,
-            aggressiveFramePacing = false,
-            allowResolutionPromotion = false,
-            reason = "Boot seguro N64 até confirmar o primeiro frame neste aparelho"
-        )
-    }
+    fun initial(context: Context, requested: N64Settings.Config): Decision = resolve(
+        profile = N64PerformanceProfile.detect(context),
+        requested = requested,
+        thermalStatus = currentThermalStatus(context),
+        telemetry = Telemetry()
+    )
 
     fun adapt(
         context: Context,
@@ -87,39 +58,38 @@ object N64SmartPerf {
         val warmThermal = thermalStatus >= PowerManager.THERMAL_STATUS_MODERATE
 
         val framePressure = telemetry.hasUsefulWindow && (
-            telemetry.p95FrameMs >= 22.5f ||
-                telemetry.droppedFrames >= 6 ||
-                telemetry.audioUnderruns >= 3
+            telemetry.p95FrameMs >= 21.5f ||
+                telemetry.droppedFrames >= 5 ||
+                telemetry.audioUnderruns >= 2
             )
         val heavyPressure = telemetry.hasUsefulWindow && (
-            telemetry.p95FrameMs >= 28.0f ||
-                telemetry.droppedFrames >= 14 ||
-                telemetry.audioUnderruns >= 8
+            telemetry.p95FrameMs >= 27.0f ||
+                telemetry.droppedFrames >= 12 ||
+                telemetry.audioUnderruns >= 6
             )
 
-        // Early real-device validation deliberately keeps GLideN64's threaded
-        // renderer disabled. Upstream defaults it off and it changes the core's
-        // thread/coroutine lifecycle. SmartPerf must not silently re-enable it
-        // before the base GLES3 path has repeatable successful boots.
         fun safe(config: N64Settings.Config): N64Settings.Config =
-            config.copy(threadedRenderer = false, rspMode = N64Settings.RspMode.HLE)
+            config.copy(
+                cpuMode = N64Settings.CpuMode.DYNAREC,
+                threadedRenderer = false,
+                rspMode = N64Settings.RspMode.HLE
+            )
 
         if (severeThermal || heavyPressure) {
             return Decision(
                 level = Level.ECO,
                 effective = safe(requested.copy(
                     internalResolution = N64Settings.InternalResolution.NATIVE,
-                    framebufferEmulation = false,
-                    cpuMode = N64Settings.CpuMode.DYNAREC
+                    framebufferEmulation = false
                 )),
-                audioBufferBursts = 4,
+                audioBufferBursts = 5,
                 preferPowerEfficiency = true,
                 aggressiveFramePacing = false,
                 allowResolutionPromotion = false,
                 reason = if (severeThermal) {
                     "SmartPerf N64 reduziu carga por temperatura"
                 } else {
-                    "SmartPerf N64 detectou pressão sustentada de frame/áudio"
+                    "SmartPerf N64 priorizou FPS e áudio estável"
                 }
             )
         }
@@ -129,31 +99,31 @@ object N64SmartPerf {
                 level = Level.BALANCED,
                 effective = safe(requested.copy(
                     internalResolution = N64Settings.InternalResolution.NATIVE,
-                    cpuMode = N64Settings.CpuMode.DYNAREC
+                    framebufferEmulation = if (profile.tier == N64PerformanceProfile.Tier.LOW || framePressure) false else requested.framebufferEmulation
                 )),
-                audioBufferBursts = 3,
+                audioBufferBursts = 4,
                 preferPowerEfficiency = warmThermal,
                 aggressiveFramePacing = false,
                 allowResolutionPromotion = false,
                 reason = when {
                     warmThermal -> "SmartPerf N64 preservando desempenho sustentável"
-                    framePressure -> "SmartPerf N64 estabilizando frame pacing"
-                    else -> "SmartPerf N64 conservador para hardware limitado"
+                    framePressure -> "SmartPerf N64 estabilizando frame pacing e áudio"
+                    else -> "SmartPerf N64 otimizado para hardware limitado"
                 }
             )
         }
 
         val highMargin = profile.tier == N64PerformanceProfile.Tier.HIGH &&
             (!telemetry.hasUsefulWindow || (
-                telemetry.p95FrameMs in 0f..18.5f &&
+                telemetry.p95FrameMs in 0f..18.0f &&
                     telemetry.droppedFrames <= 1 &&
                     telemetry.audioUnderruns == 0
                 ))
 
         return Decision(
             level = if (highMargin) Level.TURBO else Level.BALANCED,
-            effective = safe(requested.copy(cpuMode = N64Settings.CpuMode.DYNAREC)),
-            audioBufferBursts = if (highMargin) 2 else 3,
+            effective = safe(requested),
+            audioBufferBursts = if (highMargin) 3 else 4,
             preferPowerEfficiency = false,
             aggressiveFramePacing = highMargin,
             allowResolutionPromotion = highMargin && requested.preset == N64Settings.Preset.AUTO,
