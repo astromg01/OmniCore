@@ -7,6 +7,7 @@
 #include <android/log.h>
 #include <android/native_window.h>
 #include <dlfcn.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
@@ -68,6 +69,71 @@ std::string trim(std::string value) {
 }
 
 std::string boolOption(bool value) { return value ? "True" : "False"; }
+
+struct AnalogVector final {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+AnalogVector shapeAnalog(float x, float y, int deadzonePercent, int sensitivityPercent, bool precision) {
+    x = std::clamp(x, -1.0f, 1.0f);
+    y = std::clamp(y, -1.0f, 1.0f);
+    if (!precision) return {x, y};
+    const float magnitude = std::hypot(x, y);
+    if (magnitude <= 0.00001f) return {};
+    const float deadzone = std::clamp(static_cast<float>(deadzonePercent) / 100.0f, 0.0f, 0.30f);
+    if (magnitude <= deadzone) return {};
+    const float sourceMagnitude = std::min(1.0f, magnitude);
+    float normalized = (sourceMagnitude - deadzone) / std::max(0.01f, 1.0f - deadzone);
+    normalized = std::pow(std::clamp(normalized, 0.0f, 1.0f), 1.12f);
+    normalized *= std::clamp(static_cast<float>(sensitivityPercent) / 100.0f, 0.70f, 1.30f);
+    normalized = std::clamp(normalized, 0.0f, 1.0f);
+    return {x / magnitude * normalized, y / magnitude * normalized};
+}
+
+bool ensureDirectoryTree(const std::string& path) {
+    if (path.empty()) return false;
+    for (std::size_t i = 1; i <= path.size(); ++i) {
+        if (i != path.size() && path[i] != '/') continue;
+        const std::string part = path.substr(0, i);
+        if (part.empty()) continue;
+        if (::mkdir(part.c_str(), 0700) != 0 && errno != EEXIST) return false;
+    }
+    struct stat st {};
+    return ::stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode) && ::access(path.c_str(), W_OK) == 0;
+}
+
+std::size_t warmDirectoryPages(const std::string& path, std::size_t budgetBytes) {
+    if (path.empty() || budgetBytes == 0) return 0;
+    DIR* dir = ::opendir(path.c_str());
+    if (!dir) return 0;
+    const long pageSize = std::max<long>(4096, ::sysconf(_SC_PAGESIZE));
+    std::size_t warmed = 0;
+    while (warmed < budgetBytes) {
+        dirent* entry = ::readdir(dir);
+        if (!entry) break;
+        if (entry->d_name[0] == '.') continue;
+        const std::string filePath = path + "/" + entry->d_name;
+        const int fd = ::open(filePath.c_str(), O_RDONLY | O_CLOEXEC);
+        if (fd < 0) continue;
+        struct stat st {};
+        if (::fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0) {
+#ifdef POSIX_FADV_WILLNEED
+            ::posix_fadvise(fd, 0, 0, POSIX_FADV_WILLNEED);
+#endif
+            const std::size_t remaining = budgetBytes - warmed;
+            const std::size_t fileBudget = std::min<std::size_t>(static_cast<std::size_t>(st.st_size), remaining);
+            std::uint8_t byte = 0;
+            for (std::size_t offset = 0; offset < fileBudget; offset += static_cast<std::size_t>(pageSize)) {
+                if (::pread(fd, &byte, 1, static_cast<off_t>(offset)) != 1) break;
+                warmed += std::min<std::size_t>(static_cast<std::size_t>(pageSize), fileBudget - offset);
+            }
+        }
+        ::close(fd);
+    }
+    ::closedir(dir);
+    return warmed;
+}
 
 std::int16_t axisFromFloat(float value) {
     return static_cast<std::int16_t>(std::lround(std::clamp(value, -1.0f, 1.0f) * 32767.0f));
@@ -523,6 +589,7 @@ struct LibretroHost::Impl {
     GLuint frontFbo = 0;
     GLuint colorTexture = 0;
     GLuint depthBuffer = 0;
+    bool directPresent = false;
     std::uint64_t presentedFrames = 0;
     bool coreInitialized = false;
     bool gameLoaded = false;
@@ -577,7 +644,10 @@ struct LibretroHost::Impl {
         return AAUDIO_CALLBACK_RESULT_CONTINUE;
     }
 
-    bool createEgl(ANativeWindow* window) {
+    bool createEgl(ANativeWindow* window, int preferredWidth, int preferredHeight) {
+        renderWidth = std::max(320, preferredWidth);
+        renderHeight = std::max(240, preferredHeight);
+        const int geometryStatus = ANativeWindow_setBuffersGeometry(window, renderWidth, renderHeight, 0);
         display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
         if (display == EGL_NO_DISPLAY || !eglInitialize(display, nullptr, nullptr)) return false;
         if (!eglBindAPI(EGL_OPENGL_ES_API)) return false;
@@ -601,6 +671,11 @@ struct LibretroHost::Impl {
             eglGetProcAddress("eglPresentationTimeANDROID"));
         eglQuerySurface(display, surface, EGL_WIDTH, &surfaceWidth);
         eglQuerySurface(display, surface, EGL_HEIGHT, &surfaceHeight);
+        directPresent = geometryStatus == 0 && surfaceWidth == renderWidth && surfaceHeight == renderHeight;
+        if (directPresent) {
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, renderWidth, renderHeight);
+        }
         return surfaceWidth > 0 && surfaceHeight > 0;
     }
 
@@ -852,6 +927,8 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     stopRequested_.store(false, std::memory_order_release);
     paused_.store(false, std::memory_order_release);
     buttonMask_.store(0, std::memory_order_release);
+    smartDpadMask_.store(0, std::memory_order_release);
+    smartAnalogDpadActive_.store(false, std::memory_order_release);
     setAnalog(0.0f, 0.0f, 0.0f, 0.0f);
     {
         std::lock_guard<std::mutex> lock(telemetryMutex_);
@@ -878,6 +955,10 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     burstShieldActive_.store(false, std::memory_order_release);
     warmStartActive_.store(false, std::memory_order_release);
     shaderCacheEnabled_.store(false, std::memory_order_release);
+    shaderCacheReady_.store(false, std::memory_order_release);
+    directPresenterActive_.store(false, std::memory_order_release);
+    smartAnalogDpadActive_.store(false, std::memory_order_release);
+    lastPresentMs_.store(0.0f, std::memory_order_release);
     hwRenderRequested_ = false;
     hwRender_ = {};
     setMessage("N64 BOOT 1/6 • runtime Alpha 7 single-pacer…");
@@ -955,10 +1036,31 @@ void LibretroHost::setButton(unsigned retroPadId, bool pressed) {
 }
 
 void LibretroHost::setAnalog(float x, float y, float cX, float cY) {
-    analogX_.store(axisFromFloat(x), std::memory_order_release);
-    analogY_.store(axisFromFloat(y), std::memory_order_release);
+    const AnalogVector shaped = shapeAnalog(
+        x, y, config_.analogDeadzonePercent, config_.analogSensitivityPercent, config_.precisionAnalog);
+    analogX_.store(axisFromFloat(shaped.x), std::memory_order_release);
+    analogY_.store(axisFromFloat(shaped.y), std::memory_order_release);
     cX_.store(axisFromFloat(cX), std::memory_order_release);
     cY_.store(axisFromFloat(cY), std::memory_order_release);
+
+    const bool dpadOnly = config_.smartAnalogMode == "dpad_only";
+    const bool allowSmartDpad = dpadOnly ||
+        (config_.smartAnalogMode == "auto" && config_.smartAnalogAutoDpad);
+    std::uint16_t nextMask = 0;
+    if (allowSmartDpad) {
+        const float magnitude = std::hypot(shaped.x, shaped.y);
+        const bool alreadyActive = smartDpadMask_.load(std::memory_order_acquire) != 0;
+        const float engageMagnitude = alreadyActive ? 0.42f : 0.58f;
+        if (magnitude >= engageMagnitude) {
+            constexpr float kAxisThreshold = 0.34f;
+            if (shaped.y <= -kAxisThreshold) nextMask |= static_cast<std::uint16_t>(1u << RETRO_DEVICE_ID_JOYPAD_UP);
+            if (shaped.y >= kAxisThreshold) nextMask |= static_cast<std::uint16_t>(1u << RETRO_DEVICE_ID_JOYPAD_DOWN);
+            if (shaped.x <= -kAxisThreshold) nextMask |= static_cast<std::uint16_t>(1u << RETRO_DEVICE_ID_JOYPAD_LEFT);
+            if (shaped.x >= kAxisThreshold) nextMask |= static_cast<std::uint16_t>(1u << RETRO_DEVICE_ID_JOYPAD_RIGHT);
+        }
+    }
+    smartDpadMask_.store(nextMask, std::memory_order_release);
+    smartAnalogDpadActive_.store(nextMask != 0, std::memory_order_release);
 }
 
 void LibretroHost::buildCoreOptions() {
@@ -994,12 +1096,15 @@ void LibretroHost::buildCoreOptions() {
     options_["mupen64plus-EnableLODEmulation"] = "True";
     options_["mupen64plus-EnableLegacyBlending"] = leanGraphics ? "True" : "False";
     options_["mupen64plus-EnableFragmentDepthWrite"] = "False";
-    // GLideN64 stores compiled combiner programs per ROM/GPU in the writable
-    // N64 system directory. First execution may still compile new programs;
-    // later launches can restore them instead of paying that cost mid-scene.
-    options_["mupen64plus-EnableShadersStorage"] = "True";
+    // Pinned GLideN64 resolves its cache as <systemDir>/Mupen64plus/shaders.
+    // Enable persistent shader binaries only after the exact directory is writable;
+    // otherwise fall back cleanly instead of pretending cache is active.
+    const std::string shaderDir = config_.systemDir + "/Mupen64plus/shaders";
+    const bool shaderReady = ensureDirectoryTree(shaderDir);
+    options_["mupen64plus-EnableShadersStorage"] = boolOption(shaderReady);
     options_["mupen64plus-EnableTextureCache"] = "False";
-    shaderCacheEnabled_.store(true, std::memory_order_release);
+    shaderCacheEnabled_.store(shaderReady, std::memory_order_release);
+    shaderCacheReady_.store(shaderReady, std::memory_order_release);
     options_["mupen64plus-BackgroundMode"] = "OnePiece";
     options_["mupen64plus-CorrectTexrectCoords"] = "Auto";
     options_["mupen64plus-BilinearMode"] = "3point";
@@ -1016,8 +1121,12 @@ void LibretroHost::buildCoreOptions() {
     options_["mupen64plus-txFilterMode"] = "None";
     options_["mupen64plus-txEnhancementMode"] = "None";
     options_["mupen64plus-alt-map"] = "True";
-    options_["mupen64plus-astick-deadzone"] = std::to_string(std::clamp(config_.analogDeadzonePercent, 4, 30));
-    options_["mupen64plus-astick-sensitivity"] = std::to_string(std::clamp(config_.analogSensitivityPercent, 70, 130));
+    // Precision mode owns the calibration in one radial stage. Avoid applying
+    // the same deadzone/sensitivity twice inside the core afterwards.
+    options_["mupen64plus-astick-deadzone"] = config_.precisionAnalog
+        ? "0" : std::to_string(std::clamp(config_.analogDeadzonePercent, 4, 30));
+    options_["mupen64plus-astick-sensitivity"] = config_.precisionAnalog
+        ? "100" : std::to_string(std::clamp(config_.analogSensitivityPercent, 70, 130));
     if (config_.pakMode == "rumble") options_["mupen64plus-pak1"] = "rumble";
     else if (config_.pakMode == "none") options_["mupen64plus-pak1"] = "none";
     else options_["mupen64plus-pak1"] = "memory";
@@ -1148,17 +1257,20 @@ bool LibretroHost::environment(unsigned cmd, void* data) {
 }
 
 void LibretroHost::videoRefresh(const void* data, unsigned, unsigned, std::size_t) {
-    if (!impl_ || impl_->display == EGL_NO_DISPLAY || impl_->frontFbo == 0) return;
+    if (!impl_ || impl_->display == EGL_NO_DISPLAY) return;
     if (data != abi::RETRO_HW_FRAME_BUFFER_VALID) return;
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, impl_->frontFbo);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
     const auto presentBegin = std::chrono::steady_clock::now();
-    // Native N64 output was being blurred twice by linear upscaling. Keep
-    // 2x output smooth, but preserve low-resolution text/UI pixels at 1x.
-    const GLenum presentFilter = config_.internalResolution >= 15 ? GL_LINEAR : GL_NEAREST;
-    glBlitFramebuffer(0, 0, impl_->renderWidth, impl_->renderHeight,
-                      0, 0, impl_->surfaceWidth, impl_->surfaceHeight,
-                      GL_COLOR_BUFFER_BIT, presentFilter);
+    if (!impl_->directPresent) {
+        if (impl_->frontFbo == 0) return;
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, impl_->frontFbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        // Fallback preserves the proven frontend path on devices that reject
+        // internal-size native buffers. DirectPresenter skips this full-frame copy.
+        const GLenum presentFilter = config_.internalResolution >= 15 ? GL_LINEAR : GL_NEAREST;
+        glBlitFramebuffer(0, 0, impl_->renderWidth, impl_->renderHeight,
+                          0, 0, impl_->surfaceWidth, impl_->surfaceHeight,
+                          GL_COLOR_BUFFER_BIT, presentFilter);
+    }
     if (impl_->presentationTimeFn && impl_->presentationTargetNs > 0) {
         impl_->presentationTimeFn(impl_->display, impl_->surface, impl_->presentationTargetNs);
     }
@@ -1169,13 +1281,17 @@ void LibretroHost::videoRefresh(const void* data, unsigned, unsigned, std::size_
     }
     const auto presentEnd = std::chrono::steady_clock::now();
     recordPresent(std::chrono::duration<float, std::milli>(presentEnd - presentBegin).count());
-    glBindFramebuffer(GL_FRAMEBUFFER, impl_->frontFbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, impl_->directPresent ? 0 : impl_->frontFbo);
     glViewport(0, 0, impl_->renderWidth, impl_->renderHeight);
     ++impl_->presentedFrames;
     if (impl_->presentedFrames == 1) {
         setMessage(impl_->audioStream
-            ? "N64 RUN OK • single-pacer GLES3 • AAudio nativo pronto"
-            : "N64 RUN OK • single-pacer GLES3 • áudio indisponível");
+            ? (impl_->directPresent
+                ? "N64 RUN OK • DirectPresenter GLES3 • AAudio nativo pronto"
+                : "N64 RUN OK • RenderBridge fallback GLES3 • AAudio nativo pronto")
+            : (impl_->directPresent
+                ? "N64 RUN OK • DirectPresenter GLES3 • áudio indisponível"
+                : "N64 RUN OK • RenderBridge fallback GLES3 • áudio indisponível"));
     }
 }
 
@@ -1193,13 +1309,15 @@ std::size_t LibretroHost::audioBatch(const std::int16_t* data, std::size_t frame
 std::int16_t LibretroHost::inputState(unsigned port, unsigned device, unsigned index, unsigned id) const {
     if (port != 0) return 0;
     if (device == RETRO_DEVICE_JOYPAD) {
-        const auto mask = buttonMask_.load(std::memory_order_acquire);
+        const auto mask = static_cast<std::uint16_t>(
+            buttonMask_.load(std::memory_order_acquire) | smartDpadMask_.load(std::memory_order_acquire));
         if (id == RETRO_DEVICE_ID_JOYPAD_MASK) return static_cast<std::int16_t>(mask);
         if (id <= RETRO_DEVICE_ID_JOYPAD_R3) return (mask & (1u << id)) ? 1 : 0;
         return 0;
     }
     if (device == RETRO_DEVICE_ANALOG) {
         if (index == RETRO_DEVICE_INDEX_ANALOG_LEFT) {
+            if (config_.smartAnalogMode == "dpad_only") return 0;
             if (id == RETRO_DEVICE_ID_ANALOG_X) return analogX_.load(std::memory_order_acquire);
             if (id == RETRO_DEVICE_ID_ANALOG_Y) return analogY_.load(std::memory_order_acquire);
         }
@@ -1220,6 +1338,7 @@ void LibretroHost::recordFrame(float frameMs, float targetMs) {
 }
 
 void LibretroHost::recordPresent(float presentMs) {
+    lastPresentMs_.store(presentMs, std::memory_order_release);
     std::lock_guard<std::mutex> lock(telemetryMutex_);
     presentWindow_[presentWindowWrite_] = presentMs;
     presentWindowWrite_ = (presentWindowWrite_ + 1) % kTelemetryCapacity;
@@ -1249,6 +1368,9 @@ Telemetry LibretroHost::telemetry() const {
     out.burstShieldActive = burstShieldActive_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
     out.warmStartActive = warmStartActive_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
     out.shaderCacheEnabled = shaderCacheEnabled_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
+    out.directPresenterActive = directPresenterActive_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
+    out.shaderCacheReady = shaderCacheReady_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
+    out.smartAnalogDpadActive = smartAnalogDpadActive_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
     if (presentCount > 0) {
         float totalPresent = 0.0f;
         for (std::size_t i = 0; i < presentCount; ++i) totalPresent += presentSnapshot[i];
@@ -1402,23 +1524,26 @@ void LibretroHost::run() {
         running_.store(false, std::memory_order_release);
     };
 
-    if (!impl_->createEgl(window_)) {
-        setMessage("N64 BOOT E01 • não consegui criar EGL/GLES3");
-        cleanup();
-        return;
-    }
     const bool wide = config_.aspectRatio == "16:9" || config_.aspectRatio == "16:9 adjusted";
     const int renderWidth = config_.internalResolution >= 20 ? 1280 :
         (config_.internalResolution >= 15 ? 960 : 640);
     const int renderHeight = wide
         ? (config_.internalResolution >= 20 ? 720 : (config_.internalResolution >= 15 ? 540 : 360))
         : (config_.internalResolution >= 20 ? 960 : (config_.internalResolution >= 15 ? 720 : 480));
-    if (!impl_->createFrontendFramebuffer(renderWidth, renderHeight)) {
-        setMessage("N64 BOOT E02 • framebuffer GLES3 inválido");
+    if (!impl_->createEgl(window_, renderWidth, renderHeight)) {
+        setMessage("N64 BOOT E01 • não consegui criar EGL/GLES3");
         cleanup();
         return;
     }
-    setMessage("N64 BOOT 2/6 • GLES3 single-pacer, carregando Mupen64Plus-Next…");
+    directPresenterActive_.store(impl_->directPresent, std::memory_order_release);
+    if (!impl_->directPresent && !impl_->createFrontendFramebuffer(renderWidth, renderHeight)) {
+        setMessage("N64 BOOT E02 • framebuffer GLES3 fallback inválido");
+        cleanup();
+        return;
+    }
+    setMessage(impl_->directPresent
+        ? "N64 BOOT 2/6 • DirectPresenter GLES3, carregando Mupen64Plus-Next…"
+        : "N64 BOOT 2/6 • RenderBridge fallback GLES3, carregando Mupen64Plus-Next…");
     if (!impl_->core.load()) {
         setMessage("N64 BOOT E03 • Mupen64Plus-Next não carregou");
         cleanup();
@@ -1472,6 +1597,11 @@ void LibretroHost::run() {
         return;
     }
 
+    if (shaderCacheReady_.load(std::memory_order_acquire)) {
+        const std::string shaderDir = config_.systemDir + "/Mupen64plus/shaders";
+        const std::size_t warmed = warmDirectoryPages(shaderDir, 4u * 1024u * 1024u);
+        if (warmed > 0) logPrint(ANDROID_LOG_INFO, "ShaderWarmup prefetched %zu bytes", warmed);
+    }
     hwRender_.context_reset();
     callContextDestroy = true;
     loadSaveRam();
@@ -1551,6 +1681,8 @@ void LibretroHost::run() {
         const auto controlNow = std::chrono::steady_clock::now();
         const bool slowFrame = frameMs > targetMs * 1.18f;
         const bool verySlowFrame = frameMs > targetMs * 1.55f;
+        const float presentMs = lastPresentMs_.load(std::memory_order_acquire);
+        const bool renderSpike = slowFrame && presentMs >= std::max(4.0f, targetMs * 0.28f);
         if (slowFrame) {
             ++slowFrameStreak;
             warmStableFrames = 0;
@@ -1563,6 +1695,18 @@ void LibretroHost::run() {
             }
         }
 
+        if (renderSpike) {
+            // Presentation cost is a meaningful portion of this slow frame. Give
+            // ADPF a GPU-specific transient hint and protect audio, without lowering
+            // internal resolution or disabling framebuffer emulation.
+            impl_->perfHint.notifySpike(false, true, "omnicore-n64-render-spike");
+            impl_->perfHint.setTargetScale(0.76);
+            burstHeadroomUntil = std::max(
+                burstHeadroomUntil, controlNow + std::chrono::milliseconds(1900));
+            const float fillMs = audioFillMs_.load(std::memory_order_acquire);
+            const float bufferMs = audioBufferMs_.load(std::memory_order_acquire);
+            if (fillMs < std::max(30.0f, bufferMs * 1.25f)) impl_->adaptAudio(8);
+        }
         if (verySlowFrame) {
             impl_->perfHint.notifySpike(true, true, "omnicore-n64-frame-spike");
             impl_->perfHint.setTargetScale(0.78);
@@ -1643,7 +1787,8 @@ std::int16_t LibretroHost::inputStateCallback(unsigned port, unsigned device, un
 bool LibretroHost::clearThreadWaitsCallback(unsigned, void*) { return true; }
 std::uintptr_t LibretroHost::currentFramebufferCallback() {
     const auto& host = instance();
-    return host.impl_ ? static_cast<std::uintptr_t>(host.impl_->frontFbo) : 0u;
+    if (!host.impl_) return 0u;
+    return host.impl_->directPresent ? 0u : static_cast<std::uintptr_t>(host.impl_->frontFbo);
 }
 abi::retro_proc_address_t LibretroHost::procAddressCallback(const char* symbol) {
     if (!symbol || !*symbol) return nullptr;

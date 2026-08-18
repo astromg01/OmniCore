@@ -24,7 +24,10 @@ object N64NativeBridge {
         val adpfActive: Boolean = false,
         val burstShieldActive: Boolean = false,
         val warmStartActive: Boolean = false,
-        val shaderCacheEnabled: Boolean = false
+        val shaderCacheEnabled: Boolean = false,
+        val directPresenterActive: Boolean = false,
+        val shaderCacheReady: Boolean = false,
+        val smartAnalogDpadActive: Boolean = false
     ) {
         fun smartPerf(): N64SmartPerf.Telemetry = N64SmartPerf.Telemetry(
             averageFrameMs = averageFrameMs,
@@ -111,6 +114,9 @@ object N64NativeBridge {
                 internalResolution = config.internalResolution.multiplier,
                 analogDeadzonePercent = (input.analogDeadzone * 100f).roundToInt(),
                 analogSensitivityPercent = (input.analogSensitivity * 100f).roundToInt(),
+                smartAnalogMode = input.smartAnalogMode.storage,
+                smartAnalogAutoDpad = !input.showDpad,
+                precisionAnalog = input.precisionAnalog,
                 audioBufferBursts = decision.audioBufferBursts.coerceIn(2, 8)
             )
         }.getOrDefault(false)
@@ -213,7 +219,10 @@ object N64NativeBridge {
             adpfActive = raw.getOrElse(11) { 0f } >= 0.5f,
             burstShieldActive = raw.getOrElse(12) { 0f } >= 0.5f,
             warmStartActive = raw.getOrElse(13) { 0f } >= 0.5f,
-            shaderCacheEnabled = raw.getOrElse(14) { 0f } >= 0.5f
+            shaderCacheEnabled = raw.getOrElse(14) { 0f } >= 0.5f,
+            directPresenterActive = raw.getOrElse(15) { 0f } >= 0.5f,
+            shaderCacheReady = raw.getOrElse(16) { 0f } >= 0.5f,
+            smartAnalogDpadActive = raw.getOrElse(17) { 0f } >= 0.5f
         )
     }
 
@@ -246,6 +255,9 @@ object N64NativeBridge {
         internalResolution: Int,
         analogDeadzonePercent: Int,
         analogSensitivityPercent: Int,
+        smartAnalogMode: String,
+        smartAnalogAutoDpad: Boolean,
+        precisionAnalog: Boolean,
         audioBufferBursts: Int
     ): Boolean
     private external fun nativeSetAudioTargetBursts(bursts: Int)

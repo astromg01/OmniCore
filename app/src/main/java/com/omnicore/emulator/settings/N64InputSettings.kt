@@ -9,6 +9,12 @@ object N64InputSettings {
         RIGHT_STICK("right_stick", "Analógico direito")
     }
 
+    enum class SmartAnalogMode(val storage: String, val label: String) {
+        AUTO("auto", "Inteligente"),
+        ANALOG_ONLY("analog_only", "Somente analógico"),
+        DPAD_ONLY("dpad_only", "Analógico → D-pad")
+    }
+
     enum class PakMode(val storage: String, val label: String) {
         AUTO("auto", "Automático"),
         MEMORY("memory", "Controller Pak"),
@@ -27,6 +33,8 @@ object N64InputSettings {
     data class Config(
         val analogDeadzone: Float,
         val analogSensitivity: Float,
+        val smartAnalogMode: SmartAnalogMode,
+        val precisionAnalog: Boolean,
         val cButtonMode: CButtonMode,
         val pakMode: PakMode,
         val haptics: Boolean,
@@ -40,6 +48,8 @@ object N64InputSettings {
     private const val PREFS = "n64_input_settings"
     private const val KEY_DEADZONE = "analog_deadzone"
     private const val KEY_SENSITIVITY = "analog_sensitivity"
+    private const val KEY_SMART_ANALOG = "smart_analog_mode"
+    private const val KEY_PRECISION_ANALOG = "precision_analog"
     private const val KEY_C_MODE = "c_button_mode"
     private const val KEY_PAK = "pak_mode"
     private const val KEY_HAPTICS = "haptics"
@@ -56,6 +66,10 @@ object N64InputSettings {
         return Config(
             analogDeadzone = prefs.getFloat(KEY_DEADZONE, 0.10f).coerceIn(0.04f, 0.30f),
             analogSensitivity = prefs.getFloat(KEY_SENSITIVITY, 1.05f).coerceIn(0.70f, 1.30f),
+            smartAnalogMode = SmartAnalogMode.entries.firstOrNull {
+                it.storage == prefs.getString(KEY_SMART_ANALOG, SmartAnalogMode.AUTO.storage)
+            } ?: SmartAnalogMode.AUTO,
+            precisionAnalog = prefs.getBoolean(KEY_PRECISION_ANALOG, true),
             cButtonMode = CButtonMode.entries.firstOrNull {
                 it.storage == prefs.getString(KEY_C_MODE, CButtonMode.BUTTONS.storage)
             } ?: CButtonMode.BUTTONS,
@@ -77,6 +91,8 @@ object N64InputSettings {
         prefs(context).edit()
             .putFloat(KEY_DEADZONE, config.analogDeadzone.coerceIn(0.04f, 0.30f))
             .putFloat(KEY_SENSITIVITY, config.analogSensitivity.coerceIn(0.70f, 1.30f))
+            .putString(KEY_SMART_ANALOG, config.smartAnalogMode.storage)
+            .putBoolean(KEY_PRECISION_ANALOG, config.precisionAnalog)
             .putString(KEY_C_MODE, config.cButtonMode.storage)
             .putString(KEY_PAK, config.pakMode.storage)
             .putBoolean(KEY_HAPTICS, config.haptics)

@@ -18,8 +18,12 @@ object N64Storage {
         val saves = File(root, "saves")
         val states = File(root, "states")
         val system = File(root, "system")
+        val shaderCache = File(system, "Mupen64plus/shaders")
         val cache = File(context.cacheDir, "n64")
-        listOf(root, saves, states, system, cache).forEach { directory ->
+        // GLideN64 resolves its user cache from RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY
+        // and appends Mupen64plus/shaders. Keep it under filesDir, never cacheDir,
+        // so compiled combiner programs survive app/process restarts.
+        listOf(root, saves, states, system, shaderCache, cache).forEach { directory ->
             check(directory.exists() || directory.mkdirs()) { "Não foi possível preparar ${directory.absolutePath}" }
         }
         return Paths(root, saves, states, system, cache)

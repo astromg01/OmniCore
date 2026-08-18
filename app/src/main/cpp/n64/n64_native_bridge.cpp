@@ -38,7 +38,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeHasCore(JNIEnv*, jobje
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeRuntimeInfo(JNIEnv* env, jobject) {
-    const std::string value = std::string("OmniCore N64 Runtime 0.10.11 • Mupen64Plus-Next • GLES3 + AAudio host v10 • BurstShield + WarmStart + ShaderCache • ") +
+    const std::string value = std::string("OmniCore N64 Runtime 0.10.12 • Mupen64Plus-Next • GLES3 + AAudio host v11 • DirectPresenter + RenderShield + SmartAnalog + ShaderCache • ") +
         (hasLibretroCore() ? "core ready" : "core missing");
     return env->NewStringUTF(value.c_str());
 }
@@ -65,6 +65,9 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     jint internalResolution,
     jint analogDeadzonePercent,
     jint analogSensitivityPercent,
+    jstring smartAnalogMode,
+    jboolean smartAnalogAutoDpad,
+    jboolean precisionAnalog,
     jint audioBufferBursts) {
     if (!surface) return JNI_FALSE;
     ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
@@ -88,6 +91,9 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     config.internalResolution = internalResolution;
     config.analogDeadzonePercent = analogDeadzonePercent;
     config.analogSensitivityPercent = analogSensitivityPercent;
+    config.smartAnalogMode = fromJString(env, smartAnalogMode);
+    config.smartAnalogAutoDpad = smartAnalogAutoDpad == JNI_TRUE;
+    config.precisionAnalog = precisionAnalog == JNI_TRUE;
     config.audioBufferBursts = audioBufferBursts;
 
     const bool valid = !config.romPath.empty() && !config.systemDir.empty() && !config.saveDir.empty();
@@ -146,7 +152,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeLastMessage(JNIEnv* en
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeTelemetry(JNIEnv* env, jobject) {
     const auto telemetry = omnicore::n64::LibretroHost::instance().telemetry();
-    const jfloat values[15] = {
+    const jfloat values[18] = {
         telemetry.averageFrameMs,
         telemetry.p95FrameMs,
         static_cast<jfloat>(telemetry.droppedFrames),
@@ -161,10 +167,13 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeTelemetry(JNIEnv* env,
         telemetry.adpfActive,
         telemetry.burstShieldActive,
         telemetry.warmStartActive,
-        telemetry.shaderCacheEnabled
+        telemetry.shaderCacheEnabled,
+        telemetry.directPresenterActive,
+        telemetry.shaderCacheReady,
+        telemetry.smartAnalogDpadActive
     };
-    jfloatArray result = env->NewFloatArray(15);
-    if (result) env->SetFloatArrayRegion(result, 0, 15, values);
+    jfloatArray result = env->NewFloatArray(18);
+    if (result) env->SetFloatArrayRegion(result, 0, 18, values);
     return result;
 }
 

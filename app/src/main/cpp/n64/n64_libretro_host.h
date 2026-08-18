@@ -31,6 +31,9 @@ struct RuntimeConfig {
     int internalResolution = 10;
     int analogDeadzonePercent = 12;
     int analogSensitivityPercent = 100;
+    std::string smartAnalogMode = "auto";
+    bool smartAnalogAutoDpad = false;
+    bool precisionAnalog = true;
     int audioBufferBursts = 4;
 };
 
@@ -50,6 +53,9 @@ struct Telemetry {
     float burstShieldActive = 0.0f;
     float warmStartActive = 0.0f;
     float shaderCacheEnabled = 0.0f;
+    float directPresenterActive = 0.0f;
+    float shaderCacheReady = 0.0f;
+    float smartAnalogDpadActive = 0.0f;
 };
 
 class LibretroHost final {
@@ -105,6 +111,7 @@ private:
     std::atomic<bool> stopRequested_{false};
     std::atomic<bool> paused_{false};
     std::atomic<std::uint16_t> buttonMask_{0};
+    std::atomic<std::uint16_t> smartDpadMask_{0};
     std::atomic<std::int16_t> analogX_{0};
     std::atomic<std::int16_t> analogY_{0};
     std::atomic<std::int16_t> cX_{0};
@@ -130,6 +137,10 @@ private:
     std::atomic<bool> burstShieldActive_{false};
     std::atomic<bool> warmStartActive_{false};
     std::atomic<bool> shaderCacheEnabled_{false};
+    std::atomic<bool> directPresenterActive_{false};
+    std::atomic<bool> shaderCacheReady_{false};
+    std::atomic<bool> smartAnalogDpadActive_{false};
+    std::atomic<float> lastPresentMs_{0.0f};
     mutable std::mutex optionMutex_;
     std::unordered_map<std::string, std::string> options_;
     mutable std::mutex commandMutex_;

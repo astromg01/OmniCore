@@ -153,6 +153,20 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                             )
                         }
                     }
+                    Text("Smart Analog", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+                    Text(
+                        "Inteligente mantém o analógico N64 normal e, quando o D-pad virtual está oculto, também traduz movimentos fortes para setas. Use Analógico → D-pad para jogos digitais.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(N64InputSettings.SmartAnalogMode.entries) { mode ->
+                            FilterChip(
+                                selected = input.smartAnalogMode == mode,
+                                onClick = { saveInput(input.copy(smartAnalogMode = mode)) },
+                                label = { Text(mode.label) }
+                            )
+                        }
+                    }
                 }
                 item {
                     Text("Overlay touch", fontWeight = FontWeight.Bold)
@@ -200,6 +214,11 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                 }
                 item {
                     Text("Analógico", fontWeight = FontWeight.Bold)
+                    N64Toggle(
+                        title = "Precisão radial",
+                        subtitle = "Aplica deadzone uma única vez no host, preserva direção e amplia controle fino perto do centro sem reduzir alcance máximo.",
+                        checked = input.precisionAnalog
+                    ) { saveInput(input.copy(precisionAnalog = it)) }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         AssistChip(
                             onClick = { saveInput(input.copy(analogDeadzone = (input.analogDeadzone - 0.02f).coerceAtLeast(0.04f))) },
