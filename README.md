@@ -1,158 +1,163 @@
 # OmniCore
 
-> Android-first multi-system emulation hub built around isolated console runtimes, clean touch controls and device-aware performance.
+> Android-first multi-system emulation hub focused on console isolation, stable frame pacing, clean touch input and device-aware performance.
 
 [![Android](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
 [![Stable DEV](https://img.shields.io/badge/stable%20DEV-0.9.4-57D8FF)](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.9.4-dev)
-[![N64 Alpha](https://img.shields.io/badge/N64%20alpha-0.10.5%20Alpha%206-9879FF)](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.10.5-n64-alpha6)
+[![N64 Alpha](https://img.shields.io/badge/N64%20alpha-0.10.13%20Alpha%2014-9879FF)](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.10.13-n64-alpha14)
 [![PS1](https://img.shields.io/badge/PS1-device%20validated-57D8FF)](https://github.com/libretro/pcsx_rearmed)
-[![N64](https://img.shields.io/badge/N64-gameplay%20confirmed-F4C95D)](https://github.com/libretro/mupen64plus-libretro-nx)
+[![N64](https://img.shields.io/badge/N64-real--device%20testing-F4C95D)](https://github.com/libretro/mupen64plus-libretro-nx)
 [![Native](https://img.shields.io/badge/native-16%20KB%20ready-3DDC84)](app/src/main/cpp/)
 
-OmniCore is a **multi-system Android emulation hub**, not a frontend built around a single console. Every supported system owns its own core integration, runtime policy, settings, storage and console-specific input behavior while sharing one library and one consistent Android experience.
+OmniCore is a **multi-system Android emulation hub**, not a frontend wrapped around one emulator. Each supported console owns its own core integration, runtime policy, settings, storage, performance logic and console-specific input behavior while sharing one Android library experience.
 
-**PlayStation 1** is the current stable DEV backend. **Nintendo 64** is the second integrated backend and is now in active real-device Alpha development. PSP, Wii / GameCube, PlayStation 2 and Nintendo Switch remain roadmap targets.
+The current stable backend is **PlayStation 1**. **Nintendo 64** is the second integrated backend and is in active physical-device Alpha development. PSP, Wii / GameCube, PlayStation 2 and Nintendo Switch remain roadmap targets.
 
 ## Current status
 
 | Channel | Version | Status |
 |---|---:|---|
 | Stable DEV | **0.9.4** | PS1 gameplay, video, audio and controls validated on Android hardware |
-| N64 Alpha | **0.10.5 Alpha 6** | Real-device N64 gameplay confirmed; performance/audio/touch tuning in active validation |
+| N64 device-test | **0.10.13 Alpha 14** | Active physical-device testing with native Mupen64Plus-Next + GLideN64, SmartPrecompile and game-aware input |
 
-### Real-device Nintendo 64 milestone
+The N64 channel is experimental. CI validates architecture, compilation, packaging, signing, native core coexistence and 16 KB compatibility. Real gameplay quality, driver behavior and remaining game-specific performance issues are validated on physical Android devices.
 
-The N64 runtime has now crossed its first real-device gameplay milestone.
+## OmniCore 0.10.13 — N64 Alpha 14
 
-**Alpha 5 successfully booted and rendered a real Nintendo 64 game on Android hardware using OmniCore's own N64 runtime, Mupen64Plus-Next, GLideN64 and the dedicated touch layer.**
+Alpha 14 continues the real-device N64 optimization cycle with a focus on **reducing first-use stutter, coordinating the existing performance systems and improving game-specific input compatibility**.
 
-That milestone validates the core loading path, ROM preparation, EGL/OpenGL ES 3 hardware rendering, isolated N64 process and basic controller path on a physical Android device.
+### SmartPrecompile
 
-It does **not** mean N64 is finished or universally compatible. The current Alpha 6 cycle is focused on the next layer of work: sustained frame rate, audio stability, touch comfort, widescreen behavior and broader game compatibility.
+The N64 runtime now contains a bounded hidden warm-up stage before the first visible frame.
 
-## OmniCore 0.10.5 — N64 Alpha 6
+The current path:
 
-Alpha 6 is the current experimental multi-system build.
+- creates the GLideN64 hardware context;
+- snapshots the boot state when serialization is available;
+- runs a small number of hidden no-input / no-present frames;
+- lets early GLideN64 shader programs and Dynarec blocks materialize before gameplay;
+- flushes queued GPU work;
+- restores the boot snapshot before the first visible frame;
+- falls back safely if the core cannot provide the required snapshot path.
 
-### Performance focus
+The goal is not to compile every possible shader at startup. The pass is intentionally bounded so OmniCore can move predictable first-use work out of visible gameplay without turning launch into a large blocking compilation step.
 
-The N64 path now includes:
+### Persistent shader-cache warm-up
 
-- **Dynarec-first execution** instead of using the diagnostic Cached Interpreter for normal play.
-- N64-specific **SmartPerf** telemetry and decisions.
-- Native-resolution fallback under sustained frame pressure.
-- Reduced GLideN64 buffer-copy / LOD work in the low-cost performance path.
-- Frame pacing that discards excessive timing debt instead of issuing aggressive catch-up frame bursts.
-- Dedicated **AAudio** output with adaptive buffering.
-- Live audio-buffer target changes based on runtime underruns and frame telemetry.
-- Thermal-aware performance policy.
-- No root requirement, forced clocks, hidden APIs or persistent vendor tweaks.
+GLideN64 shader storage remains persistent under the N64 system directory.
 
-These Alpha 6 optimizations are still being evaluated on physical devices and should not yet be interpreted as a universal performance guarantee.
+Alpha 14 expands the cache warm-up path to:
 
-### N64 rendering and widescreen
+- verify the shader-cache directory before enabling storage;
+- prioritize recent cache files;
+- prefetch a bounded amount of existing shader data before context reset;
+- use up to **12 MiB** of page-cache warm-up budget;
+- cooperate with SmartPrecompile instead of treating file cache and runtime compilation as unrelated systems.
 
-The N64 renderer uses:
+A first encounter with a completely new shader combination can still require real compilation. Repeated runs should benefit when the device driver supports reusable shader binaries.
 
-- **Mupen64Plus-Next/libretro**
-- EGL + **OpenGL ES 3**
-- **GLideN64**
-- libretro hardware-render negotiation through `RETRO_ENVIRONMENT_SET_HW_RENDER`
+### SmartPerf + ADPF cooperation
 
-Presentation modes now include:
+OmniCore now lets the performance systems share state instead of reacting independently.
 
-- **Original 4:3**
-- **16:9 adjusted** using GLideN64's widescreen-aware aspect option
-- **16:9 stretched**
+During early N64 startup and precompile work:
 
-The adjusted mode is intended to use the backend's widescreen behavior rather than simply stretching a 4:3 frontend image. Individual games may still expose visual quirks because original N64 software was generally authored around 4:3 output.
+- ADPF can request temporary CPU + GPU headroom;
+- WarmStart protects audio and avoids premature low-latency tuning;
+- SmartPrecompile reports completion back into SmartPerf;
+- SmartPerf can leave the aggressive warm-up phase earlier once the session proves stable;
+- BurstShield / RenderShield continue reacting to measured frame and presentation spikes.
 
-### N64 touch controls
+This keeps optimization event-driven and bounded rather than permanently forcing maximum clocks or lowering visual quality for short transient spikes.
 
-Nintendo 64 has its own controller implementation rather than reusing PlayStation button semantics.
+### DirectPresenter + RenderBridge fallback
 
-Current controls include:
+On compatible devices OmniCore asks Android for a native buffer matching the selected internal N64 resolution and renders through the default framebuffer. Android's compositor then performs the final display scaling.
 
-- analog stick
-- A / B
-- Z
-- L / R
-- Start
-- four C-buttons
-- optional D-pad
-- stable multi-pointer ownership
-- slide retargeting between touch buttons
-- configurable touch scale
-- configurable opacity
-- optional haptics
-- **Clear**, Standard and Compact layouts
-- dynamic idle fade in the Clear layout
-- Android USB / Bluetooth physical-controller mapping
+When this path is accepted, OmniCore avoids its older extra full-frame GLES blit before presentation.
 
-The visual controls are deliberately smaller than their touch hitboxes so the screen can remain cleaner without making the buttons harder to hit.
+If the device rejects the requested native-buffer geometry, OmniCore automatically keeps the proven **RenderBridge** framebuffer path instead.
 
-## Multi-system library
+### Smart Analog + Game Intelligence
 
-The home screen is **OmniCore-first**, not PS1-first or N64-first.
+Alpha 14 extends the N64 input system with lightweight ROM-aware compatibility policy.
 
-The app includes:
+The left analog keeps normal N64 analog behavior by default, but **AUTO** can now enable analog-to-D-pad bridging for known digital-movement titles without requiring the virtual arrows to be hidden.
 
-- unified **Biblioteca**
-- **Sistemas** area
-- **Ajustes** area
-- system filters that act as library views rather than forced file classification
-- independent PS1 and N64 configuration surfaces
-- room for future systems without presenting planned cores as already functional
+Current behavior includes:
 
-### Mixed folder scanning
+- **Inteligente / AUTO** — normal analog input plus compatibility-aware D-pad projection when appropriate;
+- **Somente analógico** — never synthesizes D-pad input;
+- **Analógico → D-pad** — explicitly converts the left analog into digital directions;
+- radial deadzone and sensitivity shaping in one native stage;
+- directional hysteresis to reduce flicker around thresholds;
+- diagonal D-pad projection;
+- separate synthesized and physical/touch D-pad masks so one input source cannot corrupt another.
 
-A selected folder can contain supported content from more than one console.
+The first explicit digital-movement profile is **Kirby**, allowing the left analog to drive games that normally respond only to N64 D-pad directions while AUTO is selected.
 
-The scanner can currently:
+### Renderer and compatibility protections
 
-- keep PS1 `CUE/BIN` sets grouped correctly
-- continue scanning after finding a PS1 CUE
-- detect Nintendo 64 ROMs in the same selected folder
-- avoid listing CUE-referenced PS1 BIN tracks as separate games
-- perform import I/O away from the Compose/UI thread
-- keep ambiguous files away from the wrong backend when confidence is insufficient
+Alpha 14 preserves the compatibility-sensitive foundation built during earlier N64 alphas:
 
-Recursive nested-folder discovery remains a future library improvement.
+- **Mupen64Plus-Next/libretro** pinned to `f275caf4b2bfa1e6d1c51636746ea793f3d80320`;
+- **GLideN64** over OpenGL ES 3;
+- Dynarec-first CPU policy;
+- framebuffer emulation protected for compatibility-sensitive effects and menus;
+- Intelligent **1.5×** internal-resolution path preserved (`960×720` at 4:3 / `960×540` widescreen);
+- widescreen remains independent from framebuffer compatibility policy;
+- DirectPresenter with automatic RenderBridge fallback;
+- adaptive native AAudio;
+- save RAM and save states;
+- editable touch-control positions and per-control sizing;
+- optional D-pad visibility;
+- external Android controller support;
+- frame-time, presentation, audio and runtime-state telemetry.
 
-## Nintendo 64 ROM support
+## Multi-system frontend
 
-N64 recognition is **signature-first**, not extension-only.
+The home screen is OmniCore-first rather than tied to one console.
+
+Current frontend architecture includes:
+
+- unified **Biblioteca**;
+- dedicated **Sistemas** area;
+- dedicated **Ajustes** area;
+- console filters as library views rather than forced file classifications;
+- isolated PS1 and N64 configuration/runtime state;
+- multi-system folder scanning;
+- console-specific launch preparation and prepared-content caches.
+
+## Nintendo 64 content handling
+
+N64 recognition is signature-first rather than extension-only.
 
 Recognized native byte orders:
 
-- big-endian `.z64` — header `80 37 12 40`
-- byte-swapped `.v64` — header `37 80 40 12`
-- little-endian `.n64` — header `40 12 37 80`
+- big-endian `.z64` — header `80 37 12 40`;
+- byte-swapped `.v64` — header `37 80 40 12`;
+- little-endian `.n64` — header `40 12 37 80`.
 
-Current preparation support includes:
+The N64 preparation path supports:
 
-- `.z64`
-- `.n64`
-- `.v64`
-- valid `.rom` / `.bin` dumps when the actual N64 signature matches
-- ZIP containing a recognized N64 ROM
-- GZIP containing a recognized N64 ROM
+- `.z64`;
+- `.n64`;
+- `.v64`;
+- correctly identified `.rom` / `.bin` dumps;
+- ZIP containing a recognized N64 ROM;
+- GZIP containing a recognized N64 ROM.
 
-Byte-swapped and little-endian dumps are normalized into a canonical big-endian `.z64` file inside the N64-only cache. The original source file is not modified.
+Prepared N64 content is normalized into the N64-only cache without modifying the user's source file.
 
 `7z` is not advertised yet because OmniCore does not currently bundle a validated 7z extraction backend.
 
-## N64 crash isolation and diagnostics
+## N64 crash isolation
 
 Nintendo 64 runs in a dedicated Android process:
 
 `com.omnicore.emulator:n64`
 
-This keeps an experimental N64 failure isolated from the main OmniCore library / PS1 process.
-
-The N64 path also records local boot breadcrumbs covering Activity creation, settings, UI, core probing, storage, ROM preparation, Surface creation and JNI/native startup. Java/Kotlin launch exceptions can be persisted and shown inside OmniCore after the N64 process exits.
-
-This diagnostic path was used during the Alpha cycle to identify and fix an Android `WindowInsetsController` launch crash before the emulator core itself had even started.
+This isolates experimental Mupen64Plus-Next / GLideN64 native failures from the main OmniCore library and the PS1 runtime.
 
 ## PlayStation 1 — stable DEV 0.9.4
 
@@ -160,50 +165,50 @@ The PS1 backend has real-device validated gameplay, video, audio and controls us
 
 Highlights:
 
-- **PCSX-ReARMed/libretro** pinned reproducibly
-- ARM64 + ARMv7
-- native C++/JNI runtime
-- EGL / OpenGL ES presentation
-- adaptive AAudio
-- stable per-pointer multitouch controls
-- Android USB/Bluetooth controller input
-- save RAM / memory cards and save states
-- optional user-supplied PS1 BIOS
-- optional classic PS BIOS boot/logo with a valid real BIOS
-- CUE/BIN folder workflow
-- CHD/PBP single-file workflows where supported
-- persistent prepared-disc cache
-- 4:3, 16:9 presentation and fullscreen modes
+- PCSX-ReARMed/libretro pinned reproducibly;
+- ARM64 + ARMv7;
+- native C++/JNI runtime;
+- EGL/OpenGL ES presentation;
+- adaptive AAudio;
+- stable per-pointer multitouch controls;
+- Android USB/Bluetooth controller input;
+- save RAM / memory cards and save states;
+- optional user-supplied PS1 BIOS;
+- CUE/BIN folder workflow plus supported single-file images such as CHD/PBP;
+- persistent prepared-disc cache;
+- 4:3, 16:9 presentation and fullscreen modes.
 
 No PlayStation BIOS is bundled.
 
-## Console isolation
+## SmartPerf architecture
 
-OmniCore intentionally keeps console-specific behavior separate.
+Performance management is part of OmniCore's runtime architecture rather than a single global “boost” switch.
 
-PS1 and N64 do **not** share console-specific:
+Current principles include:
 
-- runtime knobs
-- core settings
-- save directories
-- controller semantics
-- firmware policy
-- performance tuning state
+- per-console performance policy;
+- conservative device profiling;
+- frame pacing based on core timing;
+- thermal and memory-pressure awareness;
+- measured CPU/GPU presentation pressure;
+- bounded adaptive audio buffering;
+- Android Performance Hint / ADPF integration when available;
+- background content preparation;
+- compatibility-first defaults on lower-end devices;
+- no root requirement, hidden APIs, forced CPU/GPU clocks or persistent vendor tweaks.
 
-The shared application layer provides the library, navigation and common Android experience, while each console backend remains independently maintainable.
+N64 and PS1 do **not** share console-specific tuning state.
 
 ## Multi-system roadmap
 
 | System | Backend direction | Status |
 |---|---|---|
 | PlayStation 1 | PCSX-ReARMed / libretro | **Functional / device validated** |
-| Nintendo 64 | Mupen64Plus-Next / libretro | **Integrated / gameplay confirmed / Alpha optimization** |
+| Nintendo 64 | Mupen64Plus-Next / libretro | **Integrated / Alpha 14 real-device testing** |
 | PSP | PPSSPP | Planned |
 | Wii / GameCube | Dolphin | Planned |
 | PlayStation 2 | Backend evaluation | Planned |
 | Nintendo Switch | Experimental backend evaluation | Long-term |
-
-Future systems are not considered functional until their own runtime has been integrated and validated.
 
 ## Downloads
 
@@ -213,29 +218,19 @@ Future systems are not considered functional until their own runtime has been in
 
 **[Direct APK — OmniCore-v0.9.4-debug.apk](https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.9.4-dev/OmniCore-v0.9.4-debug.apk)**
 
-### Experimental N64 / multi-system build
+### Experimental multi-system / N64 build
 
-**[OmniCore v0.10.5 N64 Alpha 6](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.10.5-n64-alpha6)**
+**[OmniCore v0.10.13 N64 Alpha 14](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.10.13-n64-alpha14)**
 
-**[Direct APK — OmniCore-v0.10.5-n64-alpha6-debug.apk](https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.10.5-n64-alpha6/OmniCore-v0.10.5-n64-alpha6-debug.apk)**
+**[Direct APK — OmniCore-v0.10.13-n64-alpha14-debug.apk](https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.10.13-n64-alpha14/OmniCore-v0.10.13-n64-alpha14-debug.apk)**
 
-The Alpha uses the same stable DEV signing identity as modern OmniCore development builds, allowing compatible test installations to update in place.
-
-Development releases may still contain game-specific compatibility or performance regressions. Keep important save data backed up while the runtime remains under active development.
+Modern DEV / N64 test builds use the stable OmniCore DEV signing identity so compatible installations can update in place.
 
 ## Content and firmware policy
 
-OmniCore does **not** include:
-
-- ROMs or game images
-- BIOS files
-- firmware
-- console encryption keys
-- proprietary game assets
+OmniCore does **not** include ROMs, game images, BIOS files, firmware, console encryption keys or proprietary game assets.
 
 Users are responsible for supplying content and firmware they are legally entitled to use.
-
-Standard N64 cartridge ROMs do not require an external BIOS in the current Mupen64Plus-Next path. Future systems that require firmware will use their own isolated firmware management instead of a global shared BIOS folder.
 
 ## Android / build baseline
 
@@ -260,74 +255,36 @@ Mupen64Plus-Next pin:
 
 Corresponding source archives are published beside applicable development APKs.
 
-## Alpha 6 CI validation
+## Alpha 14 CI validation
 
-The Alpha 6 release pipeline validates:
+Run `32155750953` validated the Alpha 14 release path:
 
-- multi-system architecture checks
-- Kotlin/native host compilation
-- PCSX-ReARMed build
-- Mupen64Plus-Next ARM64/ARMv7 build
-- PS1/N64 core coexistence
-- signed OmniCore 0.10.5 APK
-- stable DEV certificate
-- native 16 KB ELF alignment
-- APK `zipalign -P 16` validation
-- corresponding core source archives
-- GitHub Alpha prerelease publication
+- Alpha 14 migration and architecture guards;
+- PS1/N64 isolation checks;
+- Kotlin + native N64 host compilation;
+- PCSX-ReARMed build;
+- Mupen64Plus-Next ARM64/ARMv7 build;
+- source archives;
+- signed **0.10.13** APK;
+- stable DEV certificate;
+- 16 KB native ELF/APK alignment;
+- GitHub Alpha 14 prerelease publication.
 
-CI does not use copyrighted ROMs, BIOS or firmware and therefore does not replace physical-device gameplay testing.
-
-## Project structure
-
-```text
-app/
-  src/main/java/com/omnicore/emulator/
-    core/
-      n64/           Nintendo 64 core integration and ROM preparation
-    emulation/       PS1/N64 activities and console-specific touch input
-    library/         Multi-system import / recognition
-    performance/     Per-console SmartPerf policies
-    settings/        Console-specific settings
-    storage/         Library, saves, BIOS/firmware and caches
-    ui/              Multi-system Compose frontend
-
-  src/main/cpp/
-    libretro_host_v7.cpp
-    gl_presenter.cpp
-    native_bridge.cpp
-    n64/
-      n64_libretro_host.cpp
-      n64_native_bridge.cpp
-
-third_party/
-  PCSX_REARMED_PIN.txt
-  MUPEN64PLUS_NEXT_PIN.txt
-  licenses/
-
-tools/
-  fetch_ps1_core.sh
-  build_ps1_core_android.sh
-  fetch_n64_core.sh
-  build_n64_core_android.sh
-```
+CI uses no copyrighted ROMs, BIOS or firmware.
 
 ## Licensing
 
-PCSX-ReARMed and Mupen64Plus-Next are distributed under GNU GPL v2 terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the corresponding source archives published with development builds.
-
-OmniCore's distribution model must remain compatible with every backend included in a public build. Core licensing is treated as an architectural requirement.
+PCSX-ReARMed and Mupen64Plus-Next are distributed under GNU GPL v2 terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the corresponding source archives.
 
 ## Immediate development priorities
 
-1. Validate Alpha 6 N64 frame pacing and audio behavior on physical Android hardware.
-2. Tune SmartPerf using real-device telemetry without destabilizing the now-working boot/render path.
-3. Refine N64 Clear touch controls, hitboxes, layouts and per-device ergonomics.
-4. Expand N64 ROM/game compatibility testing.
-5. Add N64 save persistence and save states after runtime stability is sufficient.
-6. Improve multi-system recursive folder scanning and library metadata.
-7. Continue PS1 regression testing against the stable 0.9.4 foundation.
-8. Integrate future consoles only behind their own isolated runtime/settings/storage boundary.
+1. Measure Alpha 14 SmartPrecompile impact on repeated real-device N64 runs.
+2. Verify Kirby and other digital-movement titles through Smart Analog AUTO without regressing analog-native games.
+3. Continue reducing renderer/framebuffer transition spikes without lowering the protected 1.5× Intelligent target.
+4. Expand Game Intelligence only from confirmed compatibility data rather than broad game-name hacks.
+5. Continue N64 regression testing for save states, widescreen, touch editing and physical controllers.
+6. Add recursive multi-system folder scanning and richer library metadata.
+7. Continue PS1 regression testing against the isolated stable 0.9.4 foundation.
 
 ---
 
