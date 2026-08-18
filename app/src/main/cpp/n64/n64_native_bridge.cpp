@@ -38,7 +38,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeHasCore(JNIEnv*, jobje
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeRuntimeInfo(JNIEnv* env, jobject) {
-    const std::string value = std::string("OmniCore N64 Runtime 0.10.12 • Mupen64Plus-Next • GLES3 + AAudio host v11 • DirectPresenter + RenderShield + SmartAnalog + ShaderCache • ") +
+    const std::string value = std::string("OmniCore N64 Runtime 0.10.13 • Mupen64Plus-Next • GLES3 + AAudio host v12 • SmartPrecompile + DirectPresenter + RenderShield + GameAware SmartAnalog + ShaderCache • ") +
         (hasLibretroCore() ? "core ready" : "core missing");
     return env->NewStringUTF(value.c_str());
 }
@@ -152,7 +152,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeLastMessage(JNIEnv* en
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeTelemetry(JNIEnv* env, jobject) {
     const auto telemetry = omnicore::n64::LibretroHost::instance().telemetry();
-    const jfloat values[18] = {
+    const jfloat values[19] = {
         telemetry.averageFrameMs,
         telemetry.p95FrameMs,
         static_cast<jfloat>(telemetry.droppedFrames),
@@ -170,10 +170,11 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeTelemetry(JNIEnv* env,
         telemetry.shaderCacheEnabled,
         telemetry.directPresenterActive,
         telemetry.shaderCacheReady,
-        telemetry.smartAnalogDpadActive
+        telemetry.smartAnalogDpadActive,
+        telemetry.smartPrecompileReady
     };
-    jfloatArray result = env->NewFloatArray(18);
-    if (result) env->SetFloatArrayRegion(result, 0, 18, values);
+    jfloatArray result = env->NewFloatArray(19);
+    if (result) env->SetFloatArrayRegion(result, 0, 19, values);
     return result;
 }
 

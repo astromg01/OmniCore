@@ -27,7 +27,8 @@ object N64NativeBridge {
         val shaderCacheEnabled: Boolean = false,
         val directPresenterActive: Boolean = false,
         val shaderCacheReady: Boolean = false,
-        val smartAnalogDpadActive: Boolean = false
+        val smartAnalogDpadActive: Boolean = false,
+        val smartPrecompileReady: Boolean = false
     ) {
         fun smartPerf(): N64SmartPerf.Telemetry = N64SmartPerf.Telemetry(
             averageFrameMs = averageFrameMs,
@@ -40,7 +41,8 @@ object N64NativeBridge {
             targetFps = targetFps,
             pacingCorrectionPct = pacingCorrectionPct,
             presentAverageMs = presentAverageMs,
-            presentP95Ms = presentP95Ms
+            presentP95Ms = presentP95Ms,
+            smartPrecompileReady = smartPrecompileReady
         )
     }
 
@@ -82,6 +84,7 @@ object N64NativeBridge {
             N64InputSettings.PakMode.AUTO,
             N64InputSettings.PakMode.MEMORY -> "memory"
         }
+        val inputPolicy = N64GameIntelligence.inputPolicy(rom)
         val diagnosticFile = File(paths.root, "last_boot_stage.txt")
         val verificationFile = File(paths.root, "boot_verified.flag")
         val saveRamFile = N64Storage.saveRamFile(paths, gameKey)
@@ -90,7 +93,8 @@ object N64NativeBridge {
         runCatching {
             diagnosticFile.writeText(
                 "stage=kotlin:native_start\ntimestamp=${System.currentTimeMillis()}\n" +
-                    "detail=${config.cpuMode.storage},threaded=${config.threadedRenderer},fb=${config.framebufferEmulation},aspect=${config.aspectRatio.storage}\n"
+                    "detail=${config.cpuMode.storage},threaded=${config.threadedRenderer},fb=${config.framebufferEmulation},aspect=${config.aspectRatio.storage}," +
+                    "smartInput=${inputPolicy.reason ?: "generic"},title=${inputPolicy.internalTitle.take(28)}\n"
             )
         }
 
@@ -115,7 +119,7 @@ object N64NativeBridge {
                 analogDeadzonePercent = (input.analogDeadzone * 100f).roundToInt(),
                 analogSensitivityPercent = (input.analogSensitivity * 100f).roundToInt(),
                 smartAnalogMode = input.smartAnalogMode.storage,
-                smartAnalogAutoDpad = !input.showDpad,
+                smartAnalogAutoDpad = !input.showDpad || inputPolicy.bridgeDpadInAuto,
                 precisionAnalog = input.precisionAnalog,
                 audioBufferBursts = decision.audioBufferBursts.coerceIn(2, 8)
             )
@@ -222,7 +226,8 @@ object N64NativeBridge {
             shaderCacheEnabled = raw.getOrElse(14) { 0f } >= 0.5f,
             directPresenterActive = raw.getOrElse(15) { 0f } >= 0.5f,
             shaderCacheReady = raw.getOrElse(16) { 0f } >= 0.5f,
-            smartAnalogDpadActive = raw.getOrElse(17) { 0f } >= 0.5f
+            smartAnalogDpadActive = raw.getOrElse(17) { 0f } >= 0.5f,
+            smartPrecompileReady = raw.getOrElse(18) { 0f } >= 0.5f
         )
     }
 

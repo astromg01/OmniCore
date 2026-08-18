@@ -417,6 +417,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             append(if (t.warmStartActive) " • WarmStart" else "")
             append(if (t.shaderCacheEnabled) " • ShaderCache" else "")
             append(if (t.shaderCacheReady) " ✓" else "")
+            append(if (t.smartPrecompileReady) " • SmartPrecompile ✓" else "")
             append(if (t.directPresenterActive) " • DirectPresenter" else " • RenderBridge")
             append(if (t.smartAnalogDpadActive) " • SmartAnalog→D" else "")
             append("\nÁudio ")

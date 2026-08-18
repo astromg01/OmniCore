@@ -107,31 +107,48 @@ std::size_t warmDirectoryPages(const std::string& path, std::size_t budgetBytes)
     if (path.empty() || budgetBytes == 0) return 0;
     DIR* dir = ::opendir(path.c_str());
     if (!dir) return 0;
-    const long pageSize = std::max<long>(4096, ::sysconf(_SC_PAGESIZE));
-    std::size_t warmed = 0;
-    while (warmed < budgetBytes) {
-        dirent* entry = ::readdir(dir);
-        if (!entry) break;
+
+    struct WarmFile final {
+        std::string path;
+        std::size_t size = 0;
+        std::int64_t modified = 0;
+    };
+    std::vector<WarmFile> files;
+    while (dirent* entry = ::readdir(dir)) {
         if (entry->d_name[0] == '.') continue;
         const std::string filePath = path + "/" + entry->d_name;
-        const int fd = ::open(filePath.c_str(), O_RDONLY | O_CLOEXEC);
-        if (fd < 0) continue;
         struct stat st {};
-        if (::fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0) {
+        if (::stat(filePath.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) continue;
+        files.push_back({
+            filePath,
+            static_cast<std::size_t>(st.st_size),
+            static_cast<std::int64_t>(st.st_mtime)
+        });
+    }
+    ::closedir(dir);
+    std::sort(files.begin(), files.end(), [](const WarmFile& a, const WarmFile& b) {
+        if (a.modified != b.modified) return a.modified > b.modified;
+        return a.size > b.size;
+    });
+
+    const long pageSize = std::max<long>(4096, ::sysconf(_SC_PAGESIZE));
+    std::size_t warmed = 0;
+    for (const auto& file : files) {
+        if (warmed >= budgetBytes) break;
+        const int fd = ::open(file.path.c_str(), O_RDONLY | O_CLOEXEC);
+        if (fd < 0) continue;
 #ifdef POSIX_FADV_WILLNEED
-            ::posix_fadvise(fd, 0, 0, POSIX_FADV_WILLNEED);
+        ::posix_fadvise(fd, 0, static_cast<off_t>(file.size), POSIX_FADV_WILLNEED);
 #endif
-            const std::size_t remaining = budgetBytes - warmed;
-            const std::size_t fileBudget = std::min<std::size_t>(static_cast<std::size_t>(st.st_size), remaining);
-            std::uint8_t byte = 0;
-            for (std::size_t offset = 0; offset < fileBudget; offset += static_cast<std::size_t>(pageSize)) {
-                if (::pread(fd, &byte, 1, static_cast<off_t>(offset)) != 1) break;
-                warmed += std::min<std::size_t>(static_cast<std::size_t>(pageSize), fileBudget - offset);
-            }
+        const std::size_t remaining = budgetBytes - warmed;
+        const std::size_t fileBudget = std::min(file.size, remaining);
+        std::uint8_t byte = 0;
+        for (std::size_t offset = 0; offset < fileBudget; offset += static_cast<std::size_t>(pageSize)) {
+            if (::pread(fd, &byte, 1, static_cast<off_t>(offset)) != 1) break;
+            warmed += std::min<std::size_t>(static_cast<std::size_t>(pageSize), fileBudget - offset);
         }
         ::close(fd);
     }
-    ::closedir(dir);
     return warmed;
 }
 
@@ -929,6 +946,8 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     buttonMask_.store(0, std::memory_order_release);
     smartDpadMask_.store(0, std::memory_order_release);
     smartAnalogDpadActive_.store(false, std::memory_order_release);
+    smartPrecompileActive_.store(false, std::memory_order_release);
+    smartPrecompileReady_.store(false, std::memory_order_release);
     setAnalog(0.0f, 0.0f, 0.0f, 0.0f);
     {
         std::lock_guard<std::mutex> lock(telemetryMutex_);
@@ -956,12 +975,15 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     warmStartActive_.store(false, std::memory_order_release);
     shaderCacheEnabled_.store(false, std::memory_order_release);
     shaderCacheReady_.store(false, std::memory_order_release);
+    shaderCacheHot_.store(false, std::memory_order_release);
     directPresenterActive_.store(false, std::memory_order_release);
     smartAnalogDpadActive_.store(false, std::memory_order_release);
+    smartPrecompileActive_.store(false, std::memory_order_release);
+    smartPrecompileReady_.store(false, std::memory_order_release);
     lastPresentMs_.store(0.0f, std::memory_order_release);
     hwRenderRequested_ = false;
     hwRender_ = {};
-    setMessage("N64 BOOT 1/6 • runtime Alpha 7 single-pacer…");
+    setMessage("N64 BOOT 1/7 • Alpha 14 SmartPrecompile + Game Intelligence…");
     try {
         thread_ = std::thread(&LibretroHost::run, this);
     } catch (...) {
@@ -1259,6 +1281,10 @@ bool LibretroHost::environment(unsigned cmd, void* data) {
 void LibretroHost::videoRefresh(const void* data, unsigned, unsigned, std::size_t) {
     if (!impl_ || impl_->display == EGL_NO_DISPLAY) return;
     if (data != abi::RETRO_HW_FRAME_BUFFER_VALID) return;
+    if (smartPrecompileActive_.load(std::memory_order_acquire)) {
+        glFlush();
+        return;
+    }
     const auto presentBegin = std::chrono::steady_clock::now();
     if (!impl_->directPresent) {
         if (impl_->frontFbo == 0) return;
@@ -1307,6 +1333,7 @@ std::size_t LibretroHost::audioBatch(const std::int16_t* data, std::size_t frame
 }
 
 std::int16_t LibretroHost::inputState(unsigned port, unsigned device, unsigned index, unsigned id) const {
+    if (smartPrecompileActive_.load(std::memory_order_acquire)) return 0;
     if (port != 0) return 0;
     if (device == RETRO_DEVICE_JOYPAD) {
         const auto mask = static_cast<std::uint16_t>(
@@ -1371,6 +1398,7 @@ Telemetry LibretroHost::telemetry() const {
     out.directPresenterActive = directPresenterActive_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
     out.shaderCacheReady = shaderCacheReady_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
     out.smartAnalogDpadActive = smartAnalogDpadActive_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
+    out.smartPrecompileReady = smartPrecompileReady_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
     if (presentCount > 0) {
         float totalPresent = 0.0f;
         for (std::size_t i = 0; i < presentCount; ++i) totalPresent += presentSnapshot[i];
@@ -1489,6 +1517,44 @@ bool LibretroHost::processPendingCommand() {
     return false;
 }
 
+bool LibretroHost::runSmartPrecompile() {
+    if (!impl_ || !impl_->gameLoaded || !impl_->core.run ||
+        !impl_->core.serializeSize || !impl_->core.serialize || !impl_->core.unserialize) {
+        return false;
+    }
+    const std::size_t stateSize = impl_->core.serializeSize();
+    if (stateSize == 0 || stateSize > 64u * 1024u * 1024u) return false;
+
+    std::vector<std::uint8_t> bootState(stateSize);
+    if (!impl_->core.serialize(bootState.data(), bootState.size())) return false;
+    // Prove that the snapshot can be restored before we mutate emulation state.
+    if (!impl_->core.unserialize(bootState.data(), bootState.size())) return false;
+
+    const int warmFrames = shaderCacheHot_.load(std::memory_order_acquire) ? 5 : 9;
+    smartPrecompileActive_.store(true, std::memory_order_release);
+    setMessage("N64 BOOT 5/7 • SmartPrecompile aquecendo shaders + Dynarec…");
+    if (impl_->perfHint.active()) {
+        impl_->perfHint.notifySpike(true, true, "omnicore-n64-smart-precompile");
+        impl_->perfHint.setTargetScale(0.76);
+    }
+
+    bool ran = true;
+    for (int frame = 0; frame < warmFrames; ++frame) {
+        if (stopRequested_.load(std::memory_order_acquire)) {
+            ran = false;
+            break;
+        }
+        impl_->core.run();
+    }
+    glFinish();
+    const bool restored = impl_->core.unserialize(bootState.data(), bootState.size());
+    smartPrecompileActive_.store(false, std::memory_order_release);
+    if (!ran || !restored) return false;
+
+    smartPrecompileReady_.store(true, std::memory_order_release);
+    return true;
+}
+
 void LibretroHost::run() {
     // App-owned emulation thread only; no governor/clock/system mutation.
     // Android may reject the priority request, in which case ADPF/default
@@ -1503,6 +1569,7 @@ void LibretroHost::run() {
             adpfActive_.store(false, std::memory_order_release);
             burstShieldActive_.store(false, std::memory_order_release);
             warmStartActive_.store(false, std::memory_order_release);
+            smartPrecompileActive_.store(false, std::memory_order_release);
             impl_->closeAudio();
             if (impl_->gameLoaded && impl_->core.unloadGame) {
                 impl_->core.unloadGame();
@@ -1599,8 +1666,9 @@ void LibretroHost::run() {
 
     if (shaderCacheReady_.load(std::memory_order_acquire)) {
         const std::string shaderDir = config_.systemDir + "/Mupen64plus/shaders";
-        const std::size_t warmed = warmDirectoryPages(shaderDir, 4u * 1024u * 1024u);
-        if (warmed > 0) logPrint(ANDROID_LOG_INFO, "ShaderWarmup prefetched %zu bytes", warmed);
+        const std::size_t warmed = warmDirectoryPages(shaderDir, 12u * 1024u * 1024u);
+        shaderCacheHot_.store(warmed > 0, std::memory_order_release);
+        if (warmed > 0) logPrint(ANDROID_LOG_INFO, "SmartPrecompile cache-prefetched %zu bytes", warmed);
     }
     hwRender_.context_reset();
     callContextDestroy = true;
@@ -1612,6 +1680,16 @@ void LibretroHost::run() {
         ? avInfo.timing.fps : 60.0;
     impl_->coreSampleRate = avInfo.timing.sample_rate > 1000.0 ? avInfo.timing.sample_rate : 44100.0;
     targetFps_.store(static_cast<float>(impl_->targetFps), std::memory_order_release);
+    const bool adpfReady = impl_->perfHint.open(impl_->targetFps);
+    adpfActive_.store(adpfReady, std::memory_order_release);
+    if (adpfReady) {
+        impl_->perfHint.notifyReset(true, true, "omnicore-n64-session");
+        impl_->perfHint.bindSurface(window_);
+        impl_->perfHint.setTargetScale(0.80);
+    }
+    const bool precompileReady = runSmartPrecompile();
+    if (adpfReady) impl_->perfHint.setTargetScale(precompileReady ? 0.84 : 0.82);
+
     const bool audioReady = impl_->openAudio(
         impl_->coreSampleRate,
         audioTargetBursts_.load(std::memory_order_acquire));
@@ -1622,20 +1700,15 @@ void LibretroHost::run() {
     const auto lateResetThreshold = std::chrono::duration_cast<std::chrono::steady_clock::duration>(target * 0.55);
     const float targetMs = static_cast<float>(1000.0 / impl_->targetFps);
     targetFrameMs_.store(targetMs, std::memory_order_release);
-    const bool adpfReady = impl_->perfHint.open(impl_->targetFps);
-    adpfActive_.store(adpfReady, std::memory_order_release);
-    if (adpfReady) {
-        impl_->perfHint.notifyReset(true, true, "omnicore-n64-session");
-        impl_->perfHint.bindSurface(window_);
-        // Ask for transient headroom while dynarec blocks and GLideN64 shaders
-        // are being seen for the first time. This does not change fidelity.
-        impl_->perfHint.setTargetScale(0.84);
-    }
     burstShieldActive_.store(adpfReady && impl_->perfHint.burstCapable(), std::memory_order_release);
     warmStartActive_.store(true, std::memory_order_release);
     setMessage(audioReady
-        ? "N64 BOOT 5/6 • GLideN64 + AAudio nativo, aguardando primeiro frame…"
-        : "N64 BOOT 5/6 • GLideN64 pronto, aguardando primeiro frame…");
+        ? (precompileReady
+            ? "N64 BOOT 6/7 • SmartPrecompile ✓ • GLideN64 + AAudio, primeiro frame…"
+            : "N64 BOOT 6/7 • GLideN64 + AAudio, primeiro frame…")
+        : (precompileReady
+            ? "N64 BOOT 6/7 • SmartPrecompile ✓ • GLideN64, primeiro frame…"
+            : "N64 BOOT 6/7 • GLideN64 pronto, primeiro frame…"));
 
     auto nextFrame = std::chrono::steady_clock::now() + targetDuration;
     std::uint32_t adaptationCounter = 0;

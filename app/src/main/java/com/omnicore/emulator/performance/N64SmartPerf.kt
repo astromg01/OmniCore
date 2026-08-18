@@ -24,7 +24,8 @@ object N64SmartPerf {
         val targetFps: Float = 0f,
         val pacingCorrectionPct: Float = 0f,
         val presentAverageMs: Float = 0f,
-        val presentP95Ms: Float = 0f
+        val presentP95Ms: Float = 0f,
+        val smartPrecompileReady: Boolean = false
     ) {
         val hasUsefulWindow: Boolean get() = sampleWindowFrames >= 90
         val targetFrameMs: Float
@@ -67,7 +68,7 @@ object N64SmartPerf {
         private var lastTransitionAt = 0L
         private var lastAudioStressAt = 0L
         private val warmupStartedAt = SystemClock.elapsedRealtime()
-        private val warmupMinUntil = warmupStartedAt + 12_000L
+        private var warmupMinUntil = warmupStartedAt + 12_000L
         private val warmupMaxUntil = warmupStartedAt + 45_000L
         private var warmupStableWindows = 0
         private var warmupActive = true
@@ -87,6 +88,9 @@ object N64SmartPerf {
             val signals = runtimeSignals(appContext)
             val candidate = resolve(profile, requested, signals, telemetry)
             val now = SystemClock.elapsedRealtime()
+            if (telemetry.smartPrecompileReady) {
+                warmupMinUntil = minOf(warmupMinUntil, warmupStartedAt + 7_000L)
+            }
             if (recentUnderruns > 0 || telemetry.audioCritical) lastAudioStressAt = now
 
             val stableWarmupWindow = telemetry.hasUsefulWindow &&

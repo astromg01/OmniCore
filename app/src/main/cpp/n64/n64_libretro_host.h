@@ -56,6 +56,7 @@ struct Telemetry {
     float directPresenterActive = 0.0f;
     float shaderCacheReady = 0.0f;
     float smartAnalogDpadActive = 0.0f;
+    float smartPrecompileReady = 0.0f;
 };
 
 class LibretroHost final {
@@ -92,6 +93,7 @@ private:
     std::size_t audioBatch(const std::int16_t* data, std::size_t frames);
     std::int16_t inputState(unsigned port, unsigned device, unsigned index, unsigned id) const;
     bool processPendingCommand();
+    bool runSmartPrecompile();
     void loadSaveRam();
     void persistSaveRam(bool force);
     static bool environmentCallback(unsigned cmd, void* data);
@@ -139,7 +141,10 @@ private:
     std::atomic<bool> shaderCacheEnabled_{false};
     std::atomic<bool> directPresenterActive_{false};
     std::atomic<bool> shaderCacheReady_{false};
+    std::atomic<bool> shaderCacheHot_{false};
     std::atomic<bool> smartAnalogDpadActive_{false};
+    std::atomic<bool> smartPrecompileActive_{false};
+    std::atomic<bool> smartPrecompileReady_{false};
     std::atomic<float> lastPresentMs_{0.0f};
     mutable std::mutex optionMutex_;
     std::unordered_map<std::string, std::string> options_;

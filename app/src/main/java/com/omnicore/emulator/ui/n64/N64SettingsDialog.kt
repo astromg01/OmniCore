@@ -155,7 +155,7 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                     }
                     Text("Smart Analog", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
                     Text(
-                        "Inteligente mantém o analógico N64 normal e, quando o D-pad virtual está oculto, também traduz movimentos fortes para setas. Use Analógico → D-pad para jogos digitais.",
+                        "Inteligente mantém o analógico N64 normal, ativa setas quando o D-pad está oculto e também usa perfis de compatibilidade para jogos digitais conhecidos. Use Analógico → D-pad para forçar esse comportamento.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -208,7 +208,7 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                     ) { saveInput(input.copy(dynamicOpacity = it)) }
                     N64Toggle(
                         title = "Mostrar D-pad",
-                        subtitle = "Pode ser ocultado em jogos que usam apenas o analógico.",
+                        subtitle = "Pode ser ocultado; o Smart Analog continua cobrindo jogos digitais conhecidos automaticamente.",
                         checked = input.showDpad
                     ) { saveInput(input.copy(showDpad = it)) }
                 }
