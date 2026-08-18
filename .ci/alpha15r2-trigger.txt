@@ -1,0 +1,3 @@
+OmniCore N64 Alpha 15 R2 build trigger
+version=0.10.14
+focus=PrecisionGovernor + passive bounded cache + compile postfix
