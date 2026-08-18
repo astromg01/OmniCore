@@ -102,6 +102,9 @@ private:
     std::atomic<std::int16_t> cX_{0};
     std::atomic<std::int16_t> cY_{0};
     std::atomic<int> audioTargetBursts_{4};
+    std::atomic<float> audioFillMs_{0.0f};
+    std::atomic<float> audioBufferMs_{0.0f};
+    std::atomic<float> targetFps_{60.0f};
     std::atomic<float> pacingCorrectionPct_{0.0f};
     mutable std::mutex messageMutex_;
     std::string message_ = "N64 host idle";
