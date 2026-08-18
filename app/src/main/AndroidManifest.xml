@@ -17,6 +17,13 @@
             android:exported="false" />
 
         <activity
+            android:name=".emulation.PS2EmulationActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize"
+            android:exported="false"
+            android:process=":ps2"
+            android:screenOrientation="sensorLandscape" />
+
+        <activity
             android:name=".emulation.N64EmulationActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize"
             android:exported="false"
