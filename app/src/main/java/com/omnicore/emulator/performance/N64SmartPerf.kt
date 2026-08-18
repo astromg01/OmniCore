@@ -3,6 +3,7 @@ package com.omnicore.emulator.performance
 import android.content.Context
 import android.os.Build
 import android.os.PowerManager
+import com.omnicore.emulator.core.n64.N64Diagnostics
 import com.omnicore.emulator.settings.N64PerformanceProfile
 import com.omnicore.emulator.settings.N64Settings
 
@@ -38,11 +39,30 @@ object N64SmartPerf {
     )
 
     fun initial(context: Context, requested: N64Settings.Config): Decision {
-        return resolve(
+        val normal = resolve(
             profile = N64PerformanceProfile.detect(context),
             requested = requested,
             thermalStatus = currentThermalStatus(context),
             telemetry = Telemetry()
+        )
+        if (N64Diagnostics.hasVerifiedBoot(context)) return normal
+
+        // First-frame safe boot: prove the core + GLES path before enabling the
+        // R4300 dynarec and heavier framebuffer work on this installation.
+        return normal.copy(
+            level = Level.BALANCED,
+            effective = normal.effective.copy(
+                cpuMode = N64Settings.CpuMode.CACHED_INTERPRETER,
+                internalResolution = N64Settings.InternalResolution.NATIVE,
+                framebufferEmulation = false,
+                threadedRenderer = false,
+                rspMode = N64Settings.RspMode.HLE
+            ),
+            audioBufferBursts = maxOf(3, normal.audioBufferBursts),
+            preferPowerEfficiency = true,
+            aggressiveFramePacing = false,
+            allowResolutionPromotion = false,
+            reason = "Boot seguro N64 até confirmar o primeiro frame neste aparelho"
         )
     }
 
