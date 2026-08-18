@@ -37,6 +37,7 @@ target_include_directories(omnicore_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 find_library(android-lib android)
 find_library(log-lib log)
 find_library(aaudio-lib aaudio)
+find_library(opensles-lib OpenSLES)
 find_library(dl-lib dl)
 find_library(egl-lib EGL)
 find_library(glesv2-lib GLESv2)
@@ -86,6 +87,7 @@ target_link_libraries(
     ${android-lib}
     ${log-lib}
     ${aaudio-lib}
+    ${opensles-lib}
     ${dl-lib}
     ${egl-lib}
     ${glesv3-lib}

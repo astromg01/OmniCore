@@ -4,6 +4,8 @@
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
 #include <aaudio/AAudio.h>
+#include <SLES/OpenSLES.h>
+#include <SLES/OpenSLES_Android.h>
 #include <android/log.h>
 #include <android/native_window.h>
 #include <dlfcn.h>
@@ -90,16 +92,15 @@ AnalogVector shapeAnalog(float x, float y, int deadzonePercent, int sensitivityP
     const float userSensitivity = std::clamp(
         static_cast<float>(sensitivityPercent) / 100.0f, 0.70f, 1.30f);
     if (profile == "racing") {
-        // RacingComfort: Mario Kart benefits from a wider fine-steering zone and
-        // a near-neutral effective default sensitivity. Full steering remains
-        // reachable at the rim, so this improves control without capping range.
-        constexpr float kRacingFineZone = 0.42f;
-        if (normalized < kRacingFineZone) {
-            const float local = normalized / kRacingFineZone;
-            normalized = std::pow(local, 1.16f) * kRacingFineZone;
-        }
-        normalized = std::min(1.0f, normalized / 0.995f);
-        normalized *= userSensitivity * 0.96f;
+        // RacingComfort v2: Mario Kart steering needs a calm center but full
+        // N64 stick range at the rim. The old profile multiplied the final
+        // magnitude by 0.96, unintentionally capping maximum steering. Use one
+        // continuous curve instead: ~22% softer at the center, progressively
+        // linear toward the outside and exactly full-scale at 1.0.
+        constexpr float kRacingCenterGain = 0.78f;
+        normalized = normalized *
+            (kRacingCenterGain + (1.0f - kRacingCenterGain) * normalized);
+        normalized *= userSensitivity;
     } else {
         // Generic ComfortAnalog keeps the Alpha 19 behavior that tested well
         // for Zelda and normal analog titles.
@@ -112,7 +113,22 @@ AnalogVector shapeAnalog(float x, float y, int deadzonePercent, int sensitivityP
         normalized *= userSensitivity;
     }
     normalized = std::clamp(normalized, 0.0f, 1.0f);
-    return {x / magnitude * normalized, y / magnitude * normalized};
+    float outputX = x / magnitude * normalized;
+    float outputY = y / magnitude * normalized;
+    if (profile == "racing") {
+        // Touch sticks can leak a little vertical noise while the player is
+        // steering horizontally. Suppress only that tiny non-dominant component;
+        // intentional vertical input and diagonal/menu movement remain available.
+        if (std::abs(outputX) < 0.035f) outputX = 0.0f;
+        if (std::abs(outputX) > 0.10f && std::abs(outputY) < 0.22f &&
+            std::abs(outputX) > std::abs(outputY) * 1.20f) {
+            outputY *= 0.30f;
+        }
+    }
+    return {
+        std::clamp(outputX, -1.0f, 1.0f),
+        std::clamp(outputY, -1.0f, 1.0f)
+    };
 }
 
 bool ensureDirectoryTree(const std::string& path) {
@@ -640,9 +656,32 @@ struct LibretroHost::Impl {
     std::int64_t presentationTargetNs = 0;
     PerformanceHintSession perfHint;
 
+    enum class AudioBackend : int {
+        NONE = 0,
+        AAUDIO_SHARED = 1,
+        AAUDIO_EXCLUSIVE = 2,
+        OPENSL = 3,
+    };
+    static constexpr int kOpenSlQueueBuffers = 4;
+
     AudioRing audioRing;
     AAudioStream* audioStream = nullptr;
+    SLObjectItf slEngineObject = nullptr;
+    SLEngineItf slEngine = nullptr;
+    SLObjectItf slOutputMixObject = nullptr;
+    SLObjectItf slPlayerObject = nullptr;
+    SLPlayItf slPlay = nullptr;
+    SLAndroidSimpleBufferQueueItf slBufferQueue = nullptr;
+    std::array<std::array<std::int16_t, 1024>, kOpenSlQueueBuffers> slBuffers{};
+    int slBufferFrames = 0;
+    int slNextBuffer = 0;
+    AudioBackend audioBackend = AudioBackend::NONE;
     bool audioStarted = false;
+    bool audioFallbackUsed = false;
+    std::atomic<int> aaudioLastError{0};
+    std::chrono::steady_clock::time_point audioHealthWindowStarted{};
+    int audioHealthHardBaseline = 0;
+    int audioHealthXrunBaseline = 0;
     double coreSampleRate = 44100.0;
     int outputSampleRate = 48000;
     int framesPerBurst = 0;
@@ -672,39 +711,28 @@ struct LibretroHost::Impl {
     int consecutiveStarvedCallbacks = 0;
     int audioPrimeStableFrames = 0;
 
-    static aaudio_data_callback_result_t audioCallback(
-        AAudioStream*, void* userData, void* audioData, std::int32_t numFrames) {
-        auto* self = static_cast<Impl*>(userData);
-        if (!self || !audioData || numFrames <= 0) return AAUDIO_CALLBACK_RESULT_CONTINUE;
-
-        const std::size_t requestedFrames = static_cast<std::size_t>(numFrames);
+    void renderAudioFrames(std::int16_t* output, std::size_t requestedFrames) {
+        if (!output || requestedFrames == 0u) return;
         const std::size_t requestedSamples = requestedFrames * 2u;
-        auto* output = static_cast<std::int16_t*>(audioData);
-        const std::size_t availableFrames = self->audioRing.availableSamples() / 2u;
+        const std::size_t availableFrames = audioRing.availableSamples() / 2u;
         std::size_t producedSamples = 0;
         bool rescued = false;
         bool hardUnderrun = false;
 
         if (availableFrames >= requestedFrames) {
-            producedSamples = self->audioRing.pop(output, requestedSamples);
-            self->consecutiveStarvedCallbacks = 0;
+            producedSamples = audioRing.pop(output, requestedSamples);
+            consecutiveStarvedCallbacks = 0;
         } else {
-            // Source starvation is still fed to the native AAudio adaptation,
-            // even if ElasticAudioBridge makes it inaudible to the user.
-            self->audioRing.noteUnderrun();
-            ++self->consecutiveStarvedCallbacks;
+            audioRing.noteUnderrun();
+            ++consecutiveStarvedCallbacks;
 
             const std::size_t minimumElasticFrames = std::max<std::size_t>(
                 8u, (requestedFrames * 70u + 99u) / 100u);
             if (availableFrames >= minimumElasticFrames && requestedFrames > 1u) {
-                // Consume only ~82% of the callback when possible, leaving a tiny
-                // reserve in the ring. Expand that bounded slice to this callback
-                // with linear interpolation. Processing backwards keeps it safe
-                // in-place and avoids any temporary allocation on the RT thread.
                 const std::size_t desiredConsume = std::max<std::size_t>(
                     8u, (requestedFrames * 82u + 99u) / 100u);
                 const std::size_t consumeFrames = std::min(availableFrames, desiredConsume);
-                producedSamples = self->audioRing.pop(output, consumeFrames * 2u);
+                producedSamples = audioRing.pop(output, consumeFrames * 2u);
                 const std::size_t sourceFrames = producedSamples / 2u;
                 if (sourceFrames >= 2u) {
                     for (std::size_t dst = requestedFrames; dst-- > 0u;) {
@@ -727,18 +755,13 @@ struct LibretroHost::Impl {
             }
 
             if (!rescued) {
-                // A deeper gap cannot be safely time-stretched. Use the most
-                // recent callback tail as a bounded continuity patch instead of
-                // fading abruptly to silence. Repeated starvation beyond three
-                // callbacks is counted as a hard underrun because it can become
-                // perceptible even with concealment.
-                producedSamples = self->audioRing.pop(output, requestedSamples);
+                producedSamples = audioRing.pop(output, requestedSamples);
                 const std::size_t missingFrames = (requestedSamples - producedSamples) / 2u;
-                const std::size_t historyFrames = self->callbackHistorySamples / 2u;
+                const std::size_t historyFrames = callbackHistorySamples / 2u;
                 const std::int16_t seamLeft = producedSamples >= 2u
-                    ? output[producedSamples - 2u] : self->lastAudioLeft;
+                    ? output[producedSamples - 2u] : lastAudioLeft;
                 const std::int16_t seamRight = producedSamples >= 2u
-                    ? output[producedSamples - 1u] : self->lastAudioRight;
+                    ? output[producedSamples - 1u] : lastAudioRight;
 
                 for (std::size_t frame = 0; frame < missingFrames; ++frame) {
                     std::int16_t sourceLeft = seamLeft;
@@ -747,8 +770,8 @@ struct LibretroHost::Impl {
                         const std::size_t replayCount = std::min(historyFrames, std::max<std::size_t>(1u, missingFrames));
                         const std::size_t replayStart = historyFrames - replayCount;
                         const std::size_t src = replayStart + (frame % replayCount);
-                        sourceLeft = self->callbackHistory[src * 2u];
-                        sourceRight = self->callbackHistory[src * 2u + 1u];
+                        sourceLeft = callbackHistory[src * 2u];
+                        sourceRight = callbackHistory[src * 2u + 1u];
                     }
                     const float blend = std::min(1.0f, static_cast<float>(frame + 1u) / 8.0f);
                     const float hold = 1.0f - 0.10f * static_cast<float>(frame + 1u) /
@@ -763,29 +786,55 @@ struct LibretroHost::Impl {
                         std::lround(std::clamp(right, -32768.0f, 32767.0f)));
                 }
                 producedSamples = requestedSamples;
-                if (self->callbackHistorySamples >= 2u && self->consecutiveStarvedCallbacks <= 3) {
-                    rescued = true;
-                } else {
-                    hardUnderrun = true;
-                }
+                if (callbackHistorySamples >= 2u && consecutiveStarvedCallbacks <= 3) rescued = true;
+                else hardUnderrun = true;
             }
         }
 
         if (requestedSamples >= 2u) {
-            self->lastAudioLeft = output[requestedSamples - 2u];
-            self->lastAudioRight = output[requestedSamples - 1u];
-            const std::size_t keep = std::min(requestedSamples, self->callbackHistory.size());
+            lastAudioLeft = output[requestedSamples - 2u];
+            lastAudioRight = output[requestedSamples - 1u];
+            const std::size_t keep = std::min(requestedSamples, callbackHistory.size());
             std::memcpy(
-                self->callbackHistory.data(),
+                callbackHistory.data(),
                 output + (requestedSamples - keep),
                 keep * sizeof(std::int16_t));
-            self->callbackHistorySamples = keep;
+            callbackHistorySamples = keep;
         }
-        if (self->owner) {
-            if (rescued) self->owner->audioRescues_.fetch_add(1, std::memory_order_relaxed);
-            if (hardUnderrun) self->owner->audioUnderruns_.fetch_add(1, std::memory_order_relaxed);
+        if (owner) {
+            if (rescued) owner->audioRescues_.fetch_add(1, std::memory_order_relaxed);
+            if (hardUnderrun) owner->audioUnderruns_.fetch_add(1, std::memory_order_relaxed);
         }
+    }
+
+    static aaudio_data_callback_result_t audioCallback(
+        AAudioStream*, void* userData, void* audioData, std::int32_t numFrames) {
+        auto* self = static_cast<Impl*>(userData);
+        if (!self || !audioData || numFrames <= 0) return AAUDIO_CALLBACK_RESULT_CONTINUE;
+        self->renderAudioFrames(
+            static_cast<std::int16_t*>(audioData),
+            static_cast<std::size_t>(numFrames));
         return AAUDIO_CALLBACK_RESULT_CONTINUE;
+    }
+
+    static void audioErrorCallback(AAudioStream*, void* userData, aaudio_result_t error) {
+        auto* self = static_cast<Impl*>(userData);
+        if (self) self->aaudioLastError.store(static_cast<int>(error), std::memory_order_release);
+    }
+
+    static void openSlBufferQueueCallback(SLAndroidSimpleBufferQueueItf queue, void* userData) {
+        auto* self = static_cast<Impl*>(userData);
+        if (!self || !queue || !self->audioStarted || self->slBufferFrames <= 0) return;
+        const int slot = self->slNextBuffer;
+        auto& buffer = self->slBuffers[static_cast<std::size_t>(slot)];
+        self->renderAudioFrames(buffer.data(), static_cast<std::size_t>(self->slBufferFrames));
+        const SLresult result = (*queue)->Enqueue(
+            queue,
+            buffer.data(),
+            static_cast<SLuint32>(self->slBufferFrames * 2 * sizeof(std::int16_t)));
+        if (result == SL_RESULT_SUCCESS) {
+            self->slNextBuffer = (slot + 1) % kOpenSlQueueBuffers;
+        }
     }
 
     bool createEgl(ANativeWindow* window, int preferredWidth, int preferredHeight) {
@@ -886,6 +935,15 @@ struct LibretroHost::Impl {
         return std::chrono::steady_clock::now() < transitionAudioShieldUntil;
     }
 
+    const char* audioBackendLabel() const {
+        switch (audioBackend) {
+            case AudioBackend::AAUDIO_SHARED: return "AA-SH";
+            case AudioBackend::AAUDIO_EXCLUSIVE: return "AA-EX";
+            case AudioBackend::OPENSL: return "OpenSL";
+            default: return "OFF";
+        }
+    }
+
     void updateAudioTelemetry() {
         if (!owner || outputSampleRate <= 0) return;
         const float fillMs = static_cast<float>(audioRing.availableSamples() / 2u) * 1000.0f /
@@ -897,74 +955,161 @@ struct LibretroHost::Impl {
         owner->audioBufferMs_.store(bufferMs, std::memory_order_release);
     }
 
-    bool openAudio(double sampleRate, int requestedBursts) {
-        closeAudio();
+    void resetAudioPipelineState(double sampleRate) {
         audioRing.clear();
         callbackHistorySamples = 0;
         consecutiveStarvedCallbacks = 0;
         audioPrimeStableFrames = 0;
         coreSampleRate = sampleRate > 1000.0 ? sampleRate : 44100.0;
-        requestedBursts = std::clamp(requestedBursts, 2, 8);
         audioSyncScaleSmoothed = 1.0;
         resampleNextOutputPos = 0.0;
         resampleInputFramesSeen = 0;
         resamplePrevLeft = 0;
         resamplePrevRight = 0;
         resampleHavePrev = false;
+        aaudioLastError.store(0, std::memory_order_release);
+        audioHealthWindowStarted = {};
+        audioHealthHardBaseline = owner
+            ? owner->audioUnderruns_.load(std::memory_order_acquire) : 0;
+        audioHealthXrunBaseline = 0;
+    }
 
-        auto tryMode = [&](aaudio_sharing_mode_t sharing) -> bool {
-            AAudioStreamBuilder* builder = nullptr;
-            if (AAudio_createStreamBuilder(&builder) != AAUDIO_OK || !builder) return false;
-            AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
-            AAudioStreamBuilder_setSharingMode(builder, sharing);
-            AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
-            AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_I16);
-            AAudioStreamBuilder_setChannelCount(builder, 2);
-            // Do not request the core sample rate here. AAudio can then open the
-            // device's natural low-latency rate (typically 48 kHz), while the
-            // frontend performs the small conversion itself.
-            AAudioStreamBuilder_setDataCallback(builder, audioCallback, this);
-            const aaudio_result_t result = AAudioStreamBuilder_openStream(builder, &audioStream);
-            AAudioStreamBuilder_delete(builder);
-            if (result != AAUDIO_OK || !audioStream) {
-                audioStream = nullptr;
-                return false;
-            }
-            outputSampleRate = std::max(1, AAudioStream_getSampleRate(audioStream));
-            framesPerBurst = std::max(1, AAudioStream_getFramesPerBurst(audioStream));
-            int minBursts = requestedBursts;
-            if (minimumAudioLatencyMs > 0) {
-                const int latencyFrames = outputSampleRate * minimumAudioLatencyMs / 1000;
-                minBursts = std::max(minBursts, (latencyFrames + framesPerBurst - 1) / framesPerBurst);
-            }
-            appliedAudioBursts = std::clamp(minBursts, 2, 8);
-            const int requestedFrames = framesPerBurst * appliedAudioBursts;
-            const int appliedFrames = AAudioStream_setBufferSizeInFrames(audioStream, requestedFrames);
-            audioBufferFrames = appliedFrames > 0 ? appliedFrames : requestedFrames;
-            // StartupAudioGate: Alpha 21 started AAudio around 50 ms while the
-            // transition controller immediately targeted ~76 ms. That meant the
-            // stream could begin already below its own safe reserve. Prime to a
-            // bounded ~90 ms floor (or enough for the actual device buffer plus
-            // four bursts) before the callback is allowed to consume anything.
-            const int startupFloorFrames = std::max(1, outputSampleRate * 90 / 1000);
-            const int startupCeilingFrames = std::max(startupFloorFrames, outputSampleRate * 120 / 1000);
-            const int deviceSafetyFrames = std::max(
-                framesPerBurst * 8, audioBufferFrames + framesPerBurst * 4);
-            audioPrimeFrames = std::clamp(
-                std::max(startupFloorFrames, deviceSafetyFrames),
-                startupFloorFrames,
-                std::min(startupCeilingFrames, static_cast<int>(audioRing.capacitySamples() / 2u)));
-            armTransitionAudioShield(std::chrono::milliseconds(6000));
-            lastXRunCount = std::max(0, AAudioStream_getXRunCount(audioStream));
-            lastRingUnderruns = audioRing.underruns();
-            stableAudioChecks = 0;
-            audioStarted = false;
-            updateAudioTelemetry();
-            return true;
+    void configureStartupPrime() {
+        const int startupFloorFrames = std::max(1, outputSampleRate * 90 / 1000);
+        const int startupCeilingFrames = std::max(startupFloorFrames, outputSampleRate * 120 / 1000);
+        const int deviceSafetyFrames = std::max(
+            framesPerBurst * 8, audioBufferFrames + framesPerBurst * 4);
+        audioPrimeFrames = std::clamp(
+            std::max(startupFloorFrames, deviceSafetyFrames),
+            startupFloorFrames,
+            std::min(startupCeilingFrames, static_cast<int>(audioRing.capacitySamples() / 2u)));
+        armTransitionAudioShield(std::chrono::milliseconds(6000));
+        stableAudioChecks = 0;
+        audioStarted = false;
+        audioPrimeStableFrames = 0;
+        audioHealthWindowStarted = std::chrono::steady_clock::now();
+        audioHealthHardBaseline = owner
+            ? owner->audioUnderruns_.load(std::memory_order_acquire) : 0;
+        updateAudioTelemetry();
+    }
+
+    bool openAAudioMode(aaudio_sharing_mode_t sharing, AudioBackend mode, int requestedBursts) {
+        AAudioStreamBuilder* builder = nullptr;
+        if (AAudio_createStreamBuilder(&builder) != AAUDIO_OK || !builder) return false;
+        AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
+        AAudioStreamBuilder_setSharingMode(builder, sharing);
+        AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+        AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_I16);
+        AAudioStreamBuilder_setChannelCount(builder, 2);
+        AAudioStreamBuilder_setDataCallback(builder, audioCallback, this);
+        AAudioStreamBuilder_setErrorCallback(builder, audioErrorCallback, this);
+        const aaudio_result_t result = AAudioStreamBuilder_openStream(builder, &audioStream);
+        AAudioStreamBuilder_delete(builder);
+        if (result != AAUDIO_OK || !audioStream) {
+            audioStream = nullptr;
+            return false;
+        }
+        outputSampleRate = std::max(1, AAudioStream_getSampleRate(audioStream));
+        framesPerBurst = std::max(1, AAudioStream_getFramesPerBurst(audioStream));
+        int minBursts = std::clamp(requestedBursts, 2, 8);
+        if (minimumAudioLatencyMs > 0) {
+            const int latencyFrames = outputSampleRate * minimumAudioLatencyMs / 1000;
+            minBursts = std::max(minBursts, (latencyFrames + framesPerBurst - 1) / framesPerBurst);
+        }
+        appliedAudioBursts = std::clamp(minBursts, 2, 8);
+        const int requestedFrames = framesPerBurst * appliedAudioBursts;
+        const int appliedFrames = AAudioStream_setBufferSizeInFrames(audioStream, requestedFrames);
+        audioBufferFrames = appliedFrames > 0 ? appliedFrames : requestedFrames;
+        audioBackend = mode;
+        if (owner) owner->audioBackendMode_.store(static_cast<int>(audioBackend), std::memory_order_release);
+        configureStartupPrime();
+        lastXRunCount = std::max(0, AAudioStream_getXRunCount(audioStream));
+        audioHealthXrunBaseline = lastXRunCount;
+        lastRingUnderruns = audioRing.underruns();
+        logPrint(ANDROID_LOG_INFO, "AudioBackend Auto opened %s @ %d Hz / burst %d",
+                 audioBackendLabel(), outputSampleRate, framesPerBurst);
+        return true;
+    }
+
+    bool openOpenSLES(int requestedBursts) {
+        outputSampleRate = 48000;
+        slBufferFrames = std::clamp(outputSampleRate / 100, 192, 512); // ~10 ms
+        framesPerBurst = slBufferFrames;
+        appliedAudioBursts = std::clamp(std::max(requestedBursts, 4), 4, 8);
+
+        if (slCreateEngine(&slEngineObject, 0, nullptr, 0, nullptr, nullptr) != SL_RESULT_SUCCESS ||
+            !slEngineObject) return false;
+        if ((*slEngineObject)->Realize(slEngineObject, SL_BOOLEAN_FALSE) != SL_RESULT_SUCCESS ||
+            (*slEngineObject)->GetInterface(slEngineObject, SL_IID_ENGINE, &slEngine) != SL_RESULT_SUCCESS ||
+            !slEngine) return false;
+        if ((*slEngine)->CreateOutputMix(slEngine, &slOutputMixObject, 0, nullptr, nullptr) != SL_RESULT_SUCCESS ||
+            !slOutputMixObject ||
+            (*slOutputMixObject)->Realize(slOutputMixObject, SL_BOOLEAN_FALSE) != SL_RESULT_SUCCESS) return false;
+
+        SLDataLocator_AndroidSimpleBufferQueue sourceLocator = {
+            SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE,
+            static_cast<SLuint32>(kOpenSlQueueBuffers)
         };
+        SLDataFormat_PCM format = {
+            SL_DATAFORMAT_PCM,
+            2,
+            SL_SAMPLINGRATE_48,
+            SL_PCMSAMPLEFORMAT_FIXED_16,
+            SL_PCMSAMPLEFORMAT_FIXED_16,
+            SL_SPEAKER_FRONT_LEFT | SL_SPEAKER_FRONT_RIGHT,
+            SL_BYTEORDER_LITTLEENDIAN
+        };
+        SLDataSource source = {&sourceLocator, &format};
+        SLDataLocator_OutputMix sinkLocator = {SL_DATALOCATOR_OUTPUTMIX, slOutputMixObject};
+        SLDataSink sink = {&sinkLocator, nullptr};
+        const SLInterfaceID ids[] = {SL_IID_ANDROIDSIMPLEBUFFERQUEUE};
+        const SLboolean required[] = {SL_BOOLEAN_TRUE};
+        if ((*slEngine)->CreateAudioPlayer(
+                slEngine, &slPlayerObject, &source, &sink, 1, ids, required) != SL_RESULT_SUCCESS ||
+            !slPlayerObject ||
+            (*slPlayerObject)->Realize(slPlayerObject, SL_BOOLEAN_FALSE) != SL_RESULT_SUCCESS ||
+            (*slPlayerObject)->GetInterface(slPlayerObject, SL_IID_PLAY, &slPlay) != SL_RESULT_SUCCESS ||
+            (*slPlayerObject)->GetInterface(
+                slPlayerObject, SL_IID_ANDROIDSIMPLEBUFFERQUEUE, &slBufferQueue) != SL_RESULT_SUCCESS ||
+            !slPlay || !slBufferQueue) return false;
+        if ((*slBufferQueue)->RegisterCallback(
+                slBufferQueue, openSlBufferQueueCallback, this) != SL_RESULT_SUCCESS) return false;
 
-        if (tryMode(AAUDIO_SHARING_MODE_EXCLUSIVE)) return true;
-        return tryMode(AAUDIO_SHARING_MODE_SHARED);
+        slNextBuffer = 0;
+        audioBufferFrames = slBufferFrames * kOpenSlQueueBuffers;
+        audioBackend = AudioBackend::OPENSL;
+        if (owner) owner->audioBackendMode_.store(static_cast<int>(audioBackend), std::memory_order_release);
+        configureStartupPrime();
+        lastRingUnderruns = audioRing.underruns();
+        logPrint(ANDROID_LOG_INFO, "AudioBackend Auto opened OpenSL fallback @ %d Hz / queue %dx%d",
+                 outputSampleRate, kOpenSlQueueBuffers, slBufferFrames);
+        return true;
+    }
+
+    bool openAudio(double sampleRate, int requestedBursts) {
+        closeAudio();
+        audioFallbackUsed = false;
+        resetAudioPipelineState(sampleRate);
+        requestedBursts = std::clamp(requestedBursts, 2, 8);
+
+        // Compatibility-first order: Shared AAudio avoids vendor-exclusive path
+        // quirks while retaining the modern low-latency callback. Exclusive is
+        // still attempted if Shared cannot open, then OpenSL handles devices or
+        // drivers where AAudio is unavailable/unhealthy.
+        if (openAAudioMode(AAUDIO_SHARING_MODE_SHARED, AudioBackend::AAUDIO_SHARED, requestedBursts)) return true;
+        if (openAAudioMode(AAUDIO_SHARING_MODE_EXCLUSIVE, AudioBackend::AAUDIO_EXCLUSIVE, requestedBursts)) return true;
+        return openOpenSLES(requestedBursts);
+    }
+
+    bool fallbackToOpenSLES(int requestedBursts, const char* reason) {
+        if (audioBackend == AudioBackend::OPENSL) return true;
+        const double savedCoreRate = coreSampleRate;
+        logPrint(ANDROID_LOG_WARN, "AudioHealthWatch switching %s -> OpenSL (%s)",
+                 audioBackendLabel(), reason ? reason : "health");
+        closeAudio();
+        resetAudioPipelineState(savedCoreRate);
+        audioFallbackUsed = true;
+        return openOpenSLES(requestedBursts);
     }
 
     void closeAudio() {
@@ -973,6 +1118,21 @@ struct LibretroHost::Impl {
             AAudioStream_close(audioStream);
             audioStream = nullptr;
         }
+        if (slPlay) (*slPlay)->SetPlayState(slPlay, SL_PLAYSTATE_STOPPED);
+        if (slBufferQueue) (*slBufferQueue)->Clear(slBufferQueue);
+        if (slPlayerObject) (*slPlayerObject)->Destroy(slPlayerObject);
+        if (slOutputMixObject) (*slOutputMixObject)->Destroy(slOutputMixObject);
+        if (slEngineObject) (*slEngineObject)->Destroy(slEngineObject);
+        slPlayerObject = nullptr;
+        slPlay = nullptr;
+        slBufferQueue = nullptr;
+        slOutputMixObject = nullptr;
+        slEngine = nullptr;
+        slEngineObject = nullptr;
+        slBufferFrames = 0;
+        slNextBuffer = 0;
+        audioBackend = AudioBackend::NONE;
+        if (owner) owner->audioBackendMode_.store(0, std::memory_order_release);
         audioStarted = false;
         framesPerBurst = 0;
         audioBufferFrames = 0;
@@ -993,7 +1153,14 @@ struct LibretroHost::Impl {
     }
 
     void reprimeAudio() {
-        if (audioStream && audioStarted) AAudioStream_requestPause(audioStream);
+        if (audioBackend == AudioBackend::AAUDIO_SHARED ||
+            audioBackend == AudioBackend::AAUDIO_EXCLUSIVE) {
+            if (audioStream && audioStarted) AAudioStream_requestPause(audioStream);
+        } else if (audioBackend == AudioBackend::OPENSL) {
+            if (slPlay) (*slPlay)->SetPlayState(slPlay, SL_PLAYSTATE_STOPPED);
+            if (slBufferQueue) (*slBufferQueue)->Clear(slBufferQueue);
+            slNextBuffer = 0;
+        }
         audioStarted = false;
         audioRing.clear();
         callbackHistorySamples = 0;
@@ -1007,31 +1174,61 @@ struct LibretroHost::Impl {
         resampleHavePrev = false;
         lastRingUnderruns = 0;
         stableAudioChecks = 0;
+        audioHealthWindowStarted = std::chrono::steady_clock::now();
+        audioHealthHardBaseline = owner
+            ? owner->audioUnderruns_.load(std::memory_order_acquire) : 0;
         armTransitionAudioShield(std::chrono::milliseconds(2200));
         updateAudioTelemetry();
     }
 
     void startAudioIfReady() {
-        if (!audioStream || audioStarted) return;
+        if (audioBackend == AudioBackend::NONE || audioStarted) return;
         const std::size_t availableFrames = audioRing.availableSamples() / 2u;
         if (availableFrames < static_cast<std::size_t>(std::max(1, audioPrimeFrames))) {
             audioPrimeStableFrames = 0;
             return;
         }
-        // Only open the real-time consumer at an emulation frame boundary.
-        // Requiring two complete frames above the threshold prevents a single
-        // unusually large libretro audio batch from starting AAudio mid-batch.
         if (++audioPrimeStableFrames < 2) return;
-        if (AAudioStream_requestStart(audioStream) == AAUDIO_OK) {
+
+        bool startedNow = false;
+        if (audioBackend == AudioBackend::AAUDIO_SHARED ||
+            audioBackend == AudioBackend::AAUDIO_EXCLUSIVE) {
+            startedNow = audioStream && AAudioStream_requestStart(audioStream) == AAUDIO_OK;
+        } else if (audioBackend == AudioBackend::OPENSL && slPlay && slBufferQueue) {
+            (*slBufferQueue)->Clear(slBufferQueue);
+            slNextBuffer = 0;
+            startedNow = true;
+            for (int slot = 0; slot < kOpenSlQueueBuffers; ++slot) {
+                auto& buffer = slBuffers[static_cast<std::size_t>(slot)];
+                renderAudioFrames(buffer.data(), static_cast<std::size_t>(slBufferFrames));
+                if ((*slBufferQueue)->Enqueue(
+                        slBufferQueue,
+                        buffer.data(),
+                        static_cast<SLuint32>(slBufferFrames * 2 * sizeof(std::int16_t))) != SL_RESULT_SUCCESS) {
+                    startedNow = false;
+                    break;
+                }
+            }
+            slNextBuffer = 0;
+            if (startedNow) {
+                startedNow = (*slPlay)->SetPlayState(slPlay, SL_PLAYSTATE_PLAYING) == SL_RESULT_SUCCESS;
+            }
+        }
+        if (startedNow) {
             audioStarted = true;
             audioPrimeStableFrames = 0;
-            logPrint(ANDROID_LOG_INFO, "StartupAudioGate opened with %zu frames queued (target=%d)",
-                     availableFrames, audioPrimeFrames);
+            audioHealthWindowStarted = std::chrono::steady_clock::now();
+            audioHealthHardBaseline = owner
+                ? owner->audioUnderruns_.load(std::memory_order_acquire) : 0;
+            audioHealthXrunBaseline = audioStream
+                ? std::max(0, AAudioStream_getXRunCount(audioStream)) : 0;
+            logPrint(ANDROID_LOG_INFO, "StartupAudioGate opened %s with %zu frames queued (target=%d)",
+                     audioBackendLabel(), availableFrames, audioPrimeFrames);
         }
     }
 
     double audioSyncScale() {
-        if (!audioStream || outputSampleRate <= 0) return 1.0;
+        if (audioBackend == AudioBackend::NONE || outputSampleRate <= 0) return 1.0;
         updateAudioTelemetry();
         const float fillMs = owner ? owner->audioFillMs_.load(std::memory_order_acquire) : 0.0f;
         const float bufferMs = owner ? owner->audioBufferMs_.load(std::memory_order_acquire) : 0.0f;
@@ -1075,7 +1272,7 @@ struct LibretroHost::Impl {
     }
 
     void pushAudio(const std::int16_t* data, std::size_t frames) {
-        if (!data || frames == 0 || !audioStream) return;
+        if (!data || frames == 0 || audioBackend == AudioBackend::NONE) return;
         const double syncScale = audioSyncScale();
         const double desiredOutRate =
             static_cast<double>(std::max(1, outputSampleRate)) * syncScale;
@@ -1142,9 +1339,16 @@ struct LibretroHost::Impl {
     }
 
     void adaptAudio(int requestedBursts) {
-        if (!audioStream || framesPerBurst <= 0) return;
+        if (audioBackend == AudioBackend::NONE || framesPerBurst <= 0) return;
         requestedBursts = std::clamp(requestedBursts, 2, 8);
         if (transitionAudioShieldActive()) requestedBursts = std::max(requestedBursts, 7);
+
+        if (audioBackend == AudioBackend::OPENSL) {
+            updateAudioTelemetry();
+            return;
+        }
+        if (!audioStream) return;
+
         const int xruns = std::max(0, AAudioStream_getXRunCount(audioStream));
         const auto underruns = audioRing.underruns();
         int next = appliedAudioBursts;
@@ -1164,10 +1368,39 @@ struct LibretroHost::Impl {
             audioBufferFrames = appliedFrames > 0 ? appliedFrames : requestedFrames;
             appliedAudioBursts = next;
         }
+
+        const int hardUnderruns = owner
+            ? owner->audioUnderruns_.load(std::memory_order_acquire) : 0;
+        const int error = aaudioLastError.exchange(0, std::memory_order_acq_rel);
+        const auto now = std::chrono::steady_clock::now();
+        if (audioHealthWindowStarted.time_since_epoch().count() == 0) {
+            audioHealthWindowStarted = now;
+            audioHealthHardBaseline = hardUnderruns;
+            audioHealthXrunBaseline = xruns;
+        }
+        const auto healthAge = now - audioHealthWindowStarted;
+        const int hardDelta = std::max(0, hardUnderruns - audioHealthHardBaseline);
+        const int xrunDelta = std::max(0, xruns - audioHealthXrunBaseline);
+        if (!audioFallbackUsed && audioStarted && healthAge >= std::chrono::milliseconds(2500) &&
+            (error != 0 || hardDelta >= 8 || xrunDelta >= 3)) {
+            const char* reason = error != 0 ? "AAudio error" :
+                (xrunDelta >= 3 ? "AAudio xruns" : "audible underruns");
+            if (fallbackToOpenSLES(std::max(requestedBursts, 6), reason)) {
+                updateAudioTelemetry();
+                return;
+            }
+        }
+        if (healthAge >= std::chrono::seconds(8)) {
+            audioHealthWindowStarted = now;
+            audioHealthHardBaseline = hardUnderruns;
+            audioHealthXrunBaseline = xruns;
+        }
+
         lastXRunCount = xruns;
         lastRingUnderruns = underruns;
         updateAudioTelemetry();
     }
+
 };
 
 LibretroHost& LibretroHost::instance() {
@@ -1209,6 +1442,7 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     lastSaveRamHash_ = 0;
     audioUnderruns_.store(0, std::memory_order_release);
     audioRescues_.store(0, std::memory_order_release);
+    audioBackendMode_.store(0, std::memory_order_release);
     audioFillMs_.store(0.0f, std::memory_order_release);
     audioBufferMs_.store(0.0f, std::memory_order_release);
     targetFps_.store(60.0f, std::memory_order_release);
@@ -1226,7 +1460,7 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     hwRenderRequested_ = false;
     hwRender_ = {};
     precisionGovernorMode_.store(0, std::memory_order_release);
-    setMessage("N64 BOOT 1/6 • Alpha 22 StartupAudioGate + ElasticAudioBridge…");
+    setMessage("N64 BOOT 1/6 • Alpha 24 AudioBackend Auto + RacingComfort v2…");
     try {
         thread_ = std::thread(&LibretroHost::run, this);
     } catch (...) {
@@ -1561,13 +1795,13 @@ void LibretroHost::videoRefresh(const void* data, unsigned, unsigned, std::size_
     glViewport(0, 0, impl_->renderWidth, impl_->renderHeight);
     ++impl_->presentedFrames;
     if (impl_->presentedFrames == 1) {
-        setMessage(impl_->audioStream
-            ? (impl_->directPresent
-                ? "N64 RUN OK • DirectPresenter GLES3 • AAudio nativo pronto"
-                : "N64 RUN OK • RenderBridge fallback GLES3 • AAudio nativo pronto")
-            : (impl_->directPresent
-                ? "N64 RUN OK • DirectPresenter GLES3 • áudio indisponível"
-                : "N64 RUN OK • RenderBridge fallback GLES3 • áudio indisponível"));
+        std::string message = impl_->directPresent
+            ? "N64 RUN OK • DirectPresenter GLES3"
+            : "N64 RUN OK • RenderBridge fallback GLES3";
+        message += " • áudio ";
+        message += impl_->audioBackendLabel();
+        message += impl_->audioBackend == Impl::AudioBackend::NONE ? " indisponível" : " pronto";
+        setMessage(std::move(message));
     }
 }
 
@@ -1643,6 +1877,7 @@ Telemetry LibretroHost::telemetry() const {
     out.sampleWindowFrames = static_cast<int>(count);
     out.audioUnderruns = audioUnderruns_.load(std::memory_order_acquire);
     out.audioRescues = audioRescues_.load(std::memory_order_acquire);
+    out.audioBackendMode = static_cast<float>(audioBackendMode_.load(std::memory_order_acquire));
     out.audioFillMs = audioFillMs_.load(std::memory_order_acquire);
     out.audioBufferMs = audioBufferMs_.load(std::memory_order_acquire);
     out.targetFps = targetFps_.load(std::memory_order_acquire);
@@ -1914,7 +2149,7 @@ void LibretroHost::run() {
     const bool audioReady = impl_->openAudio(
         impl_->coreSampleRate,
         audioTargetBursts_.load(std::memory_order_acquire));
-    if (!audioReady) logPrint(ANDROID_LOG_WARN, "N64 AAudio unavailable; continuing without audio output");
+    if (!audioReady) logPrint(ANDROID_LOG_WARN, "N64 AudioBackend Auto unavailable; continuing without audio output");
 
     const auto target = std::chrono::duration<double>(1.0 / impl_->targetFps);
     const auto targetDuration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(target);

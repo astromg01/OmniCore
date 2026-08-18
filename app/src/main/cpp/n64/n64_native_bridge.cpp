@@ -38,7 +38,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeHasCore(JNIEnv*, jobje
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeRuntimeInfo(JNIEnv* env, jobject) {
-    const std::string value = std::string("OmniCore N64 Runtime 0.10.22 • Mupen64Plus-Next • GLES3 + AAudio host v19 • StartupAudioGate + SmoothAudioResampler + SyncSlew + ElasticAudioBridge + TransitionAudioShield + PrecisionGovernor v2.1 + RacingComfort + MicroBurstShield + CruiseGuard + PassiveWarmCache + DirectPresenter • ") +
+    const std::string value = std::string("OmniCore N64 Runtime 0.10.23 • Mupen64Plus-Next • GLES3 + AudioBackend Auto host v20 • AAudio Shared/Exclusive + OpenSL fallback + AudioHealthWatch + StartupAudioGate + SmoothAudioResampler + SyncSlew + ElasticAudioBridge + TransitionAudioShield + PrecisionGovernor v2.1 + RacingComfort v2 + MicroBurstShield + CruiseGuard + PassiveWarmCache + DirectPresenter • ") +
         (hasLibretroCore() ? "core ready" : "core missing");
     return env->NewStringUTF(value.c_str());
 }
@@ -155,7 +155,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeLastMessage(JNIEnv* en
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeTelemetry(JNIEnv* env, jobject) {
     const auto telemetry = omnicore::n64::LibretroHost::instance().telemetry();
-    const jfloat values[23] = {
+    const jfloat values[24] = {
         telemetry.averageFrameMs,
         telemetry.p95FrameMs,
         static_cast<jfloat>(telemetry.droppedFrames),
@@ -178,10 +178,11 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeTelemetry(JNIEnv* env,
         telemetry.precisionGovernorMode,
         telemetry.precisionGovernorConfidence,
         telemetry.frameJitterMs,
-        static_cast<jfloat>(telemetry.audioRescues)
+        static_cast<jfloat>(telemetry.audioRescues),
+        telemetry.audioBackendMode
     };
-    jfloatArray result = env->NewFloatArray(23);
-    if (result) env->SetFloatArrayRegion(result, 0, 23, values);
+    jfloatArray result = env->NewFloatArray(24);
+    if (result) env->SetFloatArrayRegion(result, 0, 24, values);
     return result;
 }
 

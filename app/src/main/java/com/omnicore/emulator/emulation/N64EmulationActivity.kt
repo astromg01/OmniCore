@@ -536,7 +536,14 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             append("%.0f".format(t.audioFillMs))
             append("/")
             append("%.0f".format(t.audioBufferMs))
-            append(" ms • underruns ")
+            append(" ms • backend ")
+            append(when (t.audioBackendMode) {
+                1 -> "AA-SH"
+                2 -> "AA-EX"
+                3 -> "OpenSL"
+                else -> "OFF"
+            })
+            append(" • underruns ")
             append(t.audioUnderruns)
             append(" • rescues ")
             append(t.audioRescues)
@@ -625,7 +632,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         }
 
         val decision = pendingDecision ?: launchDecision
-        statusView.text = "N64 • ${decision.level.name} / ${decision.effective.cpuMode.label} / GLES3 + AAudio…"
+        statusView.text = "N64 • ${decision.level.name} / ${decision.effective.cpuMode.label} / GLES3 + Audio Auto…"
         N64Diagnostics.mark(
             this,
             "session:native_start",
