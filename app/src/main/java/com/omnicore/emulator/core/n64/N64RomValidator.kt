@@ -30,11 +30,11 @@ data class N64RomValidation(
 
 /**
  * Nintendo 64 detection is signature-first. Extensions are only hints.
- * This lets OmniCore accept correctly formed dumps named .rom/.bin or with no
- * extension, plus common ZIP/GZIP wrappers, without misidentifying random files.
+ * This lets OmniCore accept correctly formed dumps named .rom/.bin/.u1 or with
+ * no extension, plus common ZIP/GZIP wrappers, without misidentifying random files.
  */
 object N64RomValidator {
-    val commonExtensions = setOf("z64", "n64", "v64", "rom", "bin", "zip", "gz")
+    val commonExtensions = setOf("z64", "n64", "v64", "u1", "rom", "bin", "zip", "gz", "gzip")
 
     fun validate(context: Context, game: GameEntry): Result<N64RomValidation> =
         validate(context, Uri.parse(game.uri), game.fileName)
