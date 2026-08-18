@@ -6,8 +6,8 @@ import android.content.Context
 object N64Settings {
     enum class Preset(val storage: String, val label: String, val subtitle: String) {
         AUTO("auto", "Inteligente", "Escolhe opções seguras conforme o hardware"),
-        PERFORMANCE("performance", "Desempenho", "Prioriza estabilidade e menor custo gráfico"),
-        BALANCED("balanced", "Equilibrado", "Boa compatibilidade com qualidade moderada"),
+        PERFORMANCE("performance", "Desempenho", "Prioriza estabilidade, FPS e áudio"),
+        BALANCED("balanced", "Equilibrado", "Boa compatibilidade com custo gráfico moderado"),
         QUALITY("quality", "Qualidade", "Aumenta qualidade somente quando existe margem"),
         CUSTOM("custom", "Custom", "Ajustes definidos manualmente")
     }
@@ -27,6 +27,12 @@ object N64Settings {
         X2("2x", "2×", 2)
     }
 
+    enum class AspectRatio(val storage: String, val label: String, val wide: Boolean) {
+        ORIGINAL_4_3("4:3", "Original 4:3", false),
+        WIDE_ADJUSTED("16:9 adjusted", "Widescreen ajustado", true),
+        WIDE_STRETCHED("16:9", "Widescreen esticado", true)
+    }
+
     enum class ExpansionPak(val storage: String, val label: String) {
         AUTO("auto", "Automático"),
         ENABLED("enabled", "Ativado"),
@@ -38,6 +44,7 @@ object N64Settings {
         val cpuMode: CpuMode,
         val rspMode: RspMode,
         val internalResolution: InternalResolution,
+        val aspectRatio: AspectRatio,
         val framebufferEmulation: Boolean,
         val expansionPak: ExpansionPak,
         val threadedRenderer: Boolean
@@ -48,6 +55,7 @@ object N64Settings {
     private const val KEY_CPU = "cpu_mode"
     private const val KEY_RSP = "rsp_mode"
     private const val KEY_RESOLUTION = "internal_resolution"
+    private const val KEY_ASPECT = "aspect_ratio"
     private const val KEY_FRAMEBUFFER = "framebuffer_emulation"
     private const val KEY_EXPANSION = "expansion_pak"
     private const val KEY_THREADED_RENDERER = "threaded_renderer"
@@ -75,6 +83,9 @@ object N64Settings {
             internalResolution = InternalResolution.entries.firstOrNull {
                 it.storage == storage.getString(KEY_RESOLUTION, fallback.internalResolution.storage)
             } ?: fallback.internalResolution,
+            aspectRatio = AspectRatio.entries.firstOrNull {
+                it.storage == storage.getString(KEY_ASPECT, fallback.aspectRatio.storage)
+            } ?: fallback.aspectRatio,
             framebufferEmulation = storage.getBoolean(KEY_FRAMEBUFFER, fallback.framebufferEmulation),
             expansionPak = ExpansionPak.entries.firstOrNull {
                 it.storage == storage.getString(KEY_EXPANSION, fallback.expansionPak.storage)
@@ -90,6 +101,7 @@ object N64Settings {
             .putString(KEY_CPU, safe.cpuMode.storage)
             .putString(KEY_RSP, safe.rspMode.storage)
             .putString(KEY_RESOLUTION, safe.internalResolution.storage)
+            .putString(KEY_ASPECT, safe.aspectRatio.storage)
             .putBoolean(KEY_FRAMEBUFFER, safe.framebufferEmulation)
             .putString(KEY_EXPANSION, safe.expansionPak.storage)
             .putBoolean(KEY_THREADED_RENDERER, safe.threadedRenderer)
@@ -102,6 +114,7 @@ object N64Settings {
             cpuMode = CpuMode.DYNAREC,
             rspMode = RspMode.HLE,
             internalResolution = InternalResolution.NATIVE,
+            aspectRatio = AspectRatio.ORIGINAL_4_3,
             framebufferEmulation = false,
             expansionPak = ExpansionPak.AUTO,
             threadedRenderer = false
@@ -111,6 +124,7 @@ object N64Settings {
             cpuMode = CpuMode.DYNAREC,
             rspMode = RspMode.HLE,
             internalResolution = InternalResolution.NATIVE,
+            aspectRatio = AspectRatio.ORIGINAL_4_3,
             framebufferEmulation = true,
             expansionPak = ExpansionPak.AUTO,
             threadedRenderer = false
@@ -120,6 +134,7 @@ object N64Settings {
             cpuMode = CpuMode.DYNAREC,
             rspMode = RspMode.HLE,
             internalResolution = if (device.tier == N64PerformanceProfile.Tier.HIGH) InternalResolution.X2 else InternalResolution.NATIVE,
+            aspectRatio = AspectRatio.ORIGINAL_4_3,
             framebufferEmulation = true,
             expansionPak = ExpansionPak.AUTO,
             threadedRenderer = false
@@ -129,6 +144,7 @@ object N64Settings {
             cpuMode = CpuMode.DYNAREC,
             rspMode = RspMode.HLE,
             internalResolution = if (device.tier == N64PerformanceProfile.Tier.HIGH) InternalResolution.X2 else InternalResolution.NATIVE,
+            aspectRatio = AspectRatio.ORIGINAL_4_3,
             framebufferEmulation = device.tier != N64PerformanceProfile.Tier.LOW,
             expansionPak = ExpansionPak.AUTO,
             threadedRenderer = false
@@ -136,7 +152,7 @@ object N64Settings {
     }.sanitized(device)
 
     private fun Config.sanitized(device: N64PerformanceProfile.Profile): Config {
-        val safeRsp = if (rspMode == RspMode.LLE) RspMode.HLE else rspMode
+        val safeRsp = RspMode.HLE
         val safeResolution = if (
             device.tier == N64PerformanceProfile.Tier.LOW && internalResolution == InternalResolution.X2
         ) {
@@ -144,13 +160,9 @@ object N64Settings {
         } else {
             internalResolution
         }
-        // Early Android validation: keep the upstream-compatible single-thread
-        // GL path until repeatable real-device boot is proven. Threaded GLideN64
-        // changes the core's coroutine/thread lifecycle and is re-enabled only
-        // after the base hardware-render path is stable.
+        // Keep threaded GLideN64 opt-in until the single-thread path has wider
+        // device coverage. Dynarec is now the default performance path.
         val safeThreadedRenderer = false
-        // Never force-disable extra RDRAM globally. Automatic per-game behaviour
-        // is safer until compatibility is measured.
         val safeExpansionPak = ExpansionPak.AUTO
         return copy(
             rspMode = safeRsp,
