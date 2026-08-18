@@ -23,6 +23,7 @@ import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
 import com.omnicore.emulator.core.n64.N64Core
+import com.omnicore.emulator.core.n64.N64Diagnostics
 import com.omnicore.emulator.core.n64.N64NativeBridge
 import com.omnicore.emulator.core.n64.N64RomPreparer
 import com.omnicore.emulator.model.ConsoleSystem
@@ -34,11 +35,7 @@ import com.omnicore.emulator.storage.N64Storage
 import java.io.File
 import kotlin.math.abs
 
-/**
- * Nintendo 64 owns a separate Activity/process, surface, input layer and runtime.
- * Native N64 failures are therefore contained and cannot terminate the hub/PS1
- * process with them.
- */
+/** Isolated Nintendo 64 runtime Activity with phone-only crash breadcrumbs. */
 class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var root: FrameLayout
     private lateinit var surfaceView: AspectSurfaceView
@@ -71,6 +68,9 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                     statusView.text = message
                     statusView.visibility = View.VISIBLE
                     runOkPolls = 0
+                    if (message.startsWith("N64 BOOT") || message.startsWith("N64 RUNTIME") || message.startsWith("N64 RUN OK")) {
+                        N64Diagnostics.mark(this@N64EmulationActivity, "native:message", message)
+                    }
                 }
 
                 val telemetry = N64NativeBridge.telemetry()
@@ -86,33 +86,71 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
 
                 if (message.startsWith("N64 RUN OK")) {
                     runOkPolls++
+                    if (runOkPolls == 1) {
+                        runCatching {
+                            N64Diagnostics.verifiedBootFile(this@N64EmulationActivity).apply {
+                                parentFile?.mkdirs()
+                                writeText("verified=${System.currentTimeMillis()}\n")
+                            }
+                        }
+                    }
                     if (runOkPolls >= 5) statusView.visibility = View.GONE
                 } else if (message.contains(" E0") || message.contains("BOOT E") || message.contains("RUNTIME E")) {
                     statusView.setBackgroundColor(Color.argb(230, 92, 16, 28))
                 }
             }
-            handler.postDelayed(this, if (started) 700L else 350L)
+            handler.postDelayed(this, if (started) 350L else 200L)
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        N64Diagnostics.mark(this, "activity:onCreate_enter")
         super.onCreate(savedInstanceState)
+        N64Diagnostics.mark(this, "activity:onCreate_after_super")
+
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         enterImmersiveMode()
 
+        N64Diagnostics.mark(this, "activity:decode_intent")
         val game = gameFromIntent() ?: run {
+            N64Diagnostics.mark(this, "activity:invalid_intent")
             Toast.makeText(this, "ROM Nintendo 64 inválida.", Toast.LENGTH_LONG).show()
             finish()
             return
         }
 
+        N64Diagnostics.mark(this, "activity:settings", game.fileName)
         requestedConfig = N64Settings.resolve(this)
         inputConfig = N64InputSettings.resolve(this)
-        launchDecision = N64SmartPerf.initial(this, requestedConfig)
+        launchDecision = firstBootDecision(N64SmartPerf.initial(this, requestedConfig))
 
+        N64Diagnostics.mark(
+            this,
+            "activity:build_ui",
+            "cpu=${launchDecision.effective.cpuMode.storage},threaded=${launchDecision.effective.threadedRenderer},fb=${launchDecision.effective.framebufferEmulation}"
+        )
         buildUi(game.title)
         handler.post(statusPoll)
+        N64Diagnostics.mark(this, "activity:prepare_requested")
         prepareGameAsync(game)
+    }
+
+    private fun firstBootDecision(base: N64SmartPerf.Decision): N64SmartPerf.Decision {
+        if (N64Diagnostics.hasVerifiedBoot(this)) return base
+        return base.copy(
+            level = N64SmartPerf.Level.ECO,
+            effective = base.effective.copy(
+                cpuMode = N64Settings.CpuMode.CACHED_INTERPRETER,
+                rspMode = N64Settings.RspMode.HLE,
+                internalResolution = N64Settings.InternalResolution.NATIVE,
+                framebufferEmulation = false,
+                threadedRenderer = false
+            ),
+            audioBufferBursts = maxOf(base.audioBufferBursts, 3),
+            aggressiveFramePacing = false,
+            allowResolutionPromotion = false,
+            reason = "Boot seguro até validar o primeiro frame N64"
+        )
     }
 
     private fun buildUi(title: String) {
@@ -195,11 +233,19 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         statusView.text = "N64 • verificando core e ROM…"
         prepareThread = Thread({
             val result = runCatching {
+                N64Diagnostics.mark(applicationContext, "prepare:probe_core")
                 check(N64NativeBridge.hasCore()) {
                     "O core Mupen64Plus-Next não pôde ser carregado neste aparelho."
                 }
+                N64Diagnostics.mark(applicationContext, "prepare:core_ready")
                 val paths = N64Storage.prepare(applicationContext)
+                N64Diagnostics.mark(applicationContext, "prepare:storage_ready")
                 val prepared = N64RomPreparer.prepare(applicationContext, game).getOrThrow()
+                N64Diagnostics.mark(
+                    applicationContext,
+                    "prepare:rom_ready",
+                    "${prepared.sourceContainer.label}/${prepared.sourceOrder.label},bytes=${prepared.file.length()}"
+                )
                 paths to prepared
             }
             if (destroyed) return@Thread
@@ -216,8 +262,10 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                         append(" → z64")
                         if (prepared.reusedCache) append(" • cache")
                     }
+                    N64Diagnostics.mark(this, "prepare:ui_ready")
                     tryStartSession()
                 }.onFailure { error ->
+                    N64Diagnostics.mark(this, "prepare:error", "${error.javaClass.simpleName}: ${error.message.orEmpty()}")
                     showBootError(error.message ?: "falha ao preparar ROM")
                 }
             }
@@ -233,24 +281,41 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         val rom = preparedRom ?: return
         val paths = storagePaths ?: return
         val surface = surfaceView.holder.surface
-        if (!surface.isValid) return
+        if (!surface.isValid) {
+            N64Diagnostics.mark(this, "session:waiting_surface")
+            return
+        }
 
         val decision = pendingDecision ?: launchDecision
         statusView.text = "N64 • ${decision.level.name} / ${decision.effective.cpuMode.label} / GLES3 + AAudio…"
+        N64Diagnostics.mark(
+            this,
+            "session:native_start",
+            "cpu=${decision.effective.cpuMode.storage},threaded=${decision.effective.threadedRenderer},fb=${decision.effective.framebufferEmulation},rom=${rom.length()}"
+        )
         started = N64NativeBridge.start(surface, rom, paths, decision, inputConfig)
+        N64Diagnostics.mark(this, if (started) "session:native_started" else "session:native_rejected")
         if (!started) showBootError("runtime recusou iniciar a sessão")
     }
 
     private fun showBootError(message: String) {
+        N64Diagnostics.mark(this, "activity:boot_error", message)
         statusView.text = "N64 BOOT E00 • $message"
         statusView.setBackgroundColor(Color.argb(230, 92, 16, 28))
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
-    override fun surfaceCreated(holder: SurfaceHolder) = tryStartSession()
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
+    override fun surfaceCreated(holder: SurfaceHolder) {
+        N64Diagnostics.mark(this, "surface:created")
+        tryStartSession()
+    }
+
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        N64Diagnostics.mark(this, "surface:changed", "${width}x$height/$format")
+    }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        N64Diagnostics.mark(this, "surface:destroyed")
         if (::controls.isInitialized) controls.releaseAll()
         if (started) {
             N64NativeBridge.stop()
