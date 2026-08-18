@@ -1,0 +1,150 @@
+name: PS2 Backend Bring-up
+
+on:
+  push:
+    branches: [ "agent/0.11.0-ps2-foundation" ]
+    paths:
+      - ".ci/ps2-backend-bringup-trigger.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ps2-backend-bringup
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout PS2 branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/0.11.0-ps2-foundation
+          fetch-depth: 0
+
+      - name: Protect PS1 and N64 runtime sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin agent/0.10.0-n64-foundation
+          changed="$(git diff --name-only origin/agent/0.10.0-n64-foundation...HEAD)"
+          forbidden='^(app/src/main/cpp/(native_bridge\.cpp|gl_presenter\.cpp|libretro_host_v7\.cpp|n64/)|app/src/main/java/com/omnicore/emulator/core/n64/|app/src/main/java/com/omnicore/emulator/emulation/N64|app/src/main/java/com/omnicore/emulator/performance/N64)'
+          if echo "$changed" | grep -E "$forbidden"; then
+            echo "PS2 bring-up modified protected PS1/N64 runtime source." >&2
+            exit 1
+          fi
+          git diff --check origin/agent/0.10.0-n64-foundation...HEAD
+
+      - name: Verify OmniCore and Play toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          OMNI_NDK="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+          PLAY_NDK="$ANDROID_SDK_ROOT/ndk/29.0.14206865"
+          test -d "$OMNI_NDK"
+          if ! test -d "$PLAY_NDK"; then
+            yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;29.0.14206865"
+          fi
+          test -d "$PLAY_NDK"
+          echo "OMNI_NDK_HOME=$OMNI_NDK" >> "$GITHUB_ENV"
+          echo "PLAY_NDK_HOME=$PLAY_NDK" >> "$GITHUB_ENV"
+          test -x "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign"
+
+      - name: Fetch pinned Play backend
+        shell: bash
+        run: |
+          set -o pipefail
+          chmod +x tools/fetch_ps2_play_backend.sh tools/build_ps2_play_backend_android.sh
+          tools/fetch_ps2_play_backend.sh 2>&1 | tee /tmp/ps2-bringup.log
+          test "$(git -C build/third_party/play rev-parse HEAD)" = "04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
+          cmp build/third_party/play/License.txt third_party/licenses/Play-BSD-2-Clause.txt || true
+
+      - name: Build Play Android backend
+        shell: bash
+        run: |
+          set -o pipefail
+          export ANDROID_NDK_HOME="$PLAY_NDK_HOME"
+          tools/build_ps2_play_backend_android.sh 2>&1 | tee -a /tmp/ps2-bringup.log
+          for ABI in arm64-v8a armeabi-v7a; do
+            test -s "app/src/main/jniLibs/$ABI/libPlay.so"
+          done
+
+      - name: Verify Play ELF 16 KB alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          READELF="$PLAY_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          for ABI in arm64-v8a armeabi-v7a; do
+            LIB="app/src/main/jniLibs/$ABI/libPlay.so"
+            "$READELF" -lW "$LIB" | awk '$1 == "LOAD" { count++; if ($NF != "0x4000" && $NF != "0x10000") bad=1 } END { if (count == 0 || bad) exit 1 }'
+          done
+
+      - name: Compile OmniCore adapter and APK
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle :app:externalNativeBuildDebug :app:compileDebugKotlin :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee -a /tmp/ps2-bringup.log
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -f "$APK"
+          for ABI in arm64-v8a armeabi-v7a; do
+            unzip -l "$APK" | grep -q "lib/$ABI/libPlay.so"
+            unzip -l "$APK" | grep -q "lib/$ABI/libomnicore_ps2_runtime.so"
+          done
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libomnicore_n64_runtime.so'
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libomnicore_runtime.so'
+
+      - name: Verify APK 16 KB packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" -c -P 16 4 app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Record bring-up failure
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "run_id=$GITHUB_RUN_ID"
+            echo "commit=$GITHUB_SHA"
+            echo "status=failure"
+            echo "phase=backend-bringup-1"
+            echo "play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
+          } > .ci/ps2-backend-bringup-failure.txt
+          if test -f /tmp/ps2-bringup.log; then
+            echo >> .ci/ps2-backend-bringup-failure.txt
+            echo "--- build tail ---" >> .ci/ps2-backend-bringup-failure.txt
+            tail -n 160 /tmp/ps2-bringup.log >> .ci/ps2-backend-bringup-failure.txt
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .ci/ps2-backend-bringup-failure.txt
+          git commit -m "Record PS2 backend bring-up failure [skip ci]" || true
+          git push origin HEAD:agent/0.11.0-ps2-foundation || true
+
+      - name: Record bring-up success
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "run_id=$GITHUB_RUN_ID"
+            echo "commit=$GITHUB_SHA"
+            echo "status=success"
+            echo "phase=backend-bringup-1"
+            echo "play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
+            echo "backend=libPlay.so"
+            echo "abis=arm64-v8a,armeabi-v7a"
+          } > .ci/ps2-backend-bringup-success.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .ci/ps2-backend-bringup-success.txt
+          git commit -m "Record PS2 backend bring-up success [skip ci]"
+          git push origin HEAD:agent/0.11.0-ps2-foundation
+
+      - name: Bring-up summary
+        if: success()
+        run: echo "Pinned Play! Android backend compiled and packaged behind OmniCore PS2 isolation. Gameplay boot is the next gate."
