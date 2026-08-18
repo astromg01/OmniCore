@@ -5,7 +5,6 @@ import com.omnicore.emulator.core.CoreInfo
 import com.omnicore.emulator.core.CoreState
 import com.omnicore.emulator.core.EmulatorCore
 import com.omnicore.emulator.emulation.N64EmulationActivity
-import com.omnicore.emulator.library.RomDetector
 import com.omnicore.emulator.model.ConsoleSystem
 import com.omnicore.emulator.model.GameEntry
 import com.omnicore.emulator.performance.N64SmartPerf
@@ -20,24 +19,26 @@ class N64Core : EmulatorCore {
         version = "pinned f275caf"
     )
 
-    override fun isAvailable(): Boolean = N64NativeBridge.hasCore()
+    /**
+     * The N64 native runtime is verified inside N64EmulationActivity's isolated
+     * process. Avoid dlopen/probing Mupen from the main library process: a native
+     * crash must never take the OmniCore hub down with it.
+     */
+    override fun isAvailable(): Boolean = true
 
     override fun launch(context: Context, game: GameEntry): Result<Unit> = runCatching {
-        check(isAvailable()) {
-            "O núcleo Nintendo 64 não está empacotado neste build."
-        }
-        val extension = RomDetector.extension(game.fileName)
-        require(extension in SUPPORTED_EXTENSIONS) {
-            "Formato Nintendo 64 não suportado: .$extension"
+        val extension = game.fileName.substringAfterLast('.', "").lowercase()
+        require(extension in SUPPORTED_EXTENSIONS || extension.isBlank()) {
+            "Formato Nintendo 64 não reconhecido: .$extension"
         }
 
-        // Warm only N64-owned caches here. ROM I/O stays off this caller thread
-        // and is performed by N64EmulationActivity.
+        // Warm only Kotlin-owned N64 policy state. ROM signature validation,
+        // native runtime probing and game I/O happen in the isolated N64 process.
         N64SmartPerf.initial(context, N64Settings.resolve(context))
         context.startActivity(N64EmulationActivity.intent(context, game))
     }
 
     companion object {
-        val SUPPORTED_EXTENSIONS = setOf("z64", "n64", "v64")
+        val SUPPORTED_EXTENSIONS = setOf("z64", "n64", "v64", "rom", "bin", "zip", "gz", "gzip")
     }
 }
