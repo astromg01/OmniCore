@@ -69,7 +69,7 @@ object N64NativeBridge {
         runCatching {
             diagnosticFile.writeText(
                 "stage=kotlin:native_start\ntimestamp=${System.currentTimeMillis()}\n" +
-                    "detail=${config.cpuMode.storage},threaded=${config.threadedRenderer},fb=${config.framebufferEmulation}\n"
+                    "detail=${config.cpuMode.storage},threaded=${config.threadedRenderer},fb=${config.framebufferEmulation},aspect=${config.aspectRatio.storage}\n"
             )
         }
 
@@ -85,6 +85,7 @@ object N64NativeBridge {
                 rspMode = config.rspMode.storage,
                 pakMode = pak,
                 expansionPak = config.expansionPak.storage,
+                aspectRatio = config.aspectRatio.storage,
                 framebufferEmulation = config.framebufferEmulation,
                 threadedRenderer = config.threadedRenderer,
                 internalResolution = config.internalResolution.multiplier,
@@ -95,6 +96,10 @@ object N64NativeBridge {
         }.getOrDefault(false)
         if (started) startDiagnosticPoll(diagnosticFile, verificationFile)
         return started
+    }
+
+    fun setAudioTargetBursts(bursts: Int) {
+        if (runtimeLoaded) runCatching { nativeSetAudioTargetBursts(bursts.coerceIn(2, 7)) }
     }
 
     private fun startDiagnosticPoll(diagnosticFile: File, verificationFile: File) {
@@ -188,6 +193,7 @@ object N64NativeBridge {
         rspMode: String,
         pakMode: String,
         expansionPak: String,
+        aspectRatio: String,
         framebufferEmulation: Boolean,
         threadedRenderer: Boolean,
         internalResolution: Int,
@@ -195,6 +201,7 @@ object N64NativeBridge {
         analogSensitivityPercent: Int,
         audioBufferBursts: Int
     ): Boolean
+    private external fun nativeSetAudioTargetBursts(bursts: Int)
     private external fun nativeStop()
     private external fun nativeSetPaused(paused: Boolean)
     private external fun nativeIsRunning(): Boolean
