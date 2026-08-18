@@ -32,6 +32,11 @@ class N64Core : EmulatorCore {
             "Formato Nintendo 64 não reconhecido: .$extension"
         }
 
+        // Save a breadcrumb before Android even starts the isolated N64 process.
+        // If native library loading itself crashes, the hub can still distinguish
+        // that from a later ROM/core/GLideN64 failure without requiring ADB.
+        N64Diagnostics.mark(context, "main:launch_requested", game.fileName)
+
         // Warm only Kotlin-owned N64 policy state. ROM signature validation,
         // native runtime probing and game I/O happen in the isolated N64 process.
         N64SmartPerf.initial(context, N64Settings.resolve(context))
