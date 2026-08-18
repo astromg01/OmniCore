@@ -14,8 +14,8 @@ android {
         applicationId = "com.omnicore.emulator"
         minSdk = 26
         targetSdk = 36
-        versionCode = 18
-        versionName = "0.10.2"
+        versionCode = 19
+        versionName = "0.10.3"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
