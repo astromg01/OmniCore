@@ -17,6 +17,7 @@ struct RuntimeConfig {
     std::string romPath;
     std::string systemDir;
     std::string saveDir;
+    std::string saveRamPath;
     std::string diagnosticPath;
     std::string verificationPath;
     std::string cpuMode;
@@ -38,6 +39,10 @@ struct Telemetry {
     int droppedFrames = 0;
     int audioUnderruns = 0;
     int sampleWindowFrames = 0;
+    float audioFillMs = 0.0f;
+    float audioBufferMs = 0.0f;
+    float targetFps = 0.0f;
+    float pacingCorrectionPct = 0.0f;
 };
 
 class LibretroHost final {
@@ -47,6 +52,9 @@ public:
     void stop();
     void setPaused(bool paused);
     void setAudioTargetBursts(int bursts);
+    bool requestSaveState(std::string path);
+    bool requestLoadState(std::string path);
+    bool requestReset();
     bool running() const { return running_.load(std::memory_order_acquire); }
     std::string lastMessage() const;
     Telemetry telemetry() const;
@@ -54,6 +62,7 @@ public:
     void setAnalog(float x, float y, float cX, float cY);
 
 private:
+    enum class CommandType { NONE, SAVE_STATE, LOAD_STATE, RESET };
     static constexpr std::size_t kTelemetryCapacity = 120;
     LibretroHost() = default;
     ~LibretroHost();
@@ -68,6 +77,9 @@ private:
     void audioSample(std::int16_t left, std::int16_t right);
     std::size_t audioBatch(const std::int16_t* data, std::size_t frames);
     std::int16_t inputState(unsigned port, unsigned device, unsigned index, unsigned id) const;
+    bool processPendingCommand();
+    void loadSaveRam();
+    void persistSaveRam(bool force);
     static bool environmentCallback(unsigned cmd, void* data);
     static void videoCallback(const void* data, unsigned width, unsigned height, std::size_t pitch);
     static void audioSampleCallback(std::int16_t left, std::int16_t right);
@@ -90,6 +102,7 @@ private:
     std::atomic<std::int16_t> cX_{0};
     std::atomic<std::int16_t> cY_{0};
     std::atomic<int> audioTargetBursts_{4};
+    std::atomic<float> pacingCorrectionPct_{0.0f};
     mutable std::mutex messageMutex_;
     std::string message_ = "N64 host idle";
     mutable std::mutex telemetryMutex_;
@@ -100,6 +113,10 @@ private:
     std::atomic<float> targetFrameMs_{1000.0f / 60.0f};
     mutable std::mutex optionMutex_;
     std::unordered_map<std::string, std::string> options_;
+    mutable std::mutex commandMutex_;
+    CommandType pendingCommand_ = CommandType::NONE;
+    std::string pendingStatePath_;
+    std::uint64_t lastSaveRamHash_ = 0;
     abi::retro_hw_render_callback hwRender_{};
     bool hwRenderRequested_ = false;
     struct Impl;
