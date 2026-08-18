@@ -1,0 +1,4 @@
+OmniCore N64 Alpha 17 build trigger
+version=0.10.16
+focus=StarUI + achievements + micro-polish
+revision=1
