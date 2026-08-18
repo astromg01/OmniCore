@@ -54,6 +54,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     jstring cpuMode,
     jstring rspMode,
     jstring pakMode,
+    jstring expansionPak,
     jboolean framebufferEmulation,
     jboolean threadedRenderer,
     jint internalResolution,
@@ -71,6 +72,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     config.cpuMode = fromJString(env, cpuMode);
     config.rspMode = fromJString(env, rspMode);
     config.pakMode = fromJString(env, pakMode);
+    config.expansionPak = fromJString(env, expansionPak);
     config.framebufferEmulation = framebufferEmulation == JNI_TRUE;
     config.threadedRenderer = threadedRenderer == JNI_TRUE;
     config.internalResolution = internalResolution;
