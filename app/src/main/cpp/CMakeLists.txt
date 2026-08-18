@@ -92,3 +92,39 @@ target_link_libraries(
     ${egl-lib}
     ${glesv3-lib}
 )
+
+# PlayStation 2 foundation runtime. PS2 intentionally begins as its own shared
+# object. Third-party backend code will be attached behind the OmniCore adapter
+# only after the foundation and license/build gates are validated.
+add_library(
+    omnicore_ps2_runtime
+    SHARED
+    ps2/ps2_native_bridge.cpp
+)
+
+target_compile_features(omnicore_ps2_runtime PRIVATE cxx_std_20)
+target_compile_options(
+    omnicore_ps2_runtime
+    PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -O2
+    -ffunction-sections
+    -fdata-sections
+    -fvisibility=hidden
+)
+target_link_options(
+    omnicore_ps2_runtime
+    PRIVATE
+    -Wl,--gc-sections
+    -Wl,-z,max-page-size=16384
+)
+set_property(TARGET omnicore_ps2_runtime PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+target_include_directories(omnicore_ps2_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(
+    omnicore_ps2_runtime
+    ${android-lib}
+    ${log-lib}
+    ${dl-lib}
+)
