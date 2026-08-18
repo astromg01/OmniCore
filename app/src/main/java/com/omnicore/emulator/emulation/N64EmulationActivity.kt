@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -12,6 +13,7 @@ import android.view.Gravity
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -22,7 +24,6 @@ import android.widget.FrameLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
-import com.omnicore.emulator.core.n64.N64Core
 import com.omnicore.emulator.core.n64.N64Diagnostics
 import com.omnicore.emulator.core.n64.N64NativeBridge
 import com.omnicore.emulator.core.n64.N64RomPreparer
@@ -50,11 +51,16 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
     private var lastMessage = ""
     private var lastAdaptAt = 0L
     private var controlsVisible = true
+    private var manualPaused = false
+    private var lastSurfaceFps = 0f
 
+    private lateinit var currentGame: GameEntry
+    private lateinit var currentGameKey: String
     private var preparedRom: File? = null
     private var storagePaths: N64Storage.Paths? = null
     private lateinit var requestedConfig: N64Settings.Config
     private lateinit var inputConfig: N64InputSettings.Config
+    private lateinit var perfSession: N64SmartPerf.Session
     private lateinit var launchDecision: N64SmartPerf.Decision
     private var pendingDecision: N64SmartPerf.Decision? = null
 
@@ -68,24 +74,28 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                     statusView.text = message
                     statusView.visibility = View.VISIBLE
                     runOkPolls = 0
-                    if (message.startsWith("N64 BOOT") || message.startsWith("N64 RUNTIME") || message.startsWith("N64 RUN OK")) {
+                    if (
+                        message.startsWith("N64 BOOT") || message.startsWith("N64 RUNTIME") ||
+                        message.startsWith("N64 RUN OK") || message.startsWith("N64 STATE")
+                    ) {
                         N64Diagnostics.mark(this@N64EmulationActivity, "native:message", message)
+                    }
+                    if (message.startsWith("N64 STATE") && !message.contains(" E0")) {
+                        handler.postDelayed({
+                            if (!destroyed && statusView.text == message) statusView.visibility = View.GONE
+                        }, 1700L)
                     }
                 }
 
                 val telemetry = N64NativeBridge.telemetry()
+                applySurfaceFrameRateHint(telemetry.targetFps)
                 val now = SystemClock.elapsedRealtime()
-                if (telemetry.sampleWindowFrames >= 90 && now - lastAdaptAt >= 2500L) {
+                if (telemetry.sampleWindowFrames >= 90 && now - lastAdaptAt >= 2200L) {
                     lastAdaptAt = now
-                    val nextDecision = N64SmartPerf.adapt(
-                        this@N64EmulationActivity,
-                        requestedConfig,
-                        telemetry.smartPerf()
-                    )
+                    val nextDecision = perfSession.adapt(telemetry.smartPerf())
                     pendingDecision = nextDecision
-                    // Audio latency is safe to tune while running. CPU/RDP options
-                    // remain next-session decisions because changing them mid-frame
-                    // can invalidate core-owned GL/coroutine state.
+                    // Audio buffering is safe to tune live. CPU/RDP choices are
+                    // applied only at a future safe restart/session boundary.
                     N64NativeBridge.setAudioTargetBursts(nextDecision.audioBufferBursts)
                 }
 
@@ -104,7 +114,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                     statusView.setBackgroundColor(Color.argb(230, 92, 16, 28))
                 }
             }
-            handler.postDelayed(this, if (started) 350L else 200L)
+            handler.postDelayed(this, if (started) 500L else 220L)
         }
     }
 
@@ -112,7 +122,6 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         N64Diagnostics.mark(this, "activity:onCreate_enter")
         super.onCreate(savedInstanceState)
         N64Diagnostics.mark(this, "activity:onCreate_after_super")
-
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         N64Diagnostics.mark(this, "activity:decode_intent")
@@ -122,16 +131,20 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             finish()
             return
         }
+        currentGame = game
+        currentGameKey = N64Storage.safeGameKey(game.id)
 
         N64Diagnostics.mark(this, "activity:settings", game.fileName)
         requestedConfig = N64Settings.resolve(this)
         inputConfig = N64InputSettings.resolve(this)
-        launchDecision = firstBootDecision(N64SmartPerf.initial(this, requestedConfig))
+        perfSession = N64SmartPerf.Session(this, requestedConfig)
+        launchDecision = firstBootDecision(perfSession.initial())
 
         N64Diagnostics.mark(
             this,
             "activity:build_ui",
-            "cpu=${launchDecision.effective.cpuMode.storage},threaded=${launchDecision.effective.threadedRenderer},fb=${launchDecision.effective.framebufferEmulation},aspect=${launchDecision.effective.aspectRatio.storage}"
+            "cpu=${launchDecision.effective.cpuMode.storage},threaded=${launchDecision.effective.threadedRenderer}," +
+                "fb=${launchDecision.effective.framebufferEmulation},aspect=${launchDecision.effective.aspectRatio.storage}"
         )
         buildUi(game.title)
         scheduleImmersiveMode()
@@ -142,9 +155,9 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
 
     private fun firstBootDecision(base: N64SmartPerf.Decision): N64SmartPerf.Decision {
         if (N64Diagnostics.hasVerifiedBoot(this)) return base
-        // Real-device Alpha 5 proved the Mupen/GLES path. Keep the safe native
-        // resolution and single-thread renderer for a fresh install, but no longer
-        // force the extremely slow cached interpreter: Dynarec is the usable N64 path.
+        // A fresh install gets one conservative visual boot while keeping Dynarec.
+        // After a verified first frame, hardware-aware threaded rendering may be
+        // enabled automatically by the next session's N64 profile.
         return base.copy(
             level = N64SmartPerf.Level.BALANCED,
             effective = base.effective.copy(
@@ -154,7 +167,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                 framebufferEmulation = false,
                 threadedRenderer = false
             ),
-            audioBufferBursts = maxOf(base.audioBufferBursts, 4),
+            audioBufferBursts = maxOf(base.audioBufferBursts, 5),
             aggressiveFramePacing = false,
             allowResolutionPromotion = false,
             reason = "Boot rápido N64: Dynarec + resolução nativa + GL seguro"
@@ -169,32 +182,41 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             setWillNotDraw(true)
             holder.addCallback(this@N64EmulationActivity)
         }
-        root.addView(surfaceView, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            Gravity.CENTER
-        ))
+        root.addView(
+            surfaceView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER
+            )
+        )
 
         controls = N64GamepadOverlayView(this, inputConfig)
-        root.addView(controls, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
+        root.addView(
+            controls,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
 
         statusView = TextView(this).apply {
             text = "Preparando $title • ${launchDecision.level.name}…"
             setTextColor(Color.WHITE)
             textSize = 11f
             gravity = Gravity.CENTER
-            maxLines = 4
+            maxLines = 5
             setPadding(dp(12), dp(7), dp(12), dp(7))
             setBackgroundColor(Color.argb(190, 15, 17, 29))
         }
-        root.addView(statusView, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        ).apply { topMargin = dp(10) })
+        root.addView(
+            statusView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            ).apply { topMargin = dp(10) }
+        )
 
         val menuButton = TextView(this).apply {
             text = "⋮"
@@ -204,36 +226,200 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             setBackgroundColor(Color.argb(58, 20, 22, 36))
             setOnClickListener { showQuickMenu(this) }
         }
-        root.addView(menuButton, FrameLayout.LayoutParams(dp(42), dp(42), Gravity.TOP or Gravity.END).apply {
-            topMargin = dp(8)
-            rightMargin = dp(8)
-        })
+        root.addView(
+            menuButton,
+            FrameLayout.LayoutParams(dp(42), dp(42), Gravity.TOP or Gravity.END).apply {
+                topMargin = dp(8)
+                rightMargin = dp(8)
+            }
+        )
     }
 
     private fun showQuickMenu(anchor: View) {
         PopupMenu(this, anchor).apply {
-            menu.add(if (controlsVisible) "Ocultar controles" else "Mostrar controles")
-            menu.add("Mostrar status")
-            menu.add("Sair do jogo")
+            val editor = controls.isEditMode()
+            menu.add(0, MENU_PAUSE, 0, if (manualPaused) "Continuar jogo" else "Pausar jogo")
+
+            val saveMenu = menu.addSubMenu("Salvar estado")
+            val loadMenu = menu.addSubMenu("Carregar estado")
+            for (slot in 1..5) {
+                saveMenu.add(0, MENU_SAVE_BASE + slot, slot, "Slot $slot")
+                val file = storagePaths?.let { N64Storage.stateFile(it, currentGameKey, slot) }
+                val suffix = if (file?.isFile == true && file.length() > 0L) " ✓" else ""
+                loadMenu.add(0, MENU_LOAD_BASE + slot, slot, "Slot $slot$suffix")
+            }
+
+            menu.add(0, MENU_RESET, 20, "Reiniciar jogo")
+            if (editor) {
+                menu.add(0, MENU_EDIT_DONE, 30, "Concluir edição")
+                menu.add(0, MENU_EDIT_BIGGER, 31, "Aumentar selecionado")
+                menu.add(0, MENU_EDIT_SMALLER, 32, "Diminuir selecionado")
+                menu.add(0, MENU_EDIT_RESET, 33, "Restaurar layout")
+            } else {
+                menu.add(0, MENU_EDIT_START, 30, "Editar controles touch")
+            }
+            menu.add(0, MENU_CONTROLS, 40, if (controlsVisible) "Ocultar controles" else "Mostrar controles")
+            menu.add(0, MENU_PERF, 50, "Desempenho agora")
+            menu.add(0, MENU_STATUS, 51, "Mostrar status")
+            menu.add(0, MENU_EXIT, 99, "Sair do jogo")
+
             setOnMenuItemClickListener { item ->
-                when (item.title.toString()) {
-                    "Ocultar controles", "Mostrar controles" -> {
-                        controlsVisible = !controlsVisible
-                        if (!controlsVisible) controls.releaseAll()
-                        controls.visibility = if (controlsVisible) View.VISIBLE else View.GONE
+                when {
+                    item.itemId in (MENU_SAVE_BASE + 1)..(MENU_SAVE_BASE + 5) -> {
+                        queueSaveState(item.itemId - MENU_SAVE_BASE)
                         true
                     }
-                    "Mostrar status" -> {
+                    item.itemId in (MENU_LOAD_BASE + 1)..(MENU_LOAD_BASE + 5) -> {
+                        queueLoadState(item.itemId - MENU_LOAD_BASE)
+                        true
+                    }
+                    item.itemId == MENU_PAUSE -> {
+                        manualPaused = !manualPaused
+                        controls.releaseAll()
+                        if (started) N64NativeBridge.setPaused(manualPaused || controls.isEditMode())
+                        Toast.makeText(
+                            this@N64EmulationActivity,
+                            if (manualPaused) "N64 pausado" else "N64 continuando",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        true
+                    }
+                    item.itemId == MENU_RESET -> {
+                        controls.releaseAll()
+                        val queued = N64NativeBridge.resetGame()
+                        Toast.makeText(
+                            this@N64EmulationActivity,
+                            if (queued) "Reiniciando N64…" else "Não foi possível reiniciar agora.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        true
+                    }
+                    item.itemId == MENU_EDIT_START -> {
+                        controlsVisible = true
+                        controls.visibility = View.VISIBLE
+                        controls.setEditMode(true)
+                        if (started) N64NativeBridge.setPaused(true)
+                        Toast.makeText(this@N64EmulationActivity, "Arraste os controles. Use ⋮ para tamanho e concluir.", Toast.LENGTH_LONG).show()
+                        true
+                    }
+                    item.itemId == MENU_EDIT_DONE -> {
+                        controls.setEditMode(false)
+                        if (started) N64NativeBridge.setPaused(manualPaused)
+                        Toast.makeText(this@N64EmulationActivity, "Layout N64 salvo.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    item.itemId == MENU_EDIT_BIGGER -> {
+                        val ok = controls.adjustSelectedScale(+0.08f)
+                        if (!ok) Toast.makeText(this@N64EmulationActivity, "Selecione um controle primeiro.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    item.itemId == MENU_EDIT_SMALLER -> {
+                        val ok = controls.adjustSelectedScale(-0.08f)
+                        if (!ok) Toast.makeText(this@N64EmulationActivity, "Selecione um controle primeiro.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    item.itemId == MENU_EDIT_RESET -> {
+                        controls.resetEditedLayout()
+                        Toast.makeText(this@N64EmulationActivity, "Layout N64 restaurado.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    item.itemId == MENU_CONTROLS -> {
+                        controlsVisible = !controlsVisible
+                        if (!controlsVisible) {
+                            controls.setEditMode(false)
+                            controls.releaseAll()
+                        }
+                        controls.visibility = if (controlsVisible) View.VISIBLE else View.GONE
+                        if (started) N64NativeBridge.setPaused(manualPaused)
+                        true
+                    }
+                    item.itemId == MENU_PERF -> {
+                        showPerformanceStatus()
+                        true
+                    }
+                    item.itemId == MENU_STATUS -> {
                         statusView.text = N64NativeBridge.lastMessage()
                         statusView.visibility = View.VISIBLE
                         runOkPolls = 0
                         true
                     }
-                    "Sair do jogo" -> { finish(); true }
+                    item.itemId == MENU_EXIT -> {
+                        finish()
+                        true
+                    }
                     else -> false
                 }
             }
             show()
+        }
+    }
+
+    private fun queueSaveState(slot: Int) {
+        val paths = storagePaths ?: run {
+            Toast.makeText(this, "N64 ainda está preparando o armazenamento.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val file = N64Storage.stateFile(paths, currentGameKey, slot)
+        val queued = N64NativeBridge.saveState(file)
+        Toast.makeText(
+            this,
+            if (queued) "Salvando estado no slot $slot…" else "Runtime ocupado; tente novamente.",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun queueLoadState(slot: Int) {
+        val paths = storagePaths ?: run {
+            Toast.makeText(this, "N64 ainda está preparando o armazenamento.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val file = N64Storage.stateFile(paths, currentGameKey, slot)
+        if (!file.isFile || file.length() <= 0L) {
+            Toast.makeText(this, "Slot $slot vazio.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        controls.releaseAll()
+        val queued = N64NativeBridge.loadState(file)
+        Toast.makeText(
+            this,
+            if (queued) "Carregando estado do slot $slot…" else "Runtime ocupado; tente novamente.",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun showPerformanceStatus() {
+        val t = N64NativeBridge.telemetry()
+        val decision = pendingDecision ?: launchDecision
+        statusView.setBackgroundColor(Color.argb(210, 15, 17, 29))
+        statusView.text = buildString {
+            append("N64 PERF • ")
+            append(decision.level.name)
+            append(" • avg ")
+            append("%.1f".format(t.averageFrameMs))
+            append(" ms • p95 ")
+            append("%.1f".format(t.p95FrameMs))
+            append(" ms\nÁudio ")
+            append("%.0f".format(t.audioFillMs))
+            append("/")
+            append("%.0f".format(t.audioBufferMs))
+            append(" ms • underruns ")
+            append(t.audioUnderruns)
+            append(" • sync ")
+            append("%+.2f".format(t.pacingCorrectionPct))
+            append("%")
+        }
+        statusView.visibility = View.VISIBLE
+    }
+
+    private fun applySurfaceFrameRateHint(fps: Float) {
+        if (Build.VERSION.SDK_INT < 30 || fps !in 40f..75f || abs(fps - lastSurfaceFps) < 0.05f) return
+        val surface = surfaceView.holder.surface
+        if (!surface.isValid) return
+        runCatching {
+            surface.setFrameRate(fps, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT)
+            lastSurfaceFps = fps
+        }.onFailure { error ->
+            N64Diagnostics.mark(this, "surface:frame_rate_hint_skipped", error.javaClass.simpleName)
         }
     }
 
@@ -299,9 +485,10 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         N64Diagnostics.mark(
             this,
             "session:native_start",
-            "cpu=${decision.effective.cpuMode.storage},threaded=${decision.effective.threadedRenderer},fb=${decision.effective.framebufferEmulation},aspect=${decision.effective.aspectRatio.storage},rom=${rom.length()}"
+            "cpu=${decision.effective.cpuMode.storage},threaded=${decision.effective.threadedRenderer}," +
+                "fb=${decision.effective.framebufferEmulation},aspect=${decision.effective.aspectRatio.storage},rom=${rom.length()}"
         )
-        started = N64NativeBridge.start(surface, rom, paths, decision, inputConfig)
+        started = N64NativeBridge.start(surface, rom, paths, currentGameKey, decision, inputConfig)
         N64Diagnostics.mark(this, if (started) "session:native_started" else "session:native_rejected")
         if (!started) showBootError("runtime recusou iniciar a sessão")
     }
@@ -324,6 +511,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         N64Diagnostics.mark(this, "surface:destroyed")
+        lastSurfaceFps = 0f
         if (::controls.isInitialized) controls.releaseAll()
         if (started) {
             N64NativeBridge.stop()
@@ -340,8 +528,11 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
     override fun onResume() {
         super.onResume()
         scheduleImmersiveMode()
-        if (started) N64NativeBridge.setPaused(false)
-        else if (::surfaceView.isInitialized) tryStartSession()
+        if (started) {
+            N64NativeBridge.setPaused(manualPaused || (::controls.isInitialized && controls.isEditMode()))
+        } else if (::surfaceView.isInitialized) {
+            tryStartSession()
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -422,8 +613,9 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         val uri = intent.getStringExtra(EXTRA_GAME_URI).orEmpty()
         val fileName = intent.getStringExtra(EXTRA_FILE_NAME).orEmpty()
         if (id.isBlank() || uri.isBlank() || fileName.isBlank()) return null
-        val extension = fileName.substringAfterLast('.', "").lowercase()
-        if (extension.isNotBlank() && extension !in N64Core.SUPPORTED_EXTENSIONS) return null
+        // Do not reject by extension here. Library classification + N64RomPreparer
+        // perform signature/container validation, allowing correctly detected ROMs
+        // even when their filename uses an unusual suffix.
         return GameEntry(
             id = id,
             title = title.ifBlank { fileName.substringBeforeLast('.') },
@@ -441,7 +633,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         decor.post {
             if (destroyed || isFinishing || !decor.isAttachedToWindow) return@post
             runCatching {
-                if (android.os.Build.VERSION.SDK_INT >= 30) {
+                if (Build.VERSION.SDK_INT >= 30) {
                     decor.windowInsetsController?.let { controller ->
                         controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
                         controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -492,6 +684,20 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         private const val EXTRA_GAME_URI = "n64_game_uri"
         private const val EXTRA_FILE_NAME = "n64_file_name"
         private const val EXTRA_SIZE_BYTES = "n64_size_bytes"
+
+        private const val MENU_PAUSE = 1
+        private const val MENU_RESET = 2
+        private const val MENU_EDIT_START = 3
+        private const val MENU_EDIT_DONE = 4
+        private const val MENU_EDIT_BIGGER = 5
+        private const val MENU_EDIT_SMALLER = 6
+        private const val MENU_EDIT_RESET = 7
+        private const val MENU_CONTROLS = 8
+        private const val MENU_PERF = 9
+        private const val MENU_STATUS = 10
+        private const val MENU_EXIT = 11
+        private const val MENU_SAVE_BASE = 100
+        private const val MENU_LOAD_BASE = 200
 
         fun intent(context: Context, game: GameEntry): Intent =
             Intent(context, N64EmulationActivity::class.java).apply {
