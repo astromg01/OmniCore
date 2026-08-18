@@ -14,6 +14,29 @@ if [[ ! -f "$CORE/libretro/jni/Android.mk" ]]; then
   exit 1
 fi
 
+READELF="$(find "$NDK/toolchains/llvm/prebuilt" -type f -path '*/bin/llvm-readelf' -print -quit)"
+if [[ -z "$READELF" || ! -x "$READELF" ]]; then
+  echo "llvm-readelf not found in Android NDK." >&2
+  exit 1
+fi
+
+verify_16k_elf() {
+  local so="$1"
+  local line align
+  while IFS= read -r line; do
+    align="$(awk '{print $NF}' <<< "$line")"
+    [[ "$align" =~ ^0x[0-9A-Fa-f]+$ ]] || {
+      echo "Invalid LOAD alignment field in $so: $line" >&2
+      return 1
+    }
+    (( align >= 0x4000 )) || {
+      echo "N64 core is not 16 KB aligned: $so" >&2
+      echo "  $line" >&2
+      return 1
+    }
+  done < <("$READELF" -lW "$so" | grep -E '^[[:space:]]*LOAD[[:space:]]')
+}
+
 mkdir -p "$ROOT/app/src/main/jniLibs"
 
 for ABI in arm64-v8a armeabi-v7a; do
@@ -45,8 +68,11 @@ for ABI in arm64-v8a armeabi-v7a; do
     echo "Expected N64 core output not found: $SOURCE" >&2
     exit 1
   fi
+
+  verify_16k_elf "$SOURCE"
+
   mkdir -p "$TARGET_DIR"
   rm -f "$TARGET_DIR/libmupen64plus_next_libretro.so"
   cp "$SOURCE" "$TARGET_DIR/libmupen64plus_next_libretro.so"
-  echo "Packaged N64 core for $ABI"
+  echo "Packaged 16 KB-aligned N64 core for $ABI"
 done
