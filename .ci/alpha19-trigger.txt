@@ -1,4 +1,4 @@
 OmniCore N64 Alpha 23 registered bridge trigger
 version=0.10.22
 focus=SmoothAudioResampler + SyncSlew + dense-mix audio polish
-revision=1
+revision=2
