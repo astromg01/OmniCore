@@ -1,4 +1,4 @@
 OmniCore N64 Alpha 19 build trigger
 version=0.10.18
 focus=MicroBurstShield + CruiseGuard + NonBlockingTelemetry + ComfortAnalog
-revision=1
+revision=2-workflow-recognized
