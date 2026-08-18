@@ -4,109 +4,113 @@
 
 [![Android](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
 [![Stable DEV](https://img.shields.io/badge/stable%20DEV-0.9.4-57D8FF)](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.9.4-dev)
-[![N64 Alpha](https://img.shields.io/badge/N64%20alpha-0.10.15%20Alpha%2016-9879FF)](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.10.15-n64-alpha16)
+[![N64 Alpha](https://img.shields.io/badge/N64%20alpha-0.10.16%20Alpha%2017-9879FF)](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.10.16-n64-alpha17)
 [![PS1](https://img.shields.io/badge/PS1-device%20validated-57D8FF)](https://github.com/libretro/pcsx_rearmed)
 [![N64](https://img.shields.io/badge/N64-real--device%20testing-F4C95D)](https://github.com/libretro/mupen64plus-libretro-nx)
 [![Native](https://img.shields.io/badge/native-16%20KB%20ready-3DDC84)](app/src/main/cpp/)
 [![Copyright](https://img.shields.io/badge/copyright-%C2%A9%202026%20%40mauricio--gamedev-6C63FF)](COPYRIGHT.md)
 
-OmniCore is a **multi-system Android emulation hub**, not a frontend built around a single console. Each supported system owns its own core integration, runtime policy, settings, storage, performance logic and console-specific input behavior while sharing one Android library experience.
+OmniCore is a **multi-system Android emulation hub**, not a frontend built around one console. Each supported system owns its own core integration, runtime policy, settings, storage, performance logic and console-specific input behavior while sharing one Android library experience.
 
-The current stable backend is **PlayStation 1**. **Nintendo 64** is the second integrated backend and is in active physical-device Alpha development. PSP, Wii / GameCube, PlayStation 2 and Nintendo Switch remain roadmap targets.
+The current stable backend is **PlayStation 1**. **Nintendo 64** is the second integrated backend and remains in active physical-device Alpha development. PSP, Wii / GameCube, PlayStation 2 and Nintendo Switch remain roadmap targets.
 
 ## Current status
 
 | Channel | Version | Status |
 |---|---:|---|
 | Stable DEV | **0.9.4** | PS1 gameplay, video, audio and controls validated on Android hardware |
-| N64 device-test | **0.10.15 Alpha 16** | PrecisionGovernor v2, GLideN64/Mupen64Plus-Next, game-aware Smart Analog and real-device performance tuning |
+| N64 device-test | **0.10.16 Alpha 17** | PrecisionGovernor v2 preserved, StarUI, offline achievements and real-device micro-polish |
 
-The N64 channel is experimental. CI validates architecture, compilation, packaging, signing, native core coexistence and 16 KB compatibility. Real gameplay quality, Android driver behavior and remaining game-specific performance issues are validated on physical Android devices.
+The N64 channel is experimental. CI validates architecture, compilation, packaging, signing, native core coexistence and 16 KB compatibility. Real gameplay quality and Android-driver behavior are validated on physical Android devices.
 
-## OmniCore 0.10.15 — N64 Alpha 16
+## OmniCore 0.10.16 — N64 Alpha 17
 
-Alpha 16 keeps the successful Alpha 15 optimization philosophy and refines it instead of replacing it. The main target is **more stable frame delivery with fewer false performance reactions**.
+Alpha 17 is the first major **polish release** after PrecisionGovernor v2 reached a strong real-device baseline. The goal is to improve presentation and reduce small frontend costs **without disturbing the native N64 performance foundation that worked well in Alpha 16**.
 
-### PrecisionGovernor v2
+### PrecisionGovernor v2 remains protected
 
-PrecisionGovernor v2 separates short-lived spikes from sustained bottlenecks and classifies pressure as **CPU**, **GPU/presentation**, **mixed** or **stable**.
+The native N64 governor / pacing host was intentionally left unchanged in Alpha 17. CI hashes `n64_libretro_host.cpp` before and after the Alpha 17 migration and fails if the polish pass changes it accidentally.
 
-The current controller uses:
+The proven N64 foundation remains:
 
-- fast and slow frame-time EWMAs;
-- present-time tracking;
-- accumulated **pressure debt** instead of reacting to one bad frame;
-- candidate streaks before switching bottleneck classification;
-- minimum dwell time in the current governor state;
-- gradual recovery after sustained stability;
-- bounded ADPF CPU/GPU hints rather than permanent maximum-performance behavior;
-- separate audio control based on real AAudio/ring-buffer evidence;
-- confidence telemetry so a weak guess is distinguishable from a sustained diagnosis;
-- smoothed frame-jitter telemetry for stability analysis.
+- fast + slow frame-time EWMAs;
+- pressure-debt integration;
+- confidence-based CPU / GPU / MIX classification;
+- minimum state dwell time and gradual recovery;
+- smoothed jitter telemetry;
+- bounded ADPF hints;
+- audio adaptation based on real AAudio/ring-buffer evidence;
+- passive shader-cache warm-up limited to approximately **2 MiB**;
+- no hidden SmartPrecompile frames and no forced `glFinish()` boot pass.
 
-The runtime performance panel exposes the current state in forms such as:
+### Omni StarUI
 
-`P-GOV2 GPU 87% • jitter 1.42 ms`
+The hub now uses a new dark cosmic visual language inspired by OmniCore's original animated N64 boot star.
 
-This lets real-device testing focus on the actual bottleneck instead of using FPS alone.
+StarUI includes:
 
-### Passive WarmCache
+- deep cosmic background with purple, cyan and star-gold accents;
+- a star-based OmniCore header identity;
+- a lightweight code-drawn star field behind the hub;
+- animation capped at approximately **20 fps** instead of rendering decorative motion at game-frame rates;
+- reduced/static motion and lower star density on Android low-RAM devices or while Battery Saver is enabled;
+- the star field exists in the hub only and is **never rendered over gameplay**.
 
-The aggressive hidden SmartPrecompile experiment introduced in Alpha 14 is **not used anymore**.
+The visual upgrade is deliberately bounded so UI polish does not become a new emulator bottleneck.
 
-OmniCore does not run hidden emulation frames, does not restore a boot savestate to simulate precompilation and does not force `glFinish()` before gameplay.
+### Local achievements — “Constelação OmniCore”
 
-Shader-cache warming is now passive and strictly bounded to approximately **2 MiB**, including the kernel prefetch request. Persistent GLideN64 shader storage remains available when the device/driver can reuse cached binaries.
+Alpha 17 introduces an **offline achievement system with no account requirement**.
 
-### Stable performance rules
+A new **Conquistas** tab shows rarity, descriptions and progress. Unlocks can display a lightweight animated star banner while using the emulator.
 
-The current N64 optimization policy deliberately protects visual and compatibility settings:
+The first achievement set includes:
 
-- Intelligent **1.5×** internal resolution remains preserved (`960×720` at 4:3 / `960×540` widescreen);
+| Achievement | Goal |
+|---|---|
+| **Primeira Estrela** | Open OmniCore |
+| **Primeiro Cartucho** | Add the first game to the library |
+| **Colecionador** | Reach 10 games in the unified library |
+| **64 Bits Acordados** | Reach the first confirmed N64 frame |
+| **Sessão Dourada** | Accumulate 10 active N64 minutes |
+| **Afinador** | Open the N64 performance panel |
+| **Do Meu Jeito** | Edit and save the N64 touch layout |
+| **Guardião do Tempo** | Queue the first N64 save state |
+| **Analógico Esperto** | Trigger Smart Analog → D-pad in real gameplay |
+| **Fluxo de Seda** | Sustain a stable low-jitter PrecisionGovernor v2 window |
+
+Achievement state is stored locally in a tiny file protected by a cross-process file lock. This matters because the N64 runtime runs in the isolated `:n64` Android process while the hub runs in the main process. Same-process access is also serialized, and state replacement uses an atomic-move path when available.
+
+Achievement disk work is kept off the emulation and UI threads.
+
+### N64 frontend micro-polish
+
+The N64 status/telemetry poll is now relaxed after stable boot:
+
+- preparing runtime: **220 ms** cadence;
+- early confirmed boot: **350 ms** cadence;
+- stable `RUN OK`: **750 ms** cadence.
+
+This reduces unnecessary JNI/UI activity during normal gameplay while leaving the existing SmartPerf adaptation window intact.
+
+### Visual and compatibility protections
+
+Alpha 17 continues to protect the settings that are already working on real hardware:
+
+- Intelligent **1.5×** internal resolution (`960×720` at 4:3 / `960×540` widescreen);
 - framebuffer emulation is not disabled automatically;
-- renderer threading is not enabled merely because a device exposes many CPU cores;
-- Dynarec remains the preferred CPU path;
-- HLE RSP remains the default compatibility/performance balance;
-- short renderer spikes do not automatically increase audio buffering;
-- WarmStart is bounded and exits after stability is demonstrated;
-- no root, forced clocks, hidden vendor APIs or persistent system-property tweaks are required.
-
-### DirectPresenter + RenderBridge
-
-On compatible Android devices OmniCore can render directly to a native buffer matching the selected internal N64 resolution, allowing Android's compositor to perform final display scaling without the older extra full-frame frontend blit.
-
-If the device rejects the requested buffer geometry, OmniCore automatically falls back to the proven **RenderBridge** path.
-
-### Smart Analog + Game Intelligence
-
-The N64 input system includes ROM-aware compatibility logic for games whose movement is digital rather than analog.
-
-Current modes:
-
-- **Inteligente / AUTO** — normal analog behavior with compatibility-aware analog-to-D-pad projection where needed;
-- **Somente analógico** — never synthesizes D-pad input;
-- **Analógico → D-pad** — explicitly converts the left analog into digital directions.
-
-The native analog path also provides radial deadzone/sensitivity shaping, directional hysteresis and diagonal D-pad projection. Physical/touch D-pad input remains separated from synthesized Smart Analog input.
-
-**Kirby** is the first explicit digital-movement profile, allowing the left analog to control titles that otherwise respond only to N64 D-pad directions while AUTO is selected.
-
-## N64 compatibility foundation
-
-The current N64 runtime preserves:
-
-- Mupen64Plus-Next/libretro pinned to `f275caf4b2bfa1e6d1c51636746ea793f3d80320`;
-- GLideN64 over OpenGL ES 3;
-- isolated Android N64 process;
-- DirectPresenter with RenderBridge fallback;
+- renderer threading is not inferred only from CPU-core count;
+- Dynarec-first CPU path;
+- HLE RSP default;
+- DirectPresenter with automatic RenderBridge fallback;
 - adaptive native AAudio;
-- persistent shader storage;
+- Game-aware Smart Analog, including the Kirby digital-movement profile;
+- radial analog precision and directional hysteresis;
 - save RAM and save states;
-- editable touch-control positions and per-control sizing;
+- editable touch-control positions and sizing;
 - optional D-pad visibility;
-- Android USB/Bluetooth controller support;
-- 4:3 and widescreen presentation;
-- frame-time, presentation, audio, governor-confidence and jitter telemetry.
+- USB/Bluetooth controller support;
+- 4:3 and widescreen presentation.
 
 ## Multi-system isolation
 
@@ -114,7 +118,7 @@ Nintendo 64 runs in the dedicated Android process:
 
 `com.omnicore.emulator:n64`
 
-PS1 and N64 keep separate runtime code, settings, storage and console-specific performance policies. N64 development must not silently alter the validated PS1 backend.
+PS1 and N64 keep separate runtime code, settings, storage and console-specific performance policies. Alpha 17's CI includes an isolation guard against accidental PS1/PCSX-owned source changes.
 
 ## PlayStation 1 — stable DEV 0.9.4
 
@@ -135,7 +139,7 @@ N64 recognition is signature-first rather than extension-only. OmniCore recogniz
 | System | Backend direction | Status |
 |---|---|---|
 | PlayStation 1 | PCSX-ReARMed / libretro | **Functional / device validated** |
-| Nintendo 64 | Mupen64Plus-Next / libretro | **Integrated / Alpha 16 real-device testing** |
+| Nintendo 64 | Mupen64Plus-Next / libretro | **Integrated / Alpha 17 real-device testing** |
 | PSP | PPSSPP | Planned |
 | Wii / GameCube | Dolphin | Planned |
 | PlayStation 2 | Backend evaluation | Planned |
@@ -151,9 +155,9 @@ N64 recognition is signature-first rather than extension-only. OmniCore recogniz
 
 ### Experimental N64 build
 
-**[OmniCore v0.10.15 N64 Alpha 16](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.10.15-n64-alpha16)**
+**[OmniCore v0.10.16 N64 Alpha 17](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.10.16-n64-alpha17)**
 
-**[Direct APK — OmniCore-v0.10.15-n64-alpha16-debug.apk](https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.10.15-n64-alpha16/OmniCore-v0.10.15-n64-alpha16-debug.apk)**
+**[Direct APK — OmniCore-v0.10.16-n64-alpha17-debug.apk](https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.10.16-n64-alpha17/OmniCore-v0.10.16-n64-alpha17-debug.apk)**
 
 Modern DEV/N64 test builds use the stable OmniCore DEV signing identity so compatible installations can update in place.
 
@@ -179,9 +183,17 @@ Mupen64Plus-Next pin:
 
 Corresponding source archives are published beside applicable development APKs.
 
-## Alpha 16 validation
+## Alpha 17 validation
 
-GitHub Actions run **32168612788** validated the Alpha 16 release path, including Kotlin/native compilation, isolated PS1/N64 core builds, signed APK creation, stable DEV signer verification, native 16 KB alignment and prerelease publication.
+GitHub Actions run **32173594771** validated the Alpha 17 release path, including:
+
+- Alpha 17 architecture and isolation guards;
+- Kotlin and native N64 runtime compilation;
+- isolated PCSX-ReARMed and Mupen64Plus-Next builds;
+- signed **0.10.16** APK creation;
+- stable DEV signer verification;
+- native ELF/APK **16 KB alignment**;
+- N64 Alpha 17 prerelease publication.
 
 CI uses no copyrighted ROMs, BIOS or firmware.
 
@@ -191,20 +203,20 @@ OmniCore does **not** include ROMs, game images, BIOS files, firmware, console e
 
 ## Ownership, copyright and third-party licenses
 
-**Copyright © 2026 [@mauricio-gamedev](https://github.com/mauricio-gamedev).** The original OmniCore project identity, original documentation, branding and original project code are protected by copyright except where an applicable source/component license grants additional rights.
+**Copyright © 2026 [@mauricio-gamedev](https://github.com/mauricio-gamedev).** Original OmniCore project identity, documentation, branding and original project material are protected by copyright except where an applicable source/component license grants additional rights.
 
-Public visibility of this repository does not by itself waive copyright ownership. See **[COPYRIGHT.md](COPYRIGHT.md)** for the project ownership notice.
+Public visibility of this repository does not by itself place original OmniCore material in the public domain. See **[COPYRIGHT.md](COPYRIGHT.md)** for the project ownership notice.
 
-Third-party components remain governed by their own licenses. PCSX-ReARMed, Mupen64Plus-Next and related GPL-covered components retain the rights and obligations granted by those licenses; this OmniCore ownership notice does not replace or restrict them. See **[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)** and the source archives published with applicable builds.
+Third-party components remain governed by their own licenses. PCSX-ReARMed, Mupen64Plus-Next and related GPL-covered components retain all rights and obligations granted by those licenses; the OmniCore ownership notice does not replace or restrict them. See **[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)** and the source archives published with applicable builds.
 
 ## Immediate development priorities
 
-1. Continue refining PrecisionGovernor v2 from real-device confidence, jitter, p95 and presentation telemetry.
-2. Reduce remaining N64 stutter without sacrificing the protected 1.5× target or framebuffer compatibility.
-3. Expand Game Intelligence only from confirmed compatibility data.
-4. Continue regression testing of Smart Analog, save states, widescreen, touch editing and physical controllers.
-5. Preserve PS1 isolation while the N64 runtime evolves.
-6. Continue expanding the multi-system library and future console backends.
+1. Verify StarUI smoothness and power behavior on physical Android hardware.
+2. Validate achievement persistence, unlock banners and cross-process progress during real N64 sessions.
+3. Confirm Alpha 17 preserves the real-device gameplay quality reached by PrecisionGovernor v2 in Alpha 16.
+4. Continue only measurement-driven micro-refinements to N64 performance and frame delivery.
+5. Expand Game Intelligence from confirmed compatibility data rather than broad title hacks.
+6. Preserve PS1 isolation while adding future console backends and library features.
 
 ---
 
