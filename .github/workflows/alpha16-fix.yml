@@ -1,0 +1,92 @@
+name: N64 Alpha 16 Compile Fix
+
+on:
+  push:
+    branches: [ "agent/0.10.0-n64-foundation" ]
+    paths:
+      - ".ci/alpha16-fix-trigger.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-n64-alpha16-fix
+  cancel-in-progress: true
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone N64 foundation branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin agent/0.10.0-n64-foundation
+          git checkout -B agent/0.10.0-n64-foundation origin/agent/0.10.0-n64-foundation
+
+      - name: Apply Alpha 16 and Kotlin import fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'versionName = "0.10.14"' app/build.gradle.kts
+          python3 tools/agent_01015_alpha16.py
+          python3 tools/agent_01015_alpha16_postfix.py
+          grep -q 'versionName = "0.10.15"' app/build.gradle.kts
+          grep -q 'import kotlin.math.roundToInt' app/src/main/java/com/omnicore/emulator/emulation/N64EmulationActivity.kt
+          git diff --check
+
+      - name: Verify Android toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
+
+      - name: Reuse stable DEV signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/signing
+          base64 -d config/omnicore-dev.keystore.b64 > build/signing/omnicore-dev.jks
+          chmod 600 build/signing/omnicore-dev.jks
+          echo "OMNICORE_DEV_KEYSTORE=$GITHUB_WORKSPACE/build/signing/omnicore-dev.jks" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, re
+          text = Path('.github/workflows/android.yml').read_text(encoding='utf-8')
+          keys = ('OMNICORE_DEV_STORE_PASSWORD', 'OMNICORE_DEV_KEY_ALIAS', 'OMNICORE_DEV_KEY_PASSWORD')
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as out:
+              for key in keys:
+                  match = re.search(r'echo "' + re.escape(key) + r'=([^\"]+)" >> "\$GITHUB_ENV"', text)
+                  if not match:
+                      raise SystemExit(f'missing existing DEV signing field: {key}')
+                  out.write(f'{key}={match.group(1)}\n')
+          PY
+
+      - name: Compile fixed Kotlin and native host
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:externalNativeBuildDebug :app:compileDebugKotlin --stacktrace --no-daemon
+
+      - name: Commit compile-validated Alpha 16 and retrigger full pipeline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -f tools/agent_01015_alpha16.py tools/agent_01015_alpha16_postfix.py
+          printf 'OmniCore N64 Alpha 16 build trigger\nversion=0.10.15\nfocus=PrecisionGovernor v2 stability + confidence telemetry\nrevision=2-compile-fixed\n' > .ci/alpha16-trigger.txt
+          git config user.name "Mauricio.dev"
+          git config user.email "antoniomauriciorodriguesalves@gmail.com"
+          git add -u app tools/agent_01015_alpha16.py tools/agent_01015_alpha16_postfix.py
+          git add .ci/alpha16-trigger.txt
+          git diff --cached --check
+          git commit -m "Compile-validate OmniCore 0.10.15 N64 Alpha 16 [skip ci except alpha16 trigger]"
+          git push origin HEAD:agent/0.10.0-n64-foundation
