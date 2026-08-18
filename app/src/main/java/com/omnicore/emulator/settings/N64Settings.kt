@@ -104,7 +104,7 @@ object N64Settings {
             internalResolution = InternalResolution.NATIVE,
             framebufferEmulation = false,
             expansionPak = ExpansionPak.AUTO,
-            threadedRenderer = true
+            threadedRenderer = false
         )
         Preset.BALANCED -> Config(
             preset = preset,
@@ -113,7 +113,7 @@ object N64Settings {
             internalResolution = InternalResolution.NATIVE,
             framebufferEmulation = true,
             expansionPak = ExpansionPak.AUTO,
-            threadedRenderer = true
+            threadedRenderer = false
         )
         Preset.QUALITY -> Config(
             preset = preset,
@@ -122,7 +122,7 @@ object N64Settings {
             internalResolution = if (device.tier == N64PerformanceProfile.Tier.HIGH) InternalResolution.X2 else InternalResolution.NATIVE,
             framebufferEmulation = true,
             expansionPak = ExpansionPak.AUTO,
-            threadedRenderer = true
+            threadedRenderer = false
         )
         Preset.AUTO, Preset.CUSTOM -> Config(
             preset = Preset.AUTO,
@@ -131,7 +131,7 @@ object N64Settings {
             internalResolution = if (device.tier == N64PerformanceProfile.Tier.HIGH) InternalResolution.X2 else InternalResolution.NATIVE,
             framebufferEmulation = device.tier != N64PerformanceProfile.Tier.LOW,
             expansionPak = ExpansionPak.AUTO,
-            threadedRenderer = true
+            threadedRenderer = false
         )
     }.sanitized(device)
 
@@ -144,13 +144,19 @@ object N64Settings {
         } else {
             internalResolution
         }
-        // First Android alpha: never force-disable extra RDRAM globally. The
-        // core's automatic per-game behaviour is safer until compatibility is measured.
+        // Early Android validation: keep the upstream-compatible single-thread
+        // GL path until repeatable real-device boot is proven. Threaded GLideN64
+        // changes the core's coroutine/thread lifecycle and is re-enabled only
+        // after the base hardware-render path is stable.
+        val safeThreadedRenderer = false
+        // Never force-disable extra RDRAM globally. Automatic per-game behaviour
+        // is safer until compatibility is measured.
         val safeExpansionPak = ExpansionPak.AUTO
         return copy(
             rspMode = safeRsp,
             internalResolution = safeResolution,
-            expansionPak = safeExpansionPak
+            expansionPak = safeExpansionPak,
+            threadedRenderer = safeThreadedRenderer
         )
     }
 
