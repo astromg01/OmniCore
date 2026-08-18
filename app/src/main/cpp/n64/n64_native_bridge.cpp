@@ -38,7 +38,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeHasCore(JNIEnv*, jobje
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeRuntimeInfo(JNIEnv* env, jobject) {
-    const std::string value = std::string("OmniCore N64 Runtime 0.10.7 • Mupen64Plus-Next • GLES3 + AAudio host v6 • ") +
+    const std::string value = std::string("OmniCore N64 Runtime 0.10.8 • Mupen64Plus-Next • GLES3 + AAudio host v7 • ") +
         (hasLibretroCore() ? "core ready" : "core missing");
     return env->NewStringUTF(value.c_str());
 }
@@ -60,6 +60,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     jstring expansionPak,
     jstring aspectRatio,
     jboolean framebufferEmulation,
+    jboolean leanGraphics,
     jboolean threadedRenderer,
     jint internalResolution,
     jint analogDeadzonePercent,
@@ -82,6 +83,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     config.expansionPak = fromJString(env, expansionPak);
     config.aspectRatio = fromJString(env, aspectRatio);
     config.framebufferEmulation = framebufferEmulation == JNI_TRUE;
+    config.leanGraphics = leanGraphics == JNI_TRUE;
     config.threadedRenderer = threadedRenderer == JNI_TRUE;
     config.internalResolution = internalResolution;
     config.analogDeadzonePercent = analogDeadzonePercent;

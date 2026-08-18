@@ -484,6 +484,8 @@ struct LibretroHost::Impl {
     int stableAudioChecks = 0;
     int audioBufferFrames = 0;
     std::uint64_t lastRingUnderruns = 0;
+    std::int16_t lastAudioLeft = 0;
+    std::int16_t lastAudioRight = 0;
     double resampleAccumulator = 0.0;
     std::array<std::int16_t, 8192> resampleScratch{};
 
@@ -492,9 +494,25 @@ struct LibretroHost::Impl {
         auto* self = static_cast<Impl*>(userData);
         if (!self || !audioData || numFrames <= 0) return AAUDIO_CALLBACK_RESULT_CONTINUE;
         const std::size_t requested = static_cast<std::size_t>(numFrames) * 2u;
-        const std::size_t read = self->audioRing.pop(static_cast<std::int16_t*>(audioData), requested);
-        if (read < requested && self->owner) {
-            self->owner->audioUnderruns_.fetch_add(1, std::memory_order_relaxed);
+        auto* output = static_cast<std::int16_t*>(audioData);
+        const std::size_t read = self->audioRing.pop(output, requested);
+        if (read >= 2) {
+            self->lastAudioLeft = output[read - 2];
+            self->lastAudioRight = output[read - 1];
+        }
+        if (read < requested) {
+            // Conceal a short scheduler underrun with a tiny fade instead of an
+            // abrupt block of zeroes. This cannot invent missing game audio, but
+            // it removes the harsh click/freeze sensation while SmartPerf grows
+            // the real AAudio cushion on the next telemetry pass.
+            const std::size_t missingFrames = (requested - read) / 2u;
+            for (std::size_t frame = 0; frame < missingFrames; ++frame) {
+                const float gain = 1.0f - static_cast<float>(frame + 1u) /
+                    static_cast<float>(missingFrames + 1u);
+                output[read + frame * 2u] = static_cast<std::int16_t>(self->lastAudioLeft * gain);
+                output[read + frame * 2u + 1u] = static_cast<std::int16_t>(self->lastAudioRight * gain);
+            }
+            if (self->owner) self->owner->audioUnderruns_.fetch_add(1, std::memory_order_relaxed);
         }
         return AAUDIO_CALLBACK_RESULT_CONTINUE;
     }
@@ -630,7 +648,7 @@ struct LibretroHost::Impl {
             // SmartPerf reduce latency only after the stream proves stable.
             audioPrimeFrames = std::min<int>(
                 static_cast<int>(audioRing.capacitySamples() / 4u),
-                std::max(framesPerBurst * 4, outputSampleRate / 30));
+                std::max(framesPerBurst * 5, outputSampleRate / 24));
             lastXRunCount = std::max(0, AAudioStream_getXRunCount(audioStream));
             lastRingUnderruns = audioRing.underruns();
             stableAudioChecks = 0;
@@ -683,7 +701,7 @@ struct LibretroHost::Impl {
         updateAudioTelemetry();
         const float fillMs = owner ? owner->audioFillMs_.load(std::memory_order_acquire) : 0.0f;
         const float bufferMs = owner ? owner->audioBufferMs_.load(std::memory_order_acquire) : 0.0f;
-        const float targetFillMs = std::max(34.0f, bufferMs * 1.55f);
+        const float targetFillMs = std::max(42.0f, bufferMs * 1.65f);
         double scale = 1.0;
         if (fillMs < targetFillMs * 0.55f) scale = 1.0075;
         else if (fillMs < targetFillMs * 0.80f) scale = 1.0035;
@@ -740,7 +758,7 @@ struct LibretroHost::Impl {
         } else if (next < requestedBursts) {
             next = requestedBursts;
             stableAudioChecks = 0;
-        } else if (next > requestedBursts && ++stableAudioChecks >= 12) {
+        } else if (next > requestedBursts && ++stableAudioChecks >= 24) {
             --next;
             stableAudioChecks = 0;
         }
@@ -878,7 +896,8 @@ void LibretroHost::buildCoreOptions() {
     std::lock_guard<std::mutex> lock(optionMutex_);
     options_.clear();
     const bool wide = config_.aspectRatio == "16:9" || config_.aspectRatio == "16:9 adjusted";
-    const bool leanGraphics = !config_.framebufferEmulation;
+    const bool framebuffer = config_.framebufferEmulation;
+    const bool leanGraphics = config_.leanGraphics;
 
     options_["mupen64plus-rdp-plugin"] = "gliden64";
     options_["mupen64plus-rsp-plugin"] = "hle";
@@ -887,9 +906,9 @@ void LibretroHost::buildCoreOptions() {
     options_["mupen64plus-169screensize"] = config_.internalResolution >= 2 ? "1280x720" : "640x360";
     options_["mupen64plus-aspect"] = wide ? config_.aspectRatio : "4:3";
     options_["mupen64plus-ThreadedRenderer"] = boolOption(config_.threadedRenderer);
-    options_["mupen64plus-EnableFBEmulation"] = boolOption(config_.framebufferEmulation);
-    options_["mupen64plus-EnableCopyColorToRDRAM"] = leanGraphics ? "Off" : "Async";
-    options_["mupen64plus-EnableCopyDepthToRDRAM"] = leanGraphics ? "Off" : "Software";
+    options_["mupen64plus-EnableFBEmulation"] = boolOption(framebuffer);
+    options_["mupen64plus-EnableCopyColorToRDRAM"] = framebuffer ? "Async" : "Off";
+    options_["mupen64plus-EnableCopyDepthToRDRAM"] = framebuffer ? "Software" : "Off";
     options_["mupen64plus-EnableCopyColorFromRDRAM"] = "False";
     options_["mupen64plus-EnableCopyAuxToRDRAM"] = "False";
     // Readability floor: LOD is part of normal N64 texture selection and was
@@ -898,6 +917,7 @@ void LibretroHost::buildCoreOptions() {
     options_["mupen64plus-EnableLegacyBlending"] = leanGraphics ? "True" : "False";
     options_["mupen64plus-EnableFragmentDepthWrite"] = "False";
     options_["mupen64plus-BackgroundMode"] = "OnePiece";
+    options_["mupen64plus-CorrectTexrectCoords"] = "Auto";
     options_["mupen64plus-BilinearMode"] = "3point";
     options_["mupen64plus-EnableNativeResFactor"] = "0";
     options_["mupen64plus-EnableNativeResTexrects"] = "Optimized";

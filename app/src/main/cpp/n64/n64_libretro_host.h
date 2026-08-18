@@ -26,6 +26,7 @@ struct RuntimeConfig {
     std::string expansionPak;
     std::string aspectRatio = "4:3";
     bool framebufferEmulation = true;
+    bool leanGraphics = false;
     bool threadedRenderer = false;
     int internalResolution = 1;
     int analogDeadzonePercent = 12;

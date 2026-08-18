@@ -64,6 +64,7 @@ object N64SmartPerf {
         private var pressureStreak = 0
         private var healthyStreak = 0
         private var lastTransitionAt = 0L
+        private var lastAudioStressAt = 0L
 
         fun initial(): Decision = current
 
@@ -74,6 +75,13 @@ object N64SmartPerf {
             val signals = runtimeSignals(appContext)
             val candidate = resolve(profile, requested, signals, telemetry)
             val now = SystemClock.elapsedRealtime()
+            if (recentUnderruns > 0 || telemetry.audioCritical) lastAudioStressAt = now
+            fun protectAudio(decision: Decision): Decision = if (now - lastAudioStressAt < 12_000L) {
+                decision.copy(
+                    audioBufferBursts = max(decision.audioBufferBursts, 6),
+                    reason = if (recentUnderruns > 0) "SmartPerf N64 recuperando áudio sem oscilar buffer" else decision.reason
+                )
+            } else decision
             val emergency = signals.thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE ||
                 recentUnderruns >= 3 || telemetry.audioCritical
 
@@ -82,7 +90,7 @@ object N64SmartPerf {
                 healthyStreak = 0
                 current = candidate
                 lastTransitionAt = now
-                return current
+                return protectAudio(current)
             }
 
             when {
@@ -122,7 +130,7 @@ object N64SmartPerf {
                     current = candidate
                 }
             }
-            return current
+            return protectAudio(current)
         }
     }
 
@@ -166,6 +174,14 @@ object N64SmartPerf {
                 telemetry.audioCritical
             )
         val canThread = profile.is64Bit && profile.cpuCores >= 6
+        val protectFramebuffer = requested.preset != N64Settings.Preset.PERFORMANCE || requested.aspectRatio.wide
+
+        fun compatibleFramebuffer(underGpuPressure: Boolean): Boolean = when {
+            protectFramebuffer -> true
+            requested.aspectRatio.wide -> true
+            underGpuPressure -> false
+            else -> requested.framebufferEmulation
+        }
 
         fun safe(config: N64Settings.Config, threaded: Boolean): N64Settings.Config =
             config.copy(
@@ -180,11 +196,7 @@ object N64SmartPerf {
                 effective = safe(
                     requested.copy(
                         internalResolution = N64Settings.InternalResolution.NATIVE,
-                        framebufferEmulation = if (telemetry.gpuBound || signals.memoryPressure) {
-                            false
-                        } else {
-                            requested.framebufferEmulation
-                        }
+                        framebufferEmulation = compatibleFramebuffer(telemetry.gpuBound || signals.memoryPressure)
                     ),
                     threaded = !severeThermal
                 ),
@@ -209,10 +221,9 @@ object N64SmartPerf {
                 effective = safe(
                     requested.copy(
                         internalResolution = N64Settings.InternalResolution.NATIVE,
-                        framebufferEmulation = if (
-                            telemetry.gpuBound || signals.memoryPressure ||
-                                profile.tier == N64PerformanceProfile.Tier.LOW
-                        ) false else requested.framebufferEmulation
+                        framebufferEmulation = compatibleFramebuffer(
+                            telemetry.gpuBound || signals.memoryPressure
+                        )
                     ),
                     threaded = canThread && !warmThermal
                 ),

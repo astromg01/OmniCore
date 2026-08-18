@@ -42,6 +42,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var surfaceView: AspectSurfaceView
     private lateinit var controls: N64GamepadOverlayView
     private lateinit var statusView: TextView
+    private lateinit var bootStar: N64RetroStarView
 
     private val handler = Handler(Looper.getMainLooper())
     private var prepareThread: Thread? = null
@@ -102,6 +103,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                 if (message.startsWith("N64 RUN OK")) {
                     runOkPolls++
                     if (runOkPolls == 1) {
+                        bootStar.visibility = View.GONE
                         runCatching {
                             N64Diagnostics.verifiedBootFile(this@N64EmulationActivity).apply {
                                 parentFile?.mkdirs()
@@ -164,7 +166,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                 cpuMode = N64Settings.CpuMode.DYNAREC,
                 rspMode = N64Settings.RspMode.HLE,
                 internalResolution = N64Settings.InternalResolution.NATIVE,
-                framebufferEmulation = false,
+                framebufferEmulation = base.effective.framebufferEmulation,
                 threadedRenderer = false
             ),
             audioBufferBursts = maxOf(base.audioBufferBursts, 5),
@@ -216,6 +218,15 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP or Gravity.CENTER_HORIZONTAL
             ).apply { topMargin = dp(10) }
+        )
+
+        bootStar = N64RetroStarView(this)
+        root.addView(
+            bootStar,
+            FrameLayout.LayoutParams(dp(34), dp(34), Gravity.TOP or Gravity.START).apply {
+                topMargin = dp(9)
+                leftMargin = dp(10)
+            }
         )
 
         val menuButton = TextView(this).apply {

@@ -69,12 +69,25 @@ object N64Settings {
         prefs(context).edit().putString(KEY_PRESET, preset.storage).apply()
     }
 
+    fun readAspectRatio(context: Context): AspectRatio {
+        val raw = prefs(context).getString(KEY_ASPECT, AspectRatio.ORIGINAL_4_3.storage)
+        return AspectRatio.entries.firstOrNull { it.storage == raw } ?: AspectRatio.ORIGINAL_4_3
+    }
+
+    fun saveAspectRatio(context: Context, aspectRatio: AspectRatio) {
+        prefs(context).edit().putString(KEY_ASPECT, aspectRatio.storage).apply()
+    }
+
     fun resolve(context: Context): Config {
         val preset = readPreset(context)
-        if (preset != Preset.CUSTOM) return presetConfig(preset, N64PerformanceProfile.detect(context))
+        val device = N64PerformanceProfile.detect(context)
+        if (preset != Preset.CUSTOM) {
+            return presetConfig(preset, device)
+                .copy(aspectRatio = readAspectRatio(context))
+                .sanitized(device)
+        }
 
         val storage = prefs(context)
-        val device = N64PerformanceProfile.detect(context)
         val fallback = presetConfig(Preset.AUTO, device)
         return Config(
             preset = Preset.CUSTOM,
@@ -149,7 +162,7 @@ object N64Settings {
                 // telemetry proves that there is sustained margin.
                 internalResolution = InternalResolution.NATIVE,
                 aspectRatio = AspectRatio.ORIGINAL_4_3,
-                framebufferEmulation = device.tier == N64PerformanceProfile.Tier.HIGH,
+                framebufferEmulation = true,
                 expansionPak = ExpansionPak.AUTO,
                 threadedRenderer = canThread
             )
@@ -164,9 +177,14 @@ object N64Settings {
         val canThread = device.is64Bit && device.cpuCores >= 6
         val safeThreadedRenderer = threadedRenderer && canThread
         val safeExpansionPak = ExpansionPak.AUTO
+        // GLideN64 framebuffer emulation is required by many effects and by
+        // widescreen/aspect handling. Only an explicit 4:3 performance config
+        // may request it off; wide modes always protect compatibility.
+        val safeFramebuffer = framebufferEmulation || aspectRatio.wide
         return copy(
             rspMode = safeRsp,
             internalResolution = safeResolution,
+            framebufferEmulation = safeFramebuffer,
             expansionPak = safeExpansionPak,
             threadedRenderer = safeThreadedRenderer
         )

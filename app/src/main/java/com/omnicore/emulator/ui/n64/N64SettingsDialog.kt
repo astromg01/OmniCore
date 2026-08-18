@@ -113,12 +113,12 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                 }
                 item {
                     Text("Formato da imagem", fontWeight = FontWeight.Bold)
-                    Text("Widescreen ajustado usa o hack de aspect ratio do próprio GLideN64; não é só imagem esticada.", style = MaterialTheme.typography.bodySmall)
+                    Text("Formato da imagem é independente do preset de desempenho. Widescreen ajustado usa o hack do próprio GLideN64.", style = MaterialTheme.typography.bodySmall)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(N64Settings.AspectRatio.entries) { mode ->
                             FilterChip(
                                 selected = config.aspectRatio == mode,
-                                onClick = { saveCore(config.copy(aspectRatio = mode)) },
+                                onClick = { N64Settings.saveAspectRatio(context, mode); refreshCore() },
                                 label = { Text(mode.label) }
                             )
                         }
@@ -127,8 +127,13 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
                 item {
                     N64Toggle(
                         title = "Framebuffer emulation",
-                        subtitle = "Ative para efeitos que dependem de framebuffer. Desligado reduz custo e input lag em muitos jogos.",
-                        checked = config.framebufferEmulation
+                        subtitle = if (config.aspectRatio.wide) {
+                            "Protegido no widescreen para evitar menus/efeitos quebrados e manter o aspect ratio."
+                        } else {
+                            "Compatibilidade de efeitos e menus. Desligar é uma troca explícita por desempenho."
+                        },
+                        checked = config.framebufferEmulation,
+                        enabled = !config.aspectRatio.wide
                     ) { saveCore(config.copy(framebufferEmulation = it)) }
                     Text(
                         "RSP HLE, Expansion Pak automático e renderer GL single-thread permanecem protegidos nesta fase para evitar regressões de compatibilidade.",
@@ -249,7 +254,7 @@ fun N64SettingsDialog(onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun N64Toggle(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun N64Toggle(title: String, subtitle: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -259,6 +264,6 @@ private fun N64Toggle(title: String, subtitle: String, checked: Boolean, onChang
             Text(title, fontWeight = FontWeight.Bold)
             Text(subtitle, style = MaterialTheme.typography.bodySmall)
         }
-        Switch(checked = checked, onCheckedChange = onChange)
+        Switch(checked = checked, enabled = enabled, onCheckedChange = onChange)
     }
 }
