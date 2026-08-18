@@ -12,10 +12,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,12 +41,17 @@ import kotlinx.coroutines.withContext
 fun AchievementsScreen() {
     val context = LocalContext.current
     var snapshot by remember { mutableStateOf<OmniAchievements.Snapshot?>(null) }
+    var category by remember { mutableStateOf<OmniAchievements.Category?>(null) }
 
     LaunchedEffect(Unit) {
         snapshot = withContext(Dispatchers.IO) { OmniAchievements.snapshot(context) }
     }
 
     val current = snapshot
+    val shown = remember(current, category) {
+        current?.entries?.filter { category == null || it.definition.category == category }.orEmpty()
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -58,25 +65,57 @@ fun AchievementsScreen() {
                 Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Constelação OmniCore", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
                     Text(
-                        "Conquistas locais, offline e sem conta. Seu progresso fica salvo no aparelho.",
+                        "Conquistas locais, offline e sem conta. Progresso persistente entre o hub e o runtime N64.",
                         color = Color(0xFFB5B8D2)
                     )
                     Text(
-                        if (current == null) "Carregando estrelas…" else "${current.unlockedCount}/${current.totalCount} desbloqueadas",
+                        if (current == null) "Carregando estrelas…" else "${current.unlockedCount}/${current.totalCount} • ${current.points}/${current.maxPoints} pts",
                         color = Color(0xFF8FDEFF),
                         fontWeight = FontWeight.Bold
+                    )
+                    if (current != null) {
+                        Box(
+                            Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(99.dp))
+                                .background(Color(0xFF292A43))
+                        ) {
+                            val fraction = if (current.maxPoints <= 0) 0f else current.points.toFloat() / current.maxPoints
+                            Box(
+                                Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(6.dp)
+                                    .background(Color(0xFF8FDEFF))
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    FilterChip(
+                        selected = category == null,
+                        onClick = { category = null },
+                        label = { Text("Todas") }
+                    )
+                }
+                items(OmniAchievements.Category.entries, key = { it.name }) { item ->
+                    FilterChip(
+                        selected = category == item,
+                        onClick = { category = item },
+                        label = { Text("${item.icon} ${item.label}") }
                     )
                 }
             }
         }
 
         if (current != null) {
-            items(current.entries, key = { it.definition.id }) { entry ->
+            items(shown, key = { it.definition.id }) { entry ->
                 val unlocked = entry.unlocked
                 val accent = when (entry.definition.rarity) {
                     OmniAchievements.Rarity.COMMON -> Color(0xFF7FC9FF)
                     OmniAchievements.Rarity.RARE -> Color(0xFFAA8CFF)
                     OmniAchievements.Rarity.EPIC -> Color(0xFFFFD85A)
+                    OmniAchievements.Rarity.LEGENDARY -> Color(0xFFFF9E78)
                 }
                 Card(
                     colors = CardDefaults.cardColors(
@@ -108,8 +147,17 @@ fun AchievementsScreen() {
                                     fontWeight = FontWeight.Black,
                                     color = if (unlocked) Color.White else Color(0xFF9B9DB0)
                                 )
-                                Text(entry.definition.rarity.label, color = accent, style = MaterialTheme.typography.labelSmall)
+                                Text(
+                                    "${entry.definition.points} pts",
+                                    color = accent,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
                             }
+                            Text(
+                                "${entry.definition.rarity.label} • ${entry.definition.category.label}",
+                                color = accent.copy(alpha = 0.85f),
+                                style = MaterialTheme.typography.labelSmall
+                            )
                             Text(
                                 entry.definition.description,
                                 color = Color(0xFF999DB4),
