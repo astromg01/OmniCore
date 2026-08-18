@@ -1,38 +1,266 @@
-stage=compile_success
-exit_code=0
-run_id=32098538217
-commit=85529a5c217f227c49ba5fa0b6682c87a74335fd
+stage=signing
+exit_code=1
+run_id=32098911059
+commit=2e97e34c702d28b9f0aff05356abd55fbd5dbded
 --- focused errors ---
 --- log tail ---
-
-Welcome to Gradle 9.7.0!
-
-Here are the highlights of this release:
- - Isolated Projects graduates to incubating
- - Broader Configuration Cache compatibility
- - More source locations in problem reports
-
-For more details see https://docs.gradle.org/9.7.0/release-notes.html
-
+      |                    ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:409:12: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  409 | local void init_block(s)
+      |            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:453:12: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  453 | local void pqdownheap(s, tree, k)
+      |            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:488:12: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  488 | local void gen_bitlen(s, desc)
+      |            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:575:12: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  575 | local void gen_codes (tree, max_code, bl_count)
+      |            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:617:12: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  617 | local void build_tree(s, desc)
+      |            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:705:12: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  705 | local void scan_tree (s, tree, max_code)
+      |            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:750:12: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  750 | local void send_tree (s, tree, max_code)
+      |            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:801:11: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  801 | local int build_bl_tree(s)
+      |           ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:836:12: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  836 | local void send_all_trees(s, lcodes, dcodes, blcodes)
+      |            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:865:20: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  865 | void ZLIB_INTERNAL _tr_stored_block(s, buf, stored_len, last)
+      |                    ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:882:20: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  882 | void ZLIB_INTERNAL _tr_flush_bits(s)
+      |                    ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:892:20: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  892 | void ZLIB_INTERNAL _tr_align(s)
+      |                    ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:907:20: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  907 | void ZLIB_INTERNAL _tr_flush_block(s, buf, stored_len, last)
+      |                    ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:1010:19: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1010 | int ZLIB_INTERNAL _tr_tally (s, dist, lc)
+      |                   ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:1060:12: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1060 | local void compress_block(s, ltree, dtree)
+      |            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:1120:11: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1120 | local int detect_data_type(s)
+      |           ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:1154:16: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1154 | local unsigned bi_reverse(code, len)
+      |                ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:1169:12: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1169 | local void bi_flush(s)
+      |            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:1186:12: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1186 | local void bi_windup(s)
+      |            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/trees.c:1205:12: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1205 | local void copy_block(s, buf, len, header)
+      |            ^
+21 warnings generated.
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= memalign.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= inflate.c
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:104:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  104 | int ZEXPORT inflateResetKeep(strm)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:129:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  129 | int ZEXPORT inflateReset(strm)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:142:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  142 | int ZEXPORT inflateReset2(strm, windowBits)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:180:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  180 | int ZEXPORT inflateInit2_(strm, windowBits, version, stream_size)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:222:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  222 | int ZEXPORT inflateInit_(strm, version, stream_size)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:230:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  230 | int ZEXPORT inflatePrime(strm, bits, value)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:261:12: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  261 | local void fixedtables(state)
+      |            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:379:11: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  379 | local int updatewindow(strm, end, copy)
+      |           ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:605:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+  605 | int ZEXPORT inflate(strm, flush)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:1254:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1254 | int ZEXPORT inflateEnd(strm)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:1268:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1268 | int ZEXPORT inflateGetDictionary(strm, dictionary, dictLength)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:1291:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1291 | int ZEXPORT inflateSetDictionary(strm, dictionary, dictLength)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:1326:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1326 | int ZEXPORT inflateGetHeader(strm, head)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:1354:16: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1354 | local unsigned syncsearch(have, buf, len)
+      |                ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:1377:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1377 | int ZEXPORT inflateSync(strm)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:1428:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1428 | int ZEXPORT inflateSyncPoint(strm)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:1438:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1438 | int ZEXPORT inflateCopy(dest, source)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:1485:13: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1485 | int ZEXPORT inflateUndermine(strm, subvert)
+      |             ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:1502:14: warning: a function definition without a prototype is deprecated in all versions of C and is not supported in C23 [-Wdeprecated-non-prototype]
+ 1502 | long ZEXPORT inflateMark(strm)
+      |              ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../custom/dependencies/libzlib/inflate.c:1507:61: warning: shifting a negative signed value is undefined [-Wshift-negative-value]
+ 1507 |     if (strm == Z_NULL || strm->state == Z_NULL) return -1L << 16;
+      |                                                         ~~~ ^
+20 warnings generated.
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= emulate_game_controller_via_libretro.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= nearest_resampler.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= audio_resampler.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= sinc_resampler.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= libretro.c
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../libretro/libretro.c:566:23: warning: passing 'const void *const *' to parameter of type 'void *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+  566 |                memcpy(&info[1].data, &gameBuffer, sizeof(void*));
+      |                       ^~~~~~~~~~~~~
+/usr/local/lib/android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/bits/fortify/string.h:50:44: note: passing argument to parameter 'dst' here
+   50 | void* _Nonnull memcpy(void* _Nonnull const dst __pass_object_size0, const void* _Nonnull src, size_t copy_amount)
+      |                                            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../libretro/libretro.c:567:23: warning: passing 'const size_t *' (aka 'const unsigned int *') to parameter of type 'void *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+  567 |                memcpy(&info[1].size, &outSize, sizeof(size_t));
+      |                       ^~~~~~~~~~~~~
+/usr/local/lib/android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/bits/fortify/string.h:50:44: note: passing argument to parameter 'dst' here
+   50 | void* _Nonnull memcpy(void* _Nonnull const dst __pass_object_size0, const void* _Nonnull src, size_t copy_amount)
+      |                                            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../libretro/libretro.c:575:26: warning: passing 'const void *const *' to parameter of type 'void *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+  575 |                   memcpy(&info[1].data, &gameBuffer, sizeof(void*));
+      |                          ^~~~~~~~~~~~~
+/usr/local/lib/android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/bits/fortify/string.h:50:44: note: passing argument to parameter 'dst' here
+   50 | void* _Nonnull memcpy(void* _Nonnull const dst __pass_object_size0, const void* _Nonnull src, size_t copy_amount)
+      |                                            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../libretro/libretro.c:594:23: warning: passing 'const void *const *' to parameter of type 'void *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+  594 |                memcpy(&info[2].data, &gameBuffer, sizeof(void*));
+      |                       ^~~~~~~~~~~~~
+/usr/local/lib/android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/bits/fortify/string.h:50:44: note: passing argument to parameter 'dst' here
+   50 | void* _Nonnull memcpy(void* _Nonnull const dst __pass_object_size0, const void* _Nonnull src, size_t copy_amount)
+      |                                            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../libretro/libretro.c:595:23: warning: passing 'const size_t *' (aka 'const unsigned int *') to parameter of type 'void *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+  595 |                memcpy(&info[2].size, &outSize, sizeof(size_t));
+      |                       ^~~~~~~~~~~~~
+/usr/local/lib/android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/bits/fortify/string.h:50:44: note: passing argument to parameter 'dst' here
+   50 | void* _Nonnull memcpy(void* _Nonnull const dst __pass_object_size0, const void* _Nonnull src, size_t copy_amount)
+      |                                            ^
+/home/runner/work/OmniCore/OmniCore/third_party/mupen64plus_next/libretro/jni/../../libretro/libretro.c:602:26: warning: passing 'const void *const *' to parameter of type 'void *' discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]
+  602 |                   memcpy(&info[2].data, &gameBuffer, sizeof(void*));
+      |                          ^~~~~~~~~~~~~
+/usr/local/lib/android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/bits/fortify/string.h:50:44: note: passing argument to parameter 'dst' here
+   50 | void* _Nonnull memcpy(void* _Nonnull const dst __pass_object_size0, const void* _Nonnull src, size_t copy_amount)
+      |                                            ^
+6 warnings generated.
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= audio_backend_libretro.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= config_file_userdata.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= file_path_io.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= rtime.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= compat_strl.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= file_path.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= compat_posix_string.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= compat_strcasestr.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= float_to_s16.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= config_file.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= s16_to_float.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= features_cpu.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= string_list.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= encoding_utf.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= stdstring.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= vfs_implementation.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= file_stream.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= alist_audio.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= alist_naudio.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= alist_nead.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= audio.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= glsm.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= alist.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= cicx105.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= hle.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= memory.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= hvqm.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= jpeg.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= re2.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= mp3.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= musyx.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= libco.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= plugin.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= glsym_es3.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= rglgen.c
+[armeabi-v7a] Compile arm    : mupen64plus_next_libretro <= new_dynarec.c
+[armeabi-v7a] SharedLibrary  : libmupen64plus_next_libretro.so
+[armeabi-v7a] Install        : libmupen64plus_next_libretro.so => /home/runner/work/OmniCore/OmniCore/build/mupen64plus-next/armeabi-v7a/libs/armeabi-v7a/libmupen64plus_next_libretro.so
+Packaged 16 KB-aligned N64 core for armeabi-v7a
+===== assemble =====
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/9.7.0/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
 Daemon will be stopped at the end of the build 
 > Task :app:preBuild UP-TO-DATE
 > Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:processDebugNavigationResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:generateDebugRFile UP-TO-DATE
+> Task :app:compileDebugKotlin UP-TO-DATE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:javaPreCompileDebug
+> Task :app:mergeDebugAssets
+> Task :app:compileDebugJavaWithJavac
+> Task :app:compressDebugAssets
+> Task :app:generateDebugGlobalSynthetics
+> Task :app:processDebugJavaRes
+> Task :app:desugarDebugFileDependencies
+> Task :app:checkDebugDuplicateClasses
+> Task :app:checkDebugAarMetadata
+> Task :app:mergeDebugJavaResource
+> Task :app:mergeExtDexDebug
+> Task :app:mapDebugSourceSetPaths
+> Task :app:mergeLibDexDebug
+> Task :app:compileDebugNavigationResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:mergeDebugResources
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
 > Task :app:configureCMakeDebug[arm64-v8a]
 > Task :app:buildCMakeDebug[arm64-v8a]
 > Task :app:configureCMakeDebug[armeabi-v7a]
 > Task :app:buildCMakeDebug[armeabi-v7a]
-> Task :app:externalNativeBuildDebug
-> Task :app:generateDebugBuildConfig
-> Task :app:generateDebugResources
-> Task :app:packageDebugResources
-> Task :app:processDebugNavigationResources
-> Task :app:parseDebugLocalResources
-> Task :app:generateDebugRFile
-> Task :app:compileDebugKotlin
-w: file:///home/runner/work/OmniCore/OmniCore/app/src/main/java/com/omnicore/emulator/emulation/N64GamepadOverlayView.kt:57:45 'field scaledDensity: Float' is deprecated. Deprecated in Java.
-w: file:///home/runner/work/OmniCore/OmniCore/app/src/main/java/com/omnicore/emulator/update/UpdateManager.kt:78:80 Unnecessary non-null assertion (!!) on a non-null receiver of type 'UpdateManager.ReleaseInfo'.
+> Task :app:mergeDebugJniLibFolders
+> Task :app:processDebugManifestForPackage
+> Task :app:mergeDebugNativeLibs
+> Task :app:processDebugResources
+> Task :app:validateSigningDebug
+> Task :app:dexBuilderDebug
+> Task :app:writeDebugAppMetadata
+> Task :app:writeDebugSigningConfigVersions
+> Task :app:stripDebugDebugSymbols
+> Task :app:mergeProjectDexDebug
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect
+> Task :app:assembleDebug
 
-BUILD SUCCESSFUL in 2m 25s
-12 actionable tasks: 12 executed
+BUILD SUCCESSFUL in 1m 18s
+42 actionable tasks: 35 executed, 7 up-to-date
 Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.7.0/userguide/configuration_cache_enabling.html
