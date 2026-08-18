@@ -1,0 +1,56 @@
+name: Alpha 8 Release Check
+
+on:
+  push:
+    branches: [ "agent/0.10.0-n64-foundation" ]
+    paths:
+      - ".ci/alpha8-release-check-trigger.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin agent/0.10.0-n64-foundation
+          git checkout -B agent/0.10.0-n64-foundation origin/agent/0.10.0-n64-foundation
+
+      - name: Verify Alpha 8 release and APK asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v0.10.7-n64-alpha8"
+          APK="OmniCore-v0.10.7-n64-alpha8-debug.apk"
+          mkdir -p build/release-check .ci
+          gh release view "$TAG" --json tagName,name,isDraft,isPrerelease,assets,url > build/release-check/release.json
+          jq -e --arg apk "$APK" '.tagName == "v0.10.7-n64-alpha8" and (.assets | map(.name) | index($apk) != null)' build/release-check/release.json >/dev/null
+          gh release download "$TAG" --pattern "$APK" --dir build/release-check
+          test -s "build/release-check/$APK"
+          SIZE="$(stat -c %s "build/release-check/$APK")"
+          SHA="$(sha256sum "build/release-check/$APK" | awk '{print $1}')"
+          URL="$(jq -r '.url' build/release-check/release.json)"
+          printf 'status=success\ntag=%s\napk=%s\nsize=%s\nsha256=%s\nurl=%s\nrun_id=%s\n' "$TAG" "$APK" "$SIZE" "$SHA" "$URL" "$GITHUB_RUN_ID" > .ci/alpha8-release-verification.txt
+
+      - name: Record result
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "Mauricio.dev"
+          git config user.email "antoniomauriciorodriguesalves@gmail.com"
+          git pull --rebase origin agent/0.10.0-n64-foundation
+          git add .ci/alpha8-release-verification.txt
+          git commit -m "Record Alpha 8 release verification [skip ci]" || true
+          git push origin HEAD:agent/0.10.0-n64-foundation
