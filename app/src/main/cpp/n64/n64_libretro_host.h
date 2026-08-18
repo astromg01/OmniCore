@@ -47,6 +47,7 @@ struct Telemetry {
     float presentAverageMs = 0.0f;
     float presentP95Ms = 0.0f;
     float adpfActive = 0.0f;
+    float burstShieldActive = 0.0f;
 };
 
 class LibretroHost final {
@@ -124,6 +125,7 @@ private:
     std::atomic<int> audioUnderruns_{0};
     std::atomic<float> targetFrameMs_{1000.0f / 60.0f};
     std::atomic<bool> adpfActive_{false};
+    std::atomic<bool> burstShieldActive_{false};
     mutable std::mutex optionMutex_;
     std::unordered_map<std::string, std::string> options_;
     mutable std::mutex commandMutex_;

@@ -262,7 +262,7 @@ object N64SmartPerf {
                     signals.memoryPressure -> "SmartPerf N64 reduzindo pressão de memória/GPU"
                     signals.powerSave -> "SmartPerf N64 compensando economia de energia ativa"
                     telemetry.gpuBound -> "SmartPerf N64 reduziu custo gráfico medido"
-                    framePressure -> "SmartPerf N64 preservou imagem e atacou CPU/pacing"
+                    framePressure -> "SmartPerf N64 preservou resolução; BurstShield ataca picos CPU/GPU"
                     else -> "SmartPerf N64 otimizado para hardware limitado"
                 }
             )

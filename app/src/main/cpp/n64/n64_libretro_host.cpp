@@ -79,6 +79,8 @@ public:
     using CreateSessionFn = void* (*)(void*, const std::int32_t*, std::size_t, std::int64_t);
     using ReportFn = int (*)(void*, std::int64_t);
     using UpdateTargetFn = int (*)(void*, std::int64_t);
+    using NotifyWorkloadFn = int (*)(void*, bool, bool, const char*);
+    using SetNativeSurfacesFn = int (*)(void*, ANativeWindow* const*, std::size_t, void* const*, std::size_t);
     using CloseFn = void (*)(void*);
 
     bool open(double fps) {
@@ -89,6 +91,10 @@ public:
         createSession_ = reinterpret_cast<CreateSessionFn>(dlsym(library_, "APerformanceHint_createSession"));
         report_ = reinterpret_cast<ReportFn>(dlsym(library_, "APerformanceHint_reportActualWorkDuration"));
         updateTarget_ = reinterpret_cast<UpdateTargetFn>(dlsym(library_, "APerformanceHint_updateTargetWorkDuration"));
+        notifySpike_ = reinterpret_cast<NotifyWorkloadFn>(dlsym(library_, "APerformanceHint_notifyWorkloadSpike"));
+        notifyIncrease_ = reinterpret_cast<NotifyWorkloadFn>(dlsym(library_, "APerformanceHint_notifyWorkloadIncrease"));
+        notifyReset_ = reinterpret_cast<NotifyWorkloadFn>(dlsym(library_, "APerformanceHint_notifyWorkloadReset"));
+        setNativeSurfaces_ = reinterpret_cast<SetNativeSurfacesFn>(dlsym(library_, "APerformanceHint_setNativeSurfaces"));
         closeSession_ = reinterpret_cast<CloseFn>(dlsym(library_, "APerformanceHint_closeSession"));
         if (!getManager_ || !createSession_ || !report_ || !closeSession_) { close(); return false; }
         manager_ = getManager_();
@@ -103,6 +109,34 @@ public:
         if (session_ && report_ && actualNs > 0) report_(session_, actualNs);
     }
 
+    bool bindSurface(ANativeWindow* window) {
+        if (!session_ || !setNativeSurfaces_ || !window) return false;
+        ANativeWindow* windows[] = {window};
+        return setNativeSurfaces_(session_, windows, 1u, nullptr, 0u) == 0;
+    }
+
+    void notifyReset(bool cpu, bool gpu, const char* identifier) {
+        if (session_ && notifyReset_ && identifier) notifyReset_(session_, cpu, gpu, identifier);
+    }
+
+    void notifySpike(bool cpu, bool gpu, const char* identifier) {
+        if (!session_ || !notifySpike_ || !identifier) return;
+        const auto now = std::chrono::steady_clock::now();
+        if (lastSpikeAt_.time_since_epoch().count() != 0 &&
+            now - lastSpikeAt_ < std::chrono::milliseconds(700)) return;
+        notifySpike_(session_, cpu, gpu, identifier);
+        lastSpikeAt_ = now;
+    }
+
+    void notifyIncrease(bool cpu, bool gpu, const char* identifier) {
+        if (!session_ || !notifyIncrease_ || !identifier) return;
+        const auto now = std::chrono::steady_clock::now();
+        if (lastIncreaseAt_.time_since_epoch().count() != 0 &&
+            now - lastIncreaseAt_ < std::chrono::seconds(10)) return;
+        notifyIncrease_(session_, cpu, gpu, identifier);
+        lastIncreaseAt_ = now;
+    }
+
     void close() {
         if (session_ && closeSession_) closeSession_(session_);
         session_ = nullptr;
@@ -111,13 +145,20 @@ public:
         createSession_ = nullptr;
         report_ = nullptr;
         updateTarget_ = nullptr;
+        notifySpike_ = nullptr;
+        notifyIncrease_ = nullptr;
+        notifyReset_ = nullptr;
+        setNativeSurfaces_ = nullptr;
         closeSession_ = nullptr;
         if (library_) dlclose(library_);
         library_ = nullptr;
         targetNs_ = 0;
+        lastSpikeAt_ = {};
+        lastIncreaseAt_ = {};
     }
 
     bool active() const { return session_ != nullptr; }
+    bool burstCapable() const { return session_ != nullptr && notifySpike_ != nullptr; }
     ~PerformanceHintSession() { close(); }
 
 private:
@@ -128,8 +169,14 @@ private:
     CreateSessionFn createSession_ = nullptr;
     ReportFn report_ = nullptr;
     UpdateTargetFn updateTarget_ = nullptr;
+    NotifyWorkloadFn notifySpike_ = nullptr;
+    NotifyWorkloadFn notifyIncrease_ = nullptr;
+    NotifyWorkloadFn notifyReset_ = nullptr;
+    SetNativeSurfacesFn setNativeSurfaces_ = nullptr;
     CloseFn closeSession_ = nullptr;
     std::int64_t targetNs_ = 0;
+    std::chrono::steady_clock::time_point lastSpikeAt_{};
+    std::chrono::steady_clock::time_point lastIncreaseAt_{};
 };
 
 std::uint64_t hashBytes(const void* data, std::size_t size) {
@@ -815,6 +862,7 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     pacingCorrectionPct_.store(0.0f, std::memory_order_release);
     targetFrameMs_.store(1000.0f / 60.0f, std::memory_order_release);
     adpfActive_.store(false, std::memory_order_release);
+    burstShieldActive_.store(false, std::memory_order_release);
     hwRenderRequested_ = false;
     hwRender_ = {};
     setMessage("N64 BOOT 1/6 • runtime Alpha 7 single-pacer…");
@@ -1177,6 +1225,7 @@ Telemetry LibretroHost::telemetry() const {
     out.targetFps = targetFps_.load(std::memory_order_acquire);
     out.pacingCorrectionPct = pacingCorrectionPct_.load(std::memory_order_acquire);
     out.adpfActive = adpfActive_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
+    out.burstShieldActive = burstShieldActive_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
     if (presentCount > 0) {
         float totalPresent = 0.0f;
         for (std::size_t i = 0; i < presentCount; ++i) totalPresent += presentSnapshot[i];
@@ -1307,6 +1356,7 @@ void LibretroHost::run() {
             if (impl_->gameLoaded) persistSaveRam(true);
             impl_->perfHint.close();
             adpfActive_.store(false, std::memory_order_release);
+            burstShieldActive_.store(false, std::memory_order_release);
             impl_->closeAudio();
             if (impl_->gameLoaded && impl_->core.unloadGame) {
                 impl_->core.unloadGame();
@@ -1418,13 +1468,20 @@ void LibretroHost::run() {
     const auto lateResetThreshold = std::chrono::duration_cast<std::chrono::steady_clock::duration>(target * 0.55);
     const float targetMs = static_cast<float>(1000.0 / impl_->targetFps);
     targetFrameMs_.store(targetMs, std::memory_order_release);
-    adpfActive_.store(impl_->perfHint.open(impl_->targetFps), std::memory_order_release);
+    const bool adpfReady = impl_->perfHint.open(impl_->targetFps);
+    adpfActive_.store(adpfReady, std::memory_order_release);
+    if (adpfReady) {
+        impl_->perfHint.notifyReset(true, true, "omnicore-n64-session");
+        impl_->perfHint.bindSurface(window_);
+    }
+    burstShieldActive_.store(adpfReady && impl_->perfHint.burstCapable(), std::memory_order_release);
     setMessage(audioReady
         ? "N64 BOOT 5/6 • GLideN64 + AAudio nativo, aguardando primeiro frame…"
         : "N64 BOOT 5/6 • GLideN64 pronto, aguardando primeiro frame…");
 
     auto nextFrame = std::chrono::steady_clock::now() + targetDuration;
     std::uint32_t adaptationCounter = 0;
+    int slowFrameStreak = 0;
     bool wasPaused = false;
     while (!stopRequested_.load(std::memory_order_acquire)) {
         const bool commandRan = processPendingCommand();
@@ -1446,6 +1503,7 @@ void LibretroHost::run() {
 
         if (menuTransitionBoost_.exchange(false, std::memory_order_acq_rel)) {
             impl_->adaptAudio(8);
+            impl_->perfHint.notifySpike(true, true, "omnicore-n64-menu-transition");
         }
         impl_->presentationTargetNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
             nextFrame.time_since_epoch()).count();
@@ -1453,8 +1511,20 @@ void LibretroHost::run() {
         impl_->core.run();
         const auto afterRun = std::chrono::steady_clock::now();
         const auto workNs = std::chrono::duration_cast<std::chrono::nanoseconds>(afterRun - begin).count();
+        const float frameMs = std::chrono::duration<float, std::milli>(afterRun - begin).count();
         impl_->perfHint.report(workNs);
-        recordFrame(std::chrono::duration<float, std::milli>(afterRun - begin).count(), targetMs);
+        recordFrame(frameMs, targetMs);
+
+        if (frameMs > targetMs * 1.18f) {
+            ++slowFrameStreak;
+        } else if (slowFrameStreak > 0) {
+            --slowFrameStreak;
+        }
+        if (slowFrameStreak >= 4) {
+            impl_->perfHint.notifyIncrease(true, true, "omnicore-n64-sustained-frame-pressure");
+            impl_->adaptAudio(7);
+            slowFrameStreak = 0;
+        }
 
         if (++adaptationCounter >= 60u) {
             adaptationCounter = 0;
