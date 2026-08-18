@@ -38,7 +38,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeHasCore(JNIEnv*, jobje
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeRuntimeInfo(JNIEnv* env, jobject) {
-    const std::string value = std::string("OmniCore N64 Runtime 0.10.0 • Mupen64Plus-Next • GLES3 + AAudio host v2 • ") +
+    const std::string value = std::string("OmniCore N64 Runtime 0.10.2 • Mupen64Plus-Next • GLES3 + AAudio host v3 • ") +
         (hasLibretroCore() ? "core ready" : "core missing");
     return env->NewStringUTF(value.c_str());
 }
@@ -51,6 +51,8 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     jstring romPath,
     jstring systemDir,
     jstring saveDir,
+    jstring diagnosticPath,
+    jstring verificationPath,
     jstring cpuMode,
     jstring rspMode,
     jstring pakMode,
@@ -69,6 +71,8 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     config.romPath = fromJString(env, romPath);
     config.systemDir = fromJString(env, systemDir);
     config.saveDir = fromJString(env, saveDir);
+    config.diagnosticPath = fromJString(env, diagnosticPath);
+    config.verificationPath = fromJString(env, verificationPath);
     config.cpuMode = fromJString(env, cpuMode);
     config.rspMode = fromJString(env, rspMode);
     config.pakMode = fromJString(env, pakMode);
