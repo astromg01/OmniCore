@@ -22,7 +22,9 @@ object N64NativeBridge {
         val presentAverageMs: Float = 0f,
         val presentP95Ms: Float = 0f,
         val adpfActive: Boolean = false,
-        val burstShieldActive: Boolean = false
+        val burstShieldActive: Boolean = false,
+        val warmStartActive: Boolean = false,
+        val shaderCacheEnabled: Boolean = false
     ) {
         fun smartPerf(): N64SmartPerf.Telemetry = N64SmartPerf.Telemetry(
             averageFrameMs = averageFrameMs,
@@ -209,7 +211,9 @@ object N64NativeBridge {
             presentAverageMs = raw.getOrElse(9) { 0f },
             presentP95Ms = raw.getOrElse(10) { 0f },
             adpfActive = raw.getOrElse(11) { 0f } >= 0.5f,
-            burstShieldActive = raw.getOrElse(12) { 0f } >= 0.5f
+            burstShieldActive = raw.getOrElse(12) { 0f } >= 0.5f,
+            warmStartActive = raw.getOrElse(13) { 0f } >= 0.5f,
+            shaderCacheEnabled = raw.getOrElse(14) { 0f } >= 0.5f
         )
     }
 

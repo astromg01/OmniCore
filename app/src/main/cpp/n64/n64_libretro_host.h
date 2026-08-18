@@ -48,6 +48,8 @@ struct Telemetry {
     float presentP95Ms = 0.0f;
     float adpfActive = 0.0f;
     float burstShieldActive = 0.0f;
+    float warmStartActive = 0.0f;
+    float shaderCacheEnabled = 0.0f;
 };
 
 class LibretroHost final {
@@ -126,6 +128,8 @@ private:
     std::atomic<float> targetFrameMs_{1000.0f / 60.0f};
     std::atomic<bool> adpfActive_{false};
     std::atomic<bool> burstShieldActive_{false};
+    std::atomic<bool> warmStartActive_{false};
+    std::atomic<bool> shaderCacheEnabled_{false};
     mutable std::mutex optionMutex_;
     std::unordered_map<std::string, std::string> options_;
     mutable std::mutex commandMutex_;

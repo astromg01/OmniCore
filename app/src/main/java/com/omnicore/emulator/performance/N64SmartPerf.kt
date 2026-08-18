@@ -66,11 +66,18 @@ object N64SmartPerf {
         private var healthyStreak = 0
         private var lastTransitionAt = 0L
         private var lastAudioStressAt = 0L
-        private val startupGraceUntil = SystemClock.elapsedRealtime() + 10_000L
+        private val warmupStartedAt = SystemClock.elapsedRealtime()
+        private val warmupMinUntil = warmupStartedAt + 12_000L
+        private val warmupMaxUntil = warmupStartedAt + 45_000L
+        private var warmupStableWindows = 0
+        private var warmupActive = true
 
         fun initial(): Decision = current.copy(
-            audioBufferBursts = max(current.audioBufferBursts, 6),
-            reason = "SmartPerf N64 aquecendo shaders e protegendo áudio inicial"
+            audioBufferBursts = max(current.audioBufferBursts, 7),
+            preferPowerEfficiency = false,
+            aggressiveFramePacing = false,
+            leanGraphics = false,
+            reason = "WarmStart N64 protegendo a fase de compilação e áudio inicial"
         )
 
         fun adapt(raw: Telemetry): Decision {
@@ -81,14 +88,61 @@ object N64SmartPerf {
             val candidate = resolve(profile, requested, signals, telemetry)
             val now = SystemClock.elapsedRealtime()
             if (recentUnderruns > 0 || telemetry.audioCritical) lastAudioStressAt = now
+
+            val stableWarmupWindow = telemetry.hasUsefulWindow &&
+                telemetry.p95FrameMs <= telemetry.targetFrameMs * 1.12f &&
+                telemetry.droppedFrames <= 2 &&
+                recentUnderruns == 0 &&
+                !telemetry.audioCritical
+            if (warmupActive) {
+                if (stableWarmupWindow && now >= warmupMinUntil) {
+                    warmupStableWindows++
+                } else if (!stableWarmupWindow) {
+                    warmupStableWindows = 0
+                }
+                if (warmupStableWindows >= 3 || now >= warmupMaxUntil) warmupActive = false
+            }
+
             fun protectAudio(decision: Decision): Decision = if (
-                now < startupGraceUntil || now - lastAudioStressAt < 12_000L
+                warmupActive || now - lastAudioStressAt < 12_000L
             ) {
                 decision.copy(
-                    audioBufferBursts = max(decision.audioBufferBursts, 6),
+                    audioBufferBursts = max(decision.audioBufferBursts, if (warmupActive) 7 else 6),
                     reason = if (recentUnderruns > 0) "SmartPerf N64 recuperando áudio sem oscilar buffer" else decision.reason
                 )
             } else decision
+
+            fun protectWarmup(decision: Decision): Decision {
+                if (!warmupActive || signals.thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE || signals.memoryPressure) {
+                    return decision
+                }
+                return decision.copy(
+                    effective = decision.effective.copy(
+                        internalResolution = requested.internalResolution,
+                        framebufferEmulation = requested.framebufferEmulation || requested.aspectRatio.wide,
+                        threadedRenderer = requested.threadedRenderer
+                    ),
+                    audioBufferBursts = max(decision.audioBufferBursts, 7),
+                    preferPowerEfficiency = false,
+                    aggressiveFramePacing = false,
+                    leanGraphics = false,
+                    reason = "WarmStart N64 mantendo qualidade enquanto a sessão estabiliza"
+                )
+            }
+
+            if (warmupActive &&
+                signals.thermalStatus < PowerManager.THERMAL_STATUS_SEVERE &&
+                !signals.memoryPressure
+            ) {
+                pressureStreak = 0
+                healthyStreak = 0
+                current = current.copy(
+                    audioBufferBursts = max(current.audioBufferBursts, candidate.audioBufferBursts),
+                    reason = "WarmStart N64 absorvendo picos de primeira execução"
+                )
+                return protectWarmup(protectAudio(current))
+            }
+
             val emergency = signals.thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE ||
                 recentUnderruns >= 3 || telemetry.audioCritical
 
@@ -97,7 +151,7 @@ object N64SmartPerf {
                 healthyStreak = 0
                 current = candidate
                 lastTransitionAt = now
-                return protectAudio(current)
+                return protectWarmup(protectAudio(current))
             }
 
             when {
@@ -137,7 +191,7 @@ object N64SmartPerf {
                     current = candidate
                 }
             }
-            return protectAudio(current)
+            return protectWarmup(protectAudio(current))
         }
     }
 

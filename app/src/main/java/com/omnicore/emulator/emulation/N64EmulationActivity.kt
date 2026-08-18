@@ -414,6 +414,8 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             append(" ms")
             append(if (t.adpfActive) " • ADPF" else "")
             append(if (t.burstShieldActive) " • BurstShield" else "")
+            append(if (t.warmStartActive) " • WarmStart" else "")
+            append(if (t.shaderCacheEnabled) " • ShaderCache" else "")
             append("\nÁudio ")
             append("%.0f".format(t.audioFillMs))
             append("/")
