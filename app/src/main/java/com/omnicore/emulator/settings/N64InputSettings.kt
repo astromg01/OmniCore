@@ -22,6 +22,8 @@ object N64InputSettings {
         COMPACT("compact", "Compacto")
     }
 
+    data class ControlPosition(val x: Float, val y: Float)
+
     data class Config(
         val analogDeadzone: Float,
         val analogSensitivity: Float,
@@ -46,6 +48,8 @@ object N64InputSettings {
     private const val KEY_SCALE = "touch_scale"
     private const val KEY_DYNAMIC_OPACITY = "dynamic_opacity"
     private const val KEY_SHOW_DPAD = "show_dpad"
+    private const val POS_PREFIX = "layout_pos_"
+    private const val CONTROL_SCALE_PREFIX = "layout_scale_"
 
     fun resolve(context: Context): Config {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -70,7 +74,7 @@ object N64InputSettings {
     }
 
     fun save(context: Context, config: Config) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+        prefs(context).edit()
             .putFloat(KEY_DEADZONE, config.analogDeadzone.coerceIn(0.04f, 0.30f))
             .putFloat(KEY_SENSITIVITY, config.analogSensitivity.coerceIn(0.70f, 1.30f))
             .putString(KEY_C_MODE, config.cButtonMode.storage)
@@ -83,4 +87,45 @@ object N64InputSettings {
             .putBoolean(KEY_SHOW_DPAD, config.showDpad)
             .apply()
     }
+
+    fun resolveControlPosition(
+        context: Context,
+        key: String,
+        defaultX: Float,
+        defaultY: Float
+    ): ControlPosition {
+        val storage = prefs(context)
+        val x = storage.getFloat("${POS_PREFIX}${key}_x", defaultX).coerceIn(0.035f, 0.965f)
+        val y = storage.getFloat("${POS_PREFIX}${key}_y", defaultY).coerceIn(0.045f, 0.955f)
+        return ControlPosition(x, y)
+    }
+
+    fun saveControlPosition(context: Context, key: String, x: Float, y: Float) {
+        prefs(context).edit()
+            .putFloat("${POS_PREFIX}${key}_x", x.coerceIn(0.035f, 0.965f))
+            .putFloat("${POS_PREFIX}${key}_y", y.coerceIn(0.045f, 0.955f))
+            .apply()
+    }
+
+    fun resolveControlScale(context: Context, key: String): Float =
+        prefs(context).getFloat("$CONTROL_SCALE_PREFIX$key", 1f).coerceIn(0.60f, 1.55f)
+
+    fun saveControlScale(context: Context, key: String, scale: Float) {
+        prefs(context).edit()
+            .putFloat("$CONTROL_SCALE_PREFIX$key", scale.coerceIn(0.60f, 1.55f))
+            .apply()
+    }
+
+    fun resetTouchLayout(context: Context) {
+        val storage = prefs(context)
+        val keys = storage.all.keys.filter {
+            it.startsWith(POS_PREFIX) || it.startsWith(CONTROL_SCALE_PREFIX)
+        }
+        if (keys.isEmpty()) return
+        storage.edit().apply {
+            keys.forEach(::remove)
+        }.apply()
+    }
+
+    private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 }
