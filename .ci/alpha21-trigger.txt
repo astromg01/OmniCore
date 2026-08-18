@@ -1,4 +1,4 @@
 OmniCore N64 Alpha 21 build trigger
 version=0.10.20
 focus=ElasticAudioBridge + hard-underrun telemetry + continuity rescue
-revision=1
+revision=2-actions-trigger
