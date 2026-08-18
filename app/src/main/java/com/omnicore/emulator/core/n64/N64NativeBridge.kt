@@ -61,12 +61,22 @@ object N64NativeBridge {
             N64InputSettings.PakMode.AUTO,
             N64InputSettings.PakMode.MEMORY -> "memory"
         }
+        val diagnosticPath = File(paths.root, "last_boot_stage.txt").absolutePath
+        val verificationPath = File(paths.root, "boot_verified.flag").absolutePath
+        runCatching {
+            File(diagnosticPath).writeText(
+                "stage=kotlin:native_start\ntimestamp=${System.currentTimeMillis()}\n" +
+                    "detail=${config.cpuMode.storage},threaded=${config.threadedRenderer},fb=${config.framebufferEmulation}\n"
+            )
+        }
         return runCatching {
             nativeStart(
                 surface = surface,
                 romPath = rom.absolutePath,
                 systemDir = paths.system.absolutePath,
                 saveDir = paths.saves.absolutePath,
+                diagnosticPath = diagnosticPath,
+                verificationPath = verificationPath,
                 cpuMode = config.cpuMode.storage,
                 rspMode = config.rspMode.storage,
                 pakMode = pak,
@@ -124,6 +134,8 @@ object N64NativeBridge {
         romPath: String,
         systemDir: String,
         saveDir: String,
+        diagnosticPath: String,
+        verificationPath: String,
         cpuMode: String,
         rspMode: String,
         pakMode: String,
