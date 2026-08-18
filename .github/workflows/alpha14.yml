@@ -1,0 +1,236 @@
+name: N64 Alpha 14
+
+on:
+  push:
+    branches: [ "agent/0.10.0-n64-foundation" ]
+    paths:
+      - ".ci/alpha14-trigger.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-n64-alpha14
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone N64 foundation branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin agent/0.10.0-n64-foundation
+          git checkout -B agent/0.10.0-n64-foundation origin/agent/0.10.0-n64-foundation
+
+      - name: Apply Alpha 14 SmartPrecompile and Game Intelligence migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -q 'versionName = "0.10.12"' app/build.gradle.kts; then
+            python3 tools/agent_01013_alpha14.py
+            echo "ALPHA14_MIGRATED=1" >> "$GITHUB_ENV"
+          elif grep -q 'versionName = "0.10.13"' app/build.gradle.kts; then
+            echo "ALPHA14_MIGRATED=0" >> "$GITHUB_ENV"
+          else
+            echo "Unsupported OmniCore source version for Alpha 14" >&2
+            exit 1
+          fi
+
+      - name: Validate Alpha 14 architecture and isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'versionCode = 29' app/build.gradle.kts
+          grep -q 'versionName = "0.10.13"' app/build.gradle.kts
+          test -f app/src/main/java/com/omnicore/emulator/core/n64/N64GameIntelligence.kt
+          grep -q 'dpadFirstMarkers' app/src/main/java/com/omnicore/emulator/core/n64/N64GameIntelligence.kt
+          grep -q '"KIRBY"' app/src/main/java/com/omnicore/emulator/core/n64/N64GameIntelligence.kt
+          grep -q 'inputPolicy.bridgeDpadInAuto' app/src/main/java/com/omnicore/emulator/core/n64/N64NativeBridge.kt
+          grep -q 'smartPrecompileReady' app/src/main/java/com/omnicore/emulator/core/n64/N64NativeBridge.kt
+          grep -q 'smartPrecompileReady' app/src/main/java/com/omnicore/emulator/performance/N64SmartPerf.kt
+          grep -q 'runSmartPrecompile' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'omnicore-n64-smart-precompile' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'shaderCacheHot_' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q '12u \* 1024u \* 1024u' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'smartPrecompileActive_' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'glFinish();' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'const jfloat values\[19\]' app/src/main/cpp/n64/n64_native_bridge.cpp
+          grep -q 'OmniCore N64 Runtime 0.10.13' app/src/main/cpp/n64/n64_native_bridge.cpp
+          grep -q 'X15("1.5x", "1,5×", 15)' app/src/main/java/com/omnicore/emulator/settings/N64Settings.kt
+          grep -q 'framebufferEmulation = true' app/src/main/java/com/omnicore/emulator/settings/N64Settings.kt
+          grep -q 'TripleBuffer' app/src/main/cpp/n64/n64_libretro_host.cpp
+          grep -q 'PIN="f275caf4b2bfa1e6d1c51636746ea793f3d80320"' tools/fetch_n64_core.sh
+          CHANGED="$(git status --porcelain | sed -E 's/^.. //')"
+          if grep -Eiq '(^|/)(ps1|pcsx)' <<< "$CHANGED"; then
+            echo "Alpha 14 attempted to modify PS1-owned source:" >&2
+            grep -Ei '(^|/)(ps1|pcsx)' <<< "$CHANGED" >&2
+            exit 1
+          fi
+          git diff --check
+
+      - name: Verify Android toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
+          test -d "$ANDROID_SDK_ROOT/platforms/android-36"
+          test -x "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          test -x "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign"
+          test -x "$ANDROID_NDK_HOME/ndk-build"
+
+      - name: Reuse stable DEV signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/signing
+          base64 -d config/omnicore-dev.keystore.b64 > build/signing/omnicore-dev.jks
+          chmod 600 build/signing/omnicore-dev.jks
+          echo "OMNICORE_DEV_KEYSTORE=$GITHUB_WORKSPACE/build/signing/omnicore-dev.jks" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, re
+          text = Path('.github/workflows/android.yml').read_text(encoding='utf-8')
+          keys = ('OMNICORE_DEV_STORE_PASSWORD', 'OMNICORE_DEV_KEY_ALIAS', 'OMNICORE_DEV_KEY_PASSWORD')
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as out:
+              for key in keys:
+                  match = re.search(r'echo "' + re.escape(key) + r'=([^\"]+)" >> "\$GITHUB_ENV"', text)
+                  if not match:
+                      raise SystemExit(f'missing existing DEV signing field: {key}')
+                  out.write(f'{key}={match.group(1)}\n')
+          PY
+
+      - name: Compile Kotlin and native N64 host
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:externalNativeBuildDebug :app:compileDebugKotlin --stacktrace --no-daemon
+
+      - name: Build isolated emulator cores
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x tools/fetch_ps1_core.sh tools/build_ps1_core_android.sh tools/fetch_n64_core.sh tools/build_n64_core_android.sh
+          ./tools/fetch_ps1_core.sh
+          ./tools/build_ps1_core_android.sh
+          ./tools/fetch_n64_core.sh
+          ./tools/build_n64_core_android.sh
+          for ABI in arm64-v8a armeabi-v7a; do
+            test -f "app/src/main/jniLibs/$ABI/libpcsx_rearmed_libretro.so"
+            test -f "app/src/main/jniLibs/$ABI/libmupen64plus_next_libretro.so"
+          done
+
+      - name: Archive corresponding core sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/source-artifacts
+          tar --exclude=.git -czf build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz -C third_party pcsx_rearmed
+          tar --exclude=.git -czf build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz -C third_party mupen64plus_next
+
+      - name: Build signed Alpha 14 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Verify DEV signer and native 16 KB alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          EXPECTED="9490d1ad4666312d6dd9e5b2a20699583919ae80a5536882bcd3f9accc793547"
+          "$APKSIGNER" verify --print-certs "$APK"
+          ACTUAL="$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n1 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          test "$ACTUAL" = "$EXPECTED"
+          CHECK_DIR="build/apk-alignment-check"
+          rm -rf "$CHECK_DIR" && mkdir -p "$CHECK_DIR"
+          unzip -q "$APK" -d "$CHECK_DIR"
+          READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          while IFS= read -r -d '' SO; do
+            while IFS= read -r LOAD_LINE; do
+              ALIGN_HEX="$(awk '{print $NF}' <<< "$LOAD_LINE")"
+              [[ "$ALIGN_HEX" =~ ^0x[0-9A-Fa-f]+$ ]]
+              (( ALIGN_HEX >= 0x4000 ))
+            done < <("$READELF" -lW "$SO" | grep -E '^[[:space:]]*LOAD[[:space:]]')
+          done < <(find "$CHECK_DIR/lib" -type f -name '*.so' -print0)
+          "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" -v -c -P 16 4 "$APK"
+
+      - name: Commit validated Alpha 14 source
+        if: env.ALPHA14_MIGRATED == '1'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -f tools/agent_01013_alpha14.py
+          git config user.name "Mauricio.dev"
+          git config user.email "antoniomauriciorodriguesalves@gmail.com"
+          git add -u app tools/agent_01013_alpha14.py
+          git add app/src/main/java/com/omnicore/emulator/core/n64/N64GameIntelligence.kt
+          git diff --cached --check
+          git commit -m "Apply OmniCore 0.10.13 N64 Alpha 14 SmartPrecompile and input intelligence [skip ci]"
+          git push origin HEAD:agent/0.10.0-n64-foundation
+
+      - name: Publish N64 Alpha 14 prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v0.10.13-n64-alpha14"
+          TITLE="OmniCore v0.10.13 N64 Alpha 14"
+          NOTES="Fourteenth Nintendo 64 device-test alpha. SmartPrecompile performs a bounded hidden pre-execution pass after GLideN64 context creation: it snapshots the exact boot state, runs a few no-input/no-present frames to materialize early GLideN64 shader programs and Dynarec blocks, flushes GPU work, then restores the boot snapshot before the first visible frame. Existing shader binaries are prefetched with a bounded 12 MiB budget ordered by recency, and ADPF lends transient CPU+GPU headroom during the compile pass. SmartPerf consumes the precompile-ready signal and can leave WarmStart earlier after stability is proven. Game Intelligence reads the N64 ROM identity and enriches Smart Analog AUTO with compatibility profiles; Kirby-class digital movement is automatically bridged from the left analog to D-pad even when the virtual arrows remain visible, while explicit Analog-only and Analog-to-D-pad modes still override AUTO behavior. DirectPresenter, RenderShield, BurstShield, AAudio, framebuffer compatibility, 1.5x Intelligent resolution, widescreen independence, save states and editable controls remain protected. PS1 source remains isolated and unchanged. ROMs, BIOS, firmware, keys and games are not included."
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          OUT="build/OmniCore-v0.10.13-n64-alpha14-debug.apk"
+          HASH="build/OmniCore-v0.10.13-n64-alpha14-debug.sha256"
+          cp "$APK" "$OUT"
+          sha256sum "$OUT" > "$HASH"
+          TARGET="$(git rev-parse HEAD)"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES" --prerelease --target "$TARGET"
+          else
+            gh release create "$TAG" --target "$TARGET" --title "$TITLE" --notes "$NOTES" --prerelease
+          fi
+          gh release upload "$TAG" "$OUT" "$HASH" build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz --clobber
+
+      - name: Record Alpha 14 success
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .ci
+          printf 'run_id=%s\ncommit=%s\nstatus=success\nversion=0.10.13\ntag=v0.10.13-n64-alpha14\n' "$GITHUB_RUN_ID" "$(git rev-parse HEAD)" > .ci/n64-foundation-success.txt
+          rm -f .ci/n64-foundation-failure.txt
+          git config user.name "Mauricio.dev"
+          git config user.email "antoniomauriciorodriguesalves@gmail.com"
+          git add .ci/n64-foundation-success.txt
+          git add -u .ci/n64-foundation-failure.txt 2>/dev/null || true
+          git commit -m "Record N64 Alpha 14 validation success [skip ci]" || true
+          git push origin HEAD:agent/0.10.0-n64-foundation
+
+      - name: Record Alpha 14 failure
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          git reset --hard HEAD
+          mkdir -p .ci
+          printf 'run_id=%s\ncommit=%s\nstatus=failure\nversion=0.10.13-alpha14\n' "$GITHUB_RUN_ID" "$GITHUB_SHA" > .ci/n64-foundation-failure.txt
+          git config user.name "Mauricio.dev"
+          git config user.email "antoniomauriciorodriguesalves@gmail.com"
+          git add .ci/n64-foundation-failure.txt
+          git commit -m "Record N64 Alpha 14 validation failure [skip ci]" || true
+          git push origin HEAD:agent/0.10.0-n64-foundation || true
