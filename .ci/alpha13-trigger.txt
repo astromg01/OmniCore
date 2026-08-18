@@ -1,0 +1,4 @@
+version=0.10.12
+alpha=13
+focus=direct-presenter-render-shield-smart-analog-shader-cache
+trigger=2026-08-18T04:06:00-04:00
