@@ -9,7 +9,7 @@ import com.omnicore.emulator.settings.N64PerformanceProfile
 import com.omnicore.emulator.settings.N64Settings
 import kotlin.math.max
 
-/** Nintendo 64 specific adaptive performance policy. */
+/** Nintendo 64 adaptive policy. Visual quality is never reduced automatically. */
 object N64SmartPerf {
     enum class Level { ECO, BALANCED, TURBO }
 
@@ -24,8 +24,7 @@ object N64SmartPerf {
         val targetFps: Float = 0f,
         val pacingCorrectionPct: Float = 0f,
         val presentAverageMs: Float = 0f,
-        val presentP95Ms: Float = 0f,
-        val smartPrecompileReady: Boolean = false
+        val presentP95Ms: Float = 0f
     ) {
         val hasUsefulWindow: Boolean get() = sampleWindowFrames >= 90
         val targetFrameMs: Float
@@ -33,8 +32,8 @@ object N64SmartPerf {
         val audioCritical: Boolean
             get() = audioBufferMs > 0f && audioFillMs in 0f..max(8f, audioBufferMs * 0.35f)
         val gpuBound: Boolean
-            get() = hasUsefulWindow && presentP95Ms >= 4.8f &&
-                p95FrameMs > 0f && presentP95Ms >= p95FrameMs * 0.24f
+            get() = hasUsefulWindow && presentP95Ms >= max(3.5f, targetFrameMs * 0.22f) &&
+                p95FrameMs > 0f && presentP95Ms >= p95FrameMs * 0.25f
     }
 
     data class Decision(
@@ -54,10 +53,7 @@ object N64SmartPerf {
         val powerSave: Boolean
     )
 
-    /**
-     * Per-emulation-session controller. It converts cumulative native counters
-     * into recent-window pressure and prevents rapid ECO/BALANCED/TURBO flapping.
-     */
+    /** Session hysteresis controls safe live knobs; renderer/core changes wait for restart. */
     class Session(context: Context, private val requested: N64Settings.Config) {
         private val appContext = context.applicationContext
         private val profile = N64PerformanceProfile.detect(appContext)
@@ -68,17 +64,19 @@ object N64SmartPerf {
         private var lastTransitionAt = 0L
         private var lastAudioStressAt = 0L
         private val warmupStartedAt = SystemClock.elapsedRealtime()
-        private var warmupMinUntil = warmupStartedAt + 12_000L
-        private val warmupMaxUntil = warmupStartedAt + 45_000L
+        private val warmupMinUntil = warmupStartedAt + 4_000L
+        private val warmupMaxUntil = warmupStartedAt + 12_000L
         private var warmupStableWindows = 0
         private var warmupActive = true
 
         fun initial(): Decision = current.copy(
-            audioBufferBursts = max(current.audioBufferBursts, 7),
+            effective = protectedConfig(current.effective),
+            audioBufferBursts = max(current.audioBufferBursts, 6),
             preferPowerEfficiency = false,
             aggressiveFramePacing = false,
+            allowResolutionPromotion = false,
             leanGraphics = false,
-            reason = "WarmStart N64 protegendo a fase de compilação e áudio inicial"
+            reason = "Precision WarmStart: qualidade preservada e áudio protegido"
         )
 
         fun adapt(raw: Telemetry): Decision {
@@ -88,105 +86,73 @@ object N64SmartPerf {
             val signals = runtimeSignals(appContext)
             val candidate = resolve(profile, requested, signals, telemetry)
             val now = SystemClock.elapsedRealtime()
-            if (telemetry.smartPrecompileReady) {
-                warmupMinUntil = minOf(warmupMinUntil, warmupStartedAt + 7_000L)
-            }
             if (recentUnderruns > 0 || telemetry.audioCritical) lastAudioStressAt = now
 
             val stableWarmupWindow = telemetry.hasUsefulWindow &&
-                telemetry.p95FrameMs <= telemetry.targetFrameMs * 1.12f &&
+                telemetry.p95FrameMs <= telemetry.targetFrameMs * 1.10f &&
                 telemetry.droppedFrames <= 2 &&
                 recentUnderruns == 0 &&
                 !telemetry.audioCritical
             if (warmupActive) {
-                if (stableWarmupWindow && now >= warmupMinUntil) {
-                    warmupStableWindows++
-                } else if (!stableWarmupWindow) {
-                    warmupStableWindows = 0
-                }
-                if (warmupStableWindows >= 3 || now >= warmupMaxUntil) warmupActive = false
+                if (stableWarmupWindow && now >= warmupMinUntil) warmupStableWindows++
+                else if (!stableWarmupWindow) warmupStableWindows = 0
+                if (warmupStableWindows >= 2 || now >= warmupMaxUntil) warmupActive = false
             }
 
-            fun protectAudio(decision: Decision): Decision = if (
-                warmupActive || now - lastAudioStressAt < 12_000L
-            ) {
-                decision.copy(
-                    audioBufferBursts = max(decision.audioBufferBursts, if (warmupActive) 7 else 6),
-                    reason = if (recentUnderruns > 0) "SmartPerf N64 recuperando áudio sem oscilar buffer" else decision.reason
-                )
-            } else decision
-
-            fun protectWarmup(decision: Decision): Decision {
-                if (!warmupActive || signals.thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE || signals.memoryPressure) {
-                    return decision
+            fun protectAudio(decision: Decision): Decision {
+                val recovering = now - lastAudioStressAt < 8_000L
+                val target = when {
+                    recentUnderruns >= 2 || telemetry.audioCritical -> 7
+                    recentUnderruns > 0 || recovering -> 6
+                    warmupActive -> 6
+                    else -> decision.audioBufferBursts
                 }
                 return decision.copy(
-                    effective = decision.effective.copy(
-                        internalResolution = requested.internalResolution,
-                        framebufferEmulation = requested.framebufferEmulation || requested.aspectRatio.wide,
-                        threadedRenderer = requested.threadedRenderer
-                    ),
-                    audioBufferBursts = max(decision.audioBufferBursts, 7),
-                    preferPowerEfficiency = false,
-                    aggressiveFramePacing = false,
+                    effective = protectedConfig(decision.effective),
+                    audioBufferBursts = max(decision.audioBufferBursts, target),
+                    allowResolutionPromotion = false,
                     leanGraphics = false,
-                    reason = "WarmStart N64 mantendo qualidade enquanto a sessão estabiliza"
+                    reason = if (recentUnderruns > 0) "PrecisionGovernor: recuperando áudio medido" else decision.reason
                 )
             }
 
-            if (warmupActive &&
-                signals.thermalStatus < PowerManager.THERMAL_STATUS_SEVERE &&
-                !signals.memoryPressure
-            ) {
+            if (warmupActive && signals.thermalStatus < PowerManager.THERMAL_STATUS_SEVERE) {
                 pressureStreak = 0
                 healthyStreak = 0
-                current = current.copy(
-                    audioBufferBursts = max(current.audioBufferBursts, candidate.audioBufferBursts),
-                    reason = "WarmStart N64 absorvendo picos de primeira execução"
-                )
-                return protectWarmup(protectAudio(current))
+                current = protectAudio(current.copy(
+                    effective = protectedConfig(current.effective),
+                    reason = "Precision WarmStart estabilizando sem alterar qualidade"
+                ))
+                return current
             }
 
             val emergency = signals.thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE ||
                 recentUnderruns >= 3 || telemetry.audioCritical
-
             if (emergency) {
                 pressureStreak = 0
                 healthyStreak = 0
-                current = candidate
+                current = protectAudio(candidate)
                 lastTransitionAt = now
-                return protectWarmup(protectAudio(current))
+                return current
             }
 
             when {
                 candidate.level.ordinal < current.level.ordinal -> {
                     pressureStreak++
                     healthyStreak = 0
-                    if (pressureStreak >= 2 && now - lastTransitionAt >= 3500L) {
+                    if (pressureStreak >= 2 && now - lastTransitionAt >= 3_500L) {
                         current = candidate
                         lastTransitionAt = now
                         pressureStreak = 0
-                    } else {
-                        // Audio buffering is safe to react immediately even while
-                        // heavier CPU/RDP changes wait for hysteresis.
-                        current = current.copy(
-                            audioBufferBursts = max(current.audioBufferBursts, candidate.audioBufferBursts),
-                            reason = candidate.reason
-                        )
                     }
                 }
                 candidate.level.ordinal > current.level.ordinal -> {
                     healthyStreak++
                     pressureStreak = 0
-                    if (healthyStreak >= 4 && now - lastTransitionAt >= 8000L) {
+                    if (healthyStreak >= 4 && now - lastTransitionAt >= 8_000L) {
                         current = candidate
                         lastTransitionAt = now
                         healthyStreak = 0
-                    } else {
-                        current = current.copy(
-                            audioBufferBursts = candidate.audioBufferBursts.coerceAtLeast(3),
-                            reason = "SmartPerf N64 aguardando margem sustentável"
-                        )
                     }
                 }
                 else -> {
@@ -195,8 +161,17 @@ object N64SmartPerf {
                     current = candidate
                 }
             }
-            return protectWarmup(protectAudio(current))
+            current = protectAudio(current)
+            return current
         }
+
+        private fun protectedConfig(config: N64Settings.Config): N64Settings.Config = config.copy(
+            cpuMode = N64Settings.CpuMode.DYNAREC,
+            rspMode = N64Settings.RspMode.HLE,
+            internalResolution = requested.internalResolution,
+            framebufferEmulation = requested.framebufferEmulation || requested.aspectRatio.wide,
+            threadedRenderer = requested.threadedRenderer
+        )
     }
 
     fun initial(context: Context, requested: N64Settings.Config): Decision =
@@ -227,122 +202,79 @@ object N64SmartPerf {
         val warmThermal = signals.thermalStatus >= PowerManager.THERMAL_STATUS_MODERATE
         val target = telemetry.targetFrameMs
         val framePressure = telemetry.hasUsefulWindow && (
-            telemetry.p95FrameMs >= target * 1.22f ||
+            telemetry.p95FrameMs >= target * 1.18f ||
                 telemetry.droppedFrames >= 5 ||
-                telemetry.audioUnderruns >= 1 ||
-                (telemetry.audioBufferMs > 0f && telemetry.audioFillMs < telemetry.audioBufferMs * 0.65f)
+                telemetry.audioUnderruns >= 1
             )
         val heavyPressure = telemetry.hasUsefulWindow && (
-            telemetry.p95FrameMs >= target * 1.55f ||
+            telemetry.p95FrameMs >= target * 1.42f ||
                 telemetry.droppedFrames >= 12 ||
-                telemetry.audioUnderruns >= 3 ||
-                telemetry.audioCritical
+                telemetry.audioUnderruns >= 3 || telemetry.audioCritical
             )
-        val canThread = profile.is64Bit && profile.cpuCores >= 6
-        val protectFramebuffer = requested.preset != N64Settings.Preset.PERFORMANCE || requested.aspectRatio.wide
 
-        fun compatibleFramebuffer(underGpuPressure: Boolean): Boolean = when {
-            protectFramebuffer -> true
-            requested.aspectRatio.wide -> true
-            underGpuPressure -> false
-            else -> requested.framebufferEmulation
-        }
-
-        fun safe(config: N64Settings.Config, threaded: Boolean): N64Settings.Config =
-            config.copy(
-                cpuMode = N64Settings.CpuMode.DYNAREC,
-                threadedRenderer = threaded && canThread,
-                rspMode = N64Settings.RspMode.HLE
-            )
+        fun protectedConfig(): N64Settings.Config = requested.copy(
+            cpuMode = N64Settings.CpuMode.DYNAREC,
+            rspMode = N64Settings.RspMode.HLE,
+            internalResolution = requested.internalResolution,
+            framebufferEmulation = requested.framebufferEmulation || requested.aspectRatio.wide,
+            threadedRenderer = requested.threadedRenderer
+        )
 
         if (severeThermal || heavyPressure) {
             return Decision(
                 level = Level.ECO,
-                effective = safe(
-                    requested.copy(
-                        internalResolution = when {
-                            severeThermal -> N64Settings.InternalResolution.NATIVE
-                            telemetry.gpuBound || signals.memoryPressure ->
-                                if (requested.internalResolution == N64Settings.InternalResolution.X2) {
-                                    N64Settings.InternalResolution.X15
-                                } else {
-                                    requested.internalResolution
-                                }
-                            else -> requested.internalResolution
-                        },
-                        framebufferEmulation = compatibleFramebuffer(telemetry.gpuBound || signals.memoryPressure)
-                    ),
-                    threaded = !severeThermal
-                ),
+                effective = protectedConfig(),
                 audioBufferBursts = if (telemetry.audioCritical || telemetry.audioUnderruns >= 2) 7 else 6,
                 preferPowerEfficiency = severeThermal,
                 aggressiveFramePacing = false,
                 allowResolutionPromotion = false,
-                leanGraphics = telemetry.gpuBound || signals.memoryPressure || severeThermal,
+                leanGraphics = false,
                 reason = when {
-                    severeThermal -> "SmartPerf N64 reduziu carga por temperatura"
-                    telemetry.audioCritical -> "SmartPerf N64 recuperando buffer de áudio"
-                    else -> "SmartPerf N64 atacando gargalo forte de frame time"
+                    severeThermal -> "PrecisionGovernor: pressão térmica, qualidade visual preservada"
+                    telemetry.audioCritical -> "PrecisionGovernor: pressão de áudio detectada"
+                    telemetry.gpuBound -> "PrecisionGovernor: gargalo de apresentação/GPU medido"
+                    else -> "PrecisionGovernor: pressão sustentada de emulação medida"
                 }
             )
         }
 
-        if (
-            warmThermal || framePressure || signals.memoryPressure || signals.powerSave ||
-            profile.tier == N64PerformanceProfile.Tier.LOW
-        ) {
+        if (warmThermal || framePressure || signals.memoryPressure || signals.powerSave ||
+            profile.tier == N64PerformanceProfile.Tier.LOW) {
             return Decision(
                 level = Level.BALANCED,
-                effective = safe(
-                    requested.copy(
-                        internalResolution = if (telemetry.gpuBound || signals.memoryPressure) {
-                            if (requested.internalResolution == N64Settings.InternalResolution.X2) {
-                                N64Settings.InternalResolution.X15
-                            } else {
-                                requested.internalResolution
-                            }
-                        } else {
-                            requested.internalResolution
-                        },
-                        framebufferEmulation = compatibleFramebuffer(
-                            telemetry.gpuBound || signals.memoryPressure
-                        )
-                    ),
-                    threaded = canThread && !warmThermal
-                ),
-                audioBufferBursts = if (telemetry.audioUnderruns > 0) 6 else 5,
+                effective = protectedConfig(),
+                audioBufferBursts = if (telemetry.audioUnderruns > 0 || telemetry.audioCritical) 6 else 5,
                 preferPowerEfficiency = warmThermal || signals.powerSave,
                 aggressiveFramePacing = false,
                 allowResolutionPromotion = false,
-                leanGraphics = telemetry.gpuBound || signals.memoryPressure || warmThermal,
+                leanGraphics = false,
                 reason = when {
-                    warmThermal -> "SmartPerf N64 preservando desempenho sustentável"
-                    signals.memoryPressure -> "SmartPerf N64 reduzindo pressão de memória/GPU"
-                    signals.powerSave -> "SmartPerf N64 compensando economia de energia ativa"
-                    telemetry.gpuBound -> "SmartPerf N64 reduziu custo gráfico medido"
-                    framePressure -> "SmartPerf N64 preservou resolução; BurstShield ataca picos CPU/GPU"
-                    else -> "SmartPerf N64 otimizado para hardware limitado"
+                    warmThermal -> "PrecisionGovernor: desempenho sustentável sem reduzir resolução"
+                    signals.memoryPressure -> "PrecisionGovernor: pressão de memória monitorada"
+                    signals.powerSave -> "PrecisionGovernor: economia de energia detectada"
+                    telemetry.gpuBound -> "PrecisionGovernor: pressão GPU/present detectada"
+                    framePressure -> "PrecisionGovernor: frame time fora do orçamento"
+                    else -> "PrecisionGovernor: perfil conservador de hardware"
                 }
             )
         }
 
         val highMargin = telemetry.hasUsefulWindow &&
-            telemetry.p95FrameMs <= target * 1.06f &&
+            telemetry.p95FrameMs <= target * 1.05f &&
             telemetry.droppedFrames <= 1 &&
-            telemetry.audioUnderruns == 0 &&
-            !telemetry.audioCritical
-
+            telemetry.audioUnderruns == 0 && !telemetry.audioCritical
         return Decision(
             level = if (highMargin) Level.TURBO else Level.BALANCED,
-            effective = safe(requested, requested.threadedRenderer || canThread),
+            effective = protectedConfig(),
             audioBufferBursts = if (highMargin) 3 else 4,
             preferPowerEfficiency = false,
             aggressiveFramePacing = highMargin,
-            allowResolutionPromotion = highMargin && requested.preset == N64Settings.Preset.AUTO,
+            allowResolutionPromotion = false,
+            leanGraphics = false,
             reason = if (highMargin) {
-                "SmartPerf N64 detectou margem sustentada para baixa latência"
+                "PrecisionGovernor: margem sustentada confirmada"
             } else {
-                "SmartPerf N64 em equilíbrio automático"
+                "PrecisionGovernor: equilíbrio medido"
             }
         )
     }

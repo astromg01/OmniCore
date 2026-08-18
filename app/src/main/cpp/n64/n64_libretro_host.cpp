@@ -137,11 +137,11 @@ std::size_t warmDirectoryPages(const std::string& path, std::size_t budgetBytes)
         if (warmed >= budgetBytes) break;
         const int fd = ::open(file.path.c_str(), O_RDONLY | O_CLOEXEC);
         if (fd < 0) continue;
-#ifdef POSIX_FADV_WILLNEED
-        ::posix_fadvise(fd, 0, static_cast<off_t>(file.size), POSIX_FADV_WILLNEED);
-#endif
         const std::size_t remaining = budgetBytes - warmed;
         const std::size_t fileBudget = std::min(file.size, remaining);
+#ifdef POSIX_FADV_WILLNEED
+        ::posix_fadvise(fd, 0, static_cast<off_t>(fileBudget), POSIX_FADV_WILLNEED);
+#endif
         std::uint8_t byte = 0;
         for (std::size_t offset = 0; offset < fileBudget; offset += static_cast<std::size_t>(pageSize)) {
             if (::pread(fd, &byte, 1, static_cast<off_t>(offset)) != 1) break;
@@ -946,8 +946,6 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     buttonMask_.store(0, std::memory_order_release);
     smartDpadMask_.store(0, std::memory_order_release);
     smartAnalogDpadActive_.store(false, std::memory_order_release);
-    smartPrecompileActive_.store(false, std::memory_order_release);
-    smartPrecompileReady_.store(false, std::memory_order_release);
     setAnalog(0.0f, 0.0f, 0.0f, 0.0f);
     {
         std::lock_guard<std::mutex> lock(telemetryMutex_);
@@ -975,15 +973,14 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     warmStartActive_.store(false, std::memory_order_release);
     shaderCacheEnabled_.store(false, std::memory_order_release);
     shaderCacheReady_.store(false, std::memory_order_release);
-    shaderCacheHot_.store(false, std::memory_order_release);
+    passiveWarmCacheReady_.store(false, std::memory_order_release);
     directPresenterActive_.store(false, std::memory_order_release);
     smartAnalogDpadActive_.store(false, std::memory_order_release);
-    smartPrecompileActive_.store(false, std::memory_order_release);
-    smartPrecompileReady_.store(false, std::memory_order_release);
     lastPresentMs_.store(0.0f, std::memory_order_release);
     hwRenderRequested_ = false;
     hwRender_ = {};
-    setMessage("N64 BOOT 1/7 • Alpha 14 SmartPrecompile + Game Intelligence…");
+    precisionGovernorMode_.store(0, std::memory_order_release);
+    setMessage("N64 BOOT 1/6 • Alpha 15 PrecisionGovernor + passive cache…");
     try {
         thread_ = std::thread(&LibretroHost::run, this);
     } catch (...) {
@@ -1281,10 +1278,6 @@ bool LibretroHost::environment(unsigned cmd, void* data) {
 void LibretroHost::videoRefresh(const void* data, unsigned, unsigned, std::size_t) {
     if (!impl_ || impl_->display == EGL_NO_DISPLAY) return;
     if (data != abi::RETRO_HW_FRAME_BUFFER_VALID) return;
-    if (smartPrecompileActive_.load(std::memory_order_acquire)) {
-        glFlush();
-        return;
-    }
     const auto presentBegin = std::chrono::steady_clock::now();
     if (!impl_->directPresent) {
         if (impl_->frontFbo == 0) return;
@@ -1333,7 +1326,6 @@ std::size_t LibretroHost::audioBatch(const std::int16_t* data, std::size_t frame
 }
 
 std::int16_t LibretroHost::inputState(unsigned port, unsigned device, unsigned index, unsigned id) const {
-    if (smartPrecompileActive_.load(std::memory_order_acquire)) return 0;
     if (port != 0) return 0;
     if (device == RETRO_DEVICE_JOYPAD) {
         const auto mask = static_cast<std::uint16_t>(
@@ -1398,7 +1390,8 @@ Telemetry LibretroHost::telemetry() const {
     out.directPresenterActive = directPresenterActive_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
     out.shaderCacheReady = shaderCacheReady_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
     out.smartAnalogDpadActive = smartAnalogDpadActive_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
-    out.smartPrecompileReady = smartPrecompileReady_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
+    out.passiveWarmCacheReady = passiveWarmCacheReady_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
+    out.precisionGovernorMode = static_cast<float>(precisionGovernorMode_.load(std::memory_order_acquire));
     if (presentCount > 0) {
         float totalPresent = 0.0f;
         for (std::size_t i = 0; i < presentCount; ++i) totalPresent += presentSnapshot[i];
@@ -1517,44 +1510,6 @@ bool LibretroHost::processPendingCommand() {
     return false;
 }
 
-bool LibretroHost::runSmartPrecompile() {
-    if (!impl_ || !impl_->gameLoaded || !impl_->core.run ||
-        !impl_->core.serializeSize || !impl_->core.serialize || !impl_->core.unserialize) {
-        return false;
-    }
-    const std::size_t stateSize = impl_->core.serializeSize();
-    if (stateSize == 0 || stateSize > 64u * 1024u * 1024u) return false;
-
-    std::vector<std::uint8_t> bootState(stateSize);
-    if (!impl_->core.serialize(bootState.data(), bootState.size())) return false;
-    // Prove that the snapshot can be restored before we mutate emulation state.
-    if (!impl_->core.unserialize(bootState.data(), bootState.size())) return false;
-
-    const int warmFrames = shaderCacheHot_.load(std::memory_order_acquire) ? 5 : 9;
-    smartPrecompileActive_.store(true, std::memory_order_release);
-    setMessage("N64 BOOT 5/7 • SmartPrecompile aquecendo shaders + Dynarec…");
-    if (impl_->perfHint.active()) {
-        impl_->perfHint.notifySpike(true, true, "omnicore-n64-smart-precompile");
-        impl_->perfHint.setTargetScale(0.76);
-    }
-
-    bool ran = true;
-    for (int frame = 0; frame < warmFrames; ++frame) {
-        if (stopRequested_.load(std::memory_order_acquire)) {
-            ran = false;
-            break;
-        }
-        impl_->core.run();
-    }
-    glFinish();
-    const bool restored = impl_->core.unserialize(bootState.data(), bootState.size());
-    smartPrecompileActive_.store(false, std::memory_order_release);
-    if (!ran || !restored) return false;
-
-    smartPrecompileReady_.store(true, std::memory_order_release);
-    return true;
-}
-
 void LibretroHost::run() {
     // App-owned emulation thread only; no governor/clock/system mutation.
     // Android may reject the priority request, in which case ADPF/default
@@ -1569,7 +1524,7 @@ void LibretroHost::run() {
             adpfActive_.store(false, std::memory_order_release);
             burstShieldActive_.store(false, std::memory_order_release);
             warmStartActive_.store(false, std::memory_order_release);
-            smartPrecompileActive_.store(false, std::memory_order_release);
+            precisionGovernorMode_.store(0, std::memory_order_release);
             impl_->closeAudio();
             if (impl_->gameLoaded && impl_->core.unloadGame) {
                 impl_->core.unloadGame();
@@ -1666,9 +1621,9 @@ void LibretroHost::run() {
 
     if (shaderCacheReady_.load(std::memory_order_acquire)) {
         const std::string shaderDir = config_.systemDir + "/Mupen64plus/shaders";
-        const std::size_t warmed = warmDirectoryPages(shaderDir, 12u * 1024u * 1024u);
-        shaderCacheHot_.store(warmed > 0, std::memory_order_release);
-        if (warmed > 0) logPrint(ANDROID_LOG_INFO, "SmartPrecompile cache-prefetched %zu bytes", warmed);
+        const std::size_t warmed = warmDirectoryPages(shaderDir, 2u * 1024u * 1024u);
+        passiveWarmCacheReady_.store(warmed > 0, std::memory_order_release);
+        if (warmed > 0) logPrint(ANDROID_LOG_INFO, "Passive shader cache warmed %zu bytes", warmed);
     }
     hwRender_.context_reset();
     callContextDestroy = true;
@@ -1685,10 +1640,8 @@ void LibretroHost::run() {
     if (adpfReady) {
         impl_->perfHint.notifyReset(true, true, "omnicore-n64-session");
         impl_->perfHint.bindSurface(window_);
-        impl_->perfHint.setTargetScale(0.80);
+        impl_->perfHint.setTargetScale(0.94);
     }
-    const bool precompileReady = runSmartPrecompile();
-    if (adpfReady) impl_->perfHint.setTargetScale(precompileReady ? 0.84 : 0.82);
 
     const bool audioReady = impl_->openAudio(
         impl_->coreSampleRate,
@@ -1702,20 +1655,26 @@ void LibretroHost::run() {
     targetFrameMs_.store(targetMs, std::memory_order_release);
     burstShieldActive_.store(adpfReady && impl_->perfHint.burstCapable(), std::memory_order_release);
     warmStartActive_.store(true, std::memory_order_release);
+    const bool passiveCache = passiveWarmCacheReady_.load(std::memory_order_acquire);
     setMessage(audioReady
-        ? (precompileReady
-            ? "N64 BOOT 6/7 • SmartPrecompile ✓ • GLideN64 + AAudio, primeiro frame…"
-            : "N64 BOOT 6/7 • GLideN64 + AAudio, primeiro frame…")
-        : (precompileReady
-            ? "N64 BOOT 6/7 • SmartPrecompile ✓ • GLideN64, primeiro frame…"
-            : "N64 BOOT 6/7 • GLideN64 pronto, primeiro frame…"));
+        ? (passiveCache
+            ? "N64 BOOT 5/6 • WarmCache ✓ • GLideN64 + AAudio, primeiro frame…"
+            : "N64 BOOT 5/6 • GLideN64 + AAudio, primeiro frame…")
+        : (passiveCache
+            ? "N64 BOOT 5/6 • WarmCache ✓ • GLideN64, primeiro frame…"
+            : "N64 BOOT 5/6 • GLideN64 pronto, primeiro frame…"));
 
     auto nextFrame = std::chrono::steady_clock::now() + targetDuration;
     std::uint32_t adaptationCounter = 0;
-    int slowFrameStreak = 0;
+    int pressureStreak = 0;
+    int stableStreak = 0;
     int warmStableFrames = 0;
+    float frameEwma = targetMs;
+    float presentEwma = 0.0f;
     const auto warmStartBegan = std::chrono::steady_clock::now();
-    auto burstHeadroomUntil = std::chrono::steady_clock::time_point{};
+    auto lastGovernorChange = warmStartBegan - std::chrono::seconds(2);
+    auto governorHeadroomUntil = std::chrono::steady_clock::time_point{};
+    int governorMode = 0;  // 0 stable, 1 CPU, 2 GPU/present, 3 mixed.
     bool wasPaused = false;
     while (!stopRequested_.load(std::memory_order_acquire)) {
         const bool commandRan = processPendingCommand();
@@ -1736,11 +1695,14 @@ void LibretroHost::run() {
         }
 
         if (menuTransitionBoost_.exchange(false, std::memory_order_acq_rel)) {
-            impl_->adaptAudio(8);
-            impl_->perfHint.notifySpike(true, true, "omnicore-n64-menu-transition");
-            impl_->perfHint.setTargetScale(0.76);
-            burstHeadroomUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(1800);
+            // Menus are commonly framebuffer-heavy. Hint GPU only; audio has its
+            // own xrun/fill controller and must not expand just because Start was pressed.
+            impl_->perfHint.notifySpike(false, true, "omnicore-n64-menu-present-spike");
+            governorHeadroomUntil = std::max(
+                governorHeadroomUntil,
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(800));
         }
+
         impl_->presentationTargetNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
             nextFrame.time_since_epoch()).count();
         const auto begin = std::chrono::steady_clock::now();
@@ -1752,75 +1714,92 @@ void LibretroHost::run() {
         recordFrame(frameMs, targetMs);
 
         const auto controlNow = std::chrono::steady_clock::now();
-        const bool slowFrame = frameMs > targetMs * 1.18f;
-        const bool verySlowFrame = frameMs > targetMs * 1.55f;
         const float presentMs = lastPresentMs_.load(std::memory_order_acquire);
-        const bool renderSpike = slowFrame && presentMs >= std::max(4.0f, targetMs * 0.28f);
-        if (slowFrame) {
-            ++slowFrameStreak;
+        frameEwma += (frameMs - frameEwma) * 0.08f;
+        presentEwma += (presentMs - presentEwma) * 0.12f;
+
+        const bool sustainedSlow = frameEwma > targetMs * 1.10f;
+        const bool presentHeavy = presentEwma >= std::max(3.5f, targetMs * 0.22f) &&
+            presentEwma >= frameEwma * 0.25f;
+        const float cpuSideMs = std::max(0.0f, frameEwma - presentEwma);
+
+        if (sustainedSlow) {
+            ++pressureStreak;
+            stableStreak = 0;
             warmStableFrames = 0;
         } else {
-            if (slowFrameStreak > 0) --slowFrameStreak;
-            if (frameMs <= targetMs * 1.08f) {
+            pressureStreak = std::max(0, pressureStreak - 1);
+            if (frameEwma <= targetMs * 1.06f) {
+                stableStreak = std::min(stableStreak + 1, 240);
                 warmStableFrames = std::min(warmStableFrames + 1, 240);
-            } else if (warmStableFrames > 0) {
-                --warmStableFrames;
+            } else {
+                stableStreak = std::max(0, stableStreak - 1);
+                warmStableFrames = std::max(0, warmStableFrames - 1);
             }
         }
 
-        if (renderSpike) {
-            // Presentation cost is a meaningful portion of this slow frame. Give
-            // ADPF a GPU-specific transient hint and protect audio, without lowering
-            // internal resolution or disabling framebuffer emulation.
-            impl_->perfHint.notifySpike(false, true, "omnicore-n64-render-spike");
-            impl_->perfHint.setTargetScale(0.76);
-            burstHeadroomUntil = std::max(
-                burstHeadroomUntil, controlNow + std::chrono::milliseconds(1900));
-            const float fillMs = audioFillMs_.load(std::memory_order_acquire);
-            const float bufferMs = audioBufferMs_.load(std::memory_order_acquire);
-            if (fillMs < std::max(30.0f, bufferMs * 1.25f)) impl_->adaptAudio(8);
+        // A single catastrophic frame gets one bounded spike hint. It does not
+        // change quality, threading or audio policy.
+        if (frameMs > targetMs * 1.70f) {
+            impl_->perfHint.notifySpike(
+                !presentHeavy,
+                presentHeavy,
+                presentHeavy ? "omnicore-n64-single-gpu-spike" : "omnicore-n64-single-cpu-spike");
         }
-        if (verySlowFrame) {
-            impl_->perfHint.notifySpike(true, true, "omnicore-n64-frame-spike");
-            impl_->perfHint.setTargetScale(0.78);
-            burstHeadroomUntil = std::max(
-                burstHeadroomUntil, controlNow + std::chrono::milliseconds(2200));
+
+        const bool governorCooldownDone = controlNow - lastGovernorChange >= std::chrono::milliseconds(900);
+        if (pressureStreak >= 4 && governorCooldownDone) {
+            const int nextMode = presentHeavy
+                ? (cpuSideMs > targetMs * 0.72f ? 3 : 2)
+                : 1;
+            const bool cpuPressure = nextMode == 1 || nextMode == 3;
+            const bool gpuPressure = nextMode == 2 || nextMode == 3;
+            const char* id = nextMode == 1 ? "omnicore-n64-precision-cpu" :
+                (nextMode == 2 ? "omnicore-n64-precision-gpu" : "omnicore-n64-precision-mixed");
+            impl_->perfHint.notifyIncrease(cpuPressure, gpuPressure, id);
+            if (adpfReady) {
+                impl_->perfHint.setTargetScale(nextMode == 1 ? 0.90 : (nextMode == 2 ? 0.92 : 0.88));
+            }
+            governorMode = nextMode;
+            precisionGovernorMode_.store(nextMode, std::memory_order_release);
+            governorHeadroomUntil = controlNow + std::chrono::milliseconds(1500);
+            lastGovernorChange = controlNow;
+            pressureStreak = 0;
         }
-        if (slowFrameStreak >= 4) {
-            impl_->perfHint.notifyIncrease(true, true, "omnicore-n64-sustained-frame-pressure");
-            impl_->adaptAudio(7);
-            impl_->perfHint.setTargetScale(0.82);
-            burstHeadroomUntil = std::max(
-                burstHeadroomUntil, controlNow + std::chrono::milliseconds(2600));
-            slowFrameStreak = 0;
+
+        if (governorMode != 0 && stableStreak >= 90 && controlNow >= governorHeadroomUntil) {
+            governorMode = 0;
+            precisionGovernorMode_.store(0, std::memory_order_release);
+            impl_->perfHint.notifyReset(true, true, "omnicore-n64-precision-recovery");
+            if (adpfReady) {
+                impl_->perfHint.setTargetScale(
+                    warmStartActive_.load(std::memory_order_acquire) ? 0.94 : 1.0);
+            }
+            stableStreak = 0;
+            lastGovernorChange = controlNow;
         }
 
         if (warmStartActive_.load(std::memory_order_acquire)) {
             const auto warmElapsed = controlNow - warmStartBegan;
-            const bool minimumWarmupDone = warmElapsed >= std::chrono::seconds(12);
-            const bool stableEnough = warmStableFrames >= 180;
-            const bool maximumWarmupDone = warmElapsed >= std::chrono::seconds(45);
+            const bool minimumWarmupDone = warmElapsed >= std::chrono::seconds(4);
+            const bool stableEnough = warmStableFrames >= 90;
+            const bool maximumWarmupDone = warmElapsed >= std::chrono::seconds(12);
             if ((minimumWarmupDone && stableEnough) || maximumWarmupDone) {
                 warmStartActive_.store(false, std::memory_order_release);
-                impl_->perfHint.notifyReset(true, true, "omnicore-n64-steady-state");
+                if (governorMode == 0) {
+                    impl_->perfHint.notifyReset(true, true, "omnicore-n64-steady-state");
+                    if (adpfReady) impl_->perfHint.setTargetScale(1.0);
+                }
             }
         }
 
-        if (adpfReady) {
-            if (controlNow < burstHeadroomUntil) {
-                // The event path already selected a stronger target; keep it.
-            } else if (warmStartActive_.load(std::memory_order_acquire)) {
-                impl_->perfHint.setTargetScale(0.84);
-            } else {
-                impl_->perfHint.setTargetScale(1.0);
-            }
-        }
-
+        // Audio is controlled only by actual AAudio/ring evidence. Frame spikes
+        // no longer force 7/8-burst buffers and therefore cannot create latency
+        // or extra memory pressure as a side effect of renderer stress.
         if (++adaptationCounter >= 60u) {
             adaptationCounter = 0;
             int requestedBursts = audioTargetBursts_.load(std::memory_order_acquire);
-            if (warmStartActive_.load(std::memory_order_acquire)) requestedBursts = std::max(requestedBursts, 7);
-            if (controlNow < burstHeadroomUntil) requestedBursts = std::max(requestedBursts, 7);
+            if (warmStartActive_.load(std::memory_order_acquire)) requestedBursts = std::max(requestedBursts, 6);
             impl_->adaptAudio(requestedBursts);
         }
         // Single pacing owner: EGL swap interval is zero, so this is the only

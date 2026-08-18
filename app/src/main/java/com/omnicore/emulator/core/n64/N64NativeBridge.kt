@@ -28,7 +28,8 @@ object N64NativeBridge {
         val directPresenterActive: Boolean = false,
         val shaderCacheReady: Boolean = false,
         val smartAnalogDpadActive: Boolean = false,
-        val smartPrecompileReady: Boolean = false
+        val passiveWarmCacheReady: Boolean = false,
+        val precisionGovernorMode: Int = 0
     ) {
         fun smartPerf(): N64SmartPerf.Telemetry = N64SmartPerf.Telemetry(
             averageFrameMs = averageFrameMs,
@@ -41,8 +42,7 @@ object N64NativeBridge {
             targetFps = targetFps,
             pacingCorrectionPct = pacingCorrectionPct,
             presentAverageMs = presentAverageMs,
-            presentP95Ms = presentP95Ms,
-            smartPrecompileReady = smartPrecompileReady
+            presentP95Ms = presentP95Ms
         )
     }
 
@@ -227,7 +227,8 @@ object N64NativeBridge {
             directPresenterActive = raw.getOrElse(15) { 0f } >= 0.5f,
             shaderCacheReady = raw.getOrElse(16) { 0f } >= 0.5f,
             smartAnalogDpadActive = raw.getOrElse(17) { 0f } >= 0.5f,
-            smartPrecompileReady = raw.getOrElse(18) { 0f } >= 0.5f
+            passiveWarmCacheReady = raw.getOrElse(18) { 0f } >= 0.5f,
+            precisionGovernorMode = raw.getOrElse(19) { 0f }.roundToInt()
         )
     }
 

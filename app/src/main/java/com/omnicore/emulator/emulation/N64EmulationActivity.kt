@@ -165,14 +165,14 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             effective = base.effective.copy(
                 cpuMode = N64Settings.CpuMode.DYNAREC,
                 rspMode = N64Settings.RspMode.HLE,
-                internalResolution = N64Settings.InternalResolution.NATIVE,
+                internalResolution = base.effective.internalResolution,
                 framebufferEmulation = base.effective.framebufferEmulation,
                 threadedRenderer = false
             ),
             audioBufferBursts = maxOf(base.audioBufferBursts, 5),
             aggressiveFramePacing = false,
             allowResolutionPromotion = false,
-            reason = "Boot rápido N64: Dynarec + resolução nativa + GL seguro"
+            reason = "Boot seguro N64: Dynarec + qualidade solicitada + GL protegido"
         )
     }
 
@@ -417,7 +417,13 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             append(if (t.warmStartActive) " • WarmStart" else "")
             append(if (t.shaderCacheEnabled) " • ShaderCache" else "")
             append(if (t.shaderCacheReady) " ✓" else "")
-            append(if (t.smartPrecompileReady) " • SmartPrecompile ✓" else "")
+            append(if (t.passiveWarmCacheReady) " • WarmCache ✓" else "")
+            append(when (t.precisionGovernorMode) {
+                1 -> " • P-GOV CPU"
+                2 -> " • P-GOV GPU"
+                3 -> " • P-GOV MIX"
+                else -> " • P-GOV Stable"
+            })
             append(if (t.directPresenterActive) " • DirectPresenter" else " • RenderBridge")
             append(if (t.smartAnalogDpadActive) " • SmartAnalog→D" else "")
             append("\nÁudio ")
