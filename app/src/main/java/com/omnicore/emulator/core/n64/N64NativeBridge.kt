@@ -103,7 +103,7 @@ object N64NativeBridge {
                 expansionPak = config.expansionPak.storage,
                 aspectRatio = config.aspectRatio.storage,
                 framebufferEmulation = config.framebufferEmulation,
-                leanGraphics = decision.level != N64SmartPerf.Level.TURBO,
+                leanGraphics = decision.leanGraphics,
                 threadedRenderer = config.threadedRenderer,
                 internalResolution = config.internalResolution.multiplier,
                 analogDeadzonePercent = (input.analogDeadzone * 100f).roundToInt(),

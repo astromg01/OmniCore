@@ -28,7 +28,7 @@ struct RuntimeConfig {
     bool framebufferEmulation = true;
     bool leanGraphics = false;
     bool threadedRenderer = false;
-    int internalResolution = 1;
+    int internalResolution = 10;
     int analogDeadzonePercent = 12;
     int analogSensitivityPercent = 100;
     int audioBufferBursts = 4;
@@ -107,6 +107,7 @@ private:
     std::atomic<std::int16_t> cX_{0};
     std::atomic<std::int16_t> cY_{0};
     std::atomic<int> audioTargetBursts_{4};
+    std::atomic<bool> menuTransitionBoost_{false};
     std::atomic<float> audioFillMs_{0.0f};
     std::atomic<float> audioBufferMs_{0.0f};
     std::atomic<float> targetFps_{60.0f};

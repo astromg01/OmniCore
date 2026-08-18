@@ -880,6 +880,12 @@ void LibretroHost::setMessage(std::string message) {
 
 void LibretroHost::setButton(unsigned retroPadId, bool pressed) {
     if (retroPadId > RETRO_DEVICE_ID_JOYPAD_R3) return;
+    if (pressed && retroPadId == RETRO_DEVICE_ID_JOYPAD_START) {
+        // Pause/menu screens often trigger the first expensive framebuffer
+        // copy. Ask the emulation thread for a larger audio cushion before
+        // the core consumes the Start press.
+        menuTransitionBoost_.store(true, std::memory_order_release);
+    }
     const auto bit = static_cast<std::uint16_t>(1u << retroPadId);
     if (pressed) buttonMask_.fetch_or(bit, std::memory_order_acq_rel);
     else buttonMask_.fetch_and(static_cast<std::uint16_t>(~bit), std::memory_order_acq_rel);
@@ -902,12 +908,21 @@ void LibretroHost::buildCoreOptions() {
     options_["mupen64plus-rdp-plugin"] = "gliden64";
     options_["mupen64plus-rsp-plugin"] = "hle";
     options_["mupen64plus-cpucore"] = config_.cpuMode == "cached_interpreter" ? "cached_interpreter" : "dynamic_recompiler";
-    options_["mupen64plus-43screensize"] = config_.internalResolution >= 2 ? "1280x960" : "640x480";
-    options_["mupen64plus-169screensize"] = config_.internalResolution >= 2 ? "1280x720" : "640x360";
+    const char* screen43 = config_.internalResolution >= 20 ? "1280x960" :
+        (config_.internalResolution >= 15 ? "960x720" : "640x480");
+    const char* screen169 = config_.internalResolution >= 20 ? "1280x720" :
+        (config_.internalResolution >= 15 ? "960x540" : "640x360");
+    options_["mupen64plus-43screensize"] = screen43;
+    options_["mupen64plus-169screensize"] = screen169;
     options_["mupen64plus-aspect"] = wide ? config_.aspectRatio : "4:3";
     options_["mupen64plus-ThreadedRenderer"] = boolOption(config_.threadedRenderer);
     options_["mupen64plus-EnableFBEmulation"] = boolOption(framebuffer);
-    options_["mupen64plus-EnableCopyColorToRDRAM"] = framebuffer ? "Async" : "Off";
+    // Triple-buffered color copies reduce the first heavy framebuffer transition
+    // (notably Zelda pause screens) without disabling compatibility. Under
+    // measured GPU pressure we fall back to the cheaper double-buffered path.
+    options_["mupen64plus-EnableCopyColorToRDRAM"] = framebuffer
+        ? (leanGraphics ? "Async" : "TripleBuffer")
+        : "Off";
     options_["mupen64plus-EnableCopyDepthToRDRAM"] = framebuffer ? "Software" : "Off";
     options_["mupen64plus-EnableCopyColorFromRDRAM"] = "False";
     options_["mupen64plus-EnableCopyAuxToRDRAM"] = "False";
@@ -1071,7 +1086,7 @@ void LibretroHost::videoRefresh(const void* data, unsigned, unsigned, std::size_
     const auto presentBegin = std::chrono::steady_clock::now();
     // Native N64 output was being blurred twice by linear upscaling. Keep
     // 2x output smooth, but preserve low-resolution text/UI pixels at 1x.
-    const GLenum presentFilter = config_.internalResolution >= 2 ? GL_LINEAR : GL_NEAREST;
+    const GLenum presentFilter = config_.internalResolution >= 15 ? GL_LINEAR : GL_NEAREST;
     glBlitFramebuffer(0, 0, impl_->renderWidth, impl_->renderHeight,
                       0, 0, impl_->surfaceWidth, impl_->surfaceHeight,
                       GL_COLOR_BUFFER_BIT, presentFilter);
@@ -1319,10 +1334,11 @@ void LibretroHost::run() {
         return;
     }
     const bool wide = config_.aspectRatio == "16:9" || config_.aspectRatio == "16:9 adjusted";
-    const int renderWidth = config_.internalResolution >= 2 ? 1280 : 640;
+    const int renderWidth = config_.internalResolution >= 20 ? 1280 :
+        (config_.internalResolution >= 15 ? 960 : 640);
     const int renderHeight = wide
-        ? (config_.internalResolution >= 2 ? 720 : 360)
-        : (config_.internalResolution >= 2 ? 960 : 480);
+        ? (config_.internalResolution >= 20 ? 720 : (config_.internalResolution >= 15 ? 540 : 360))
+        : (config_.internalResolution >= 20 ? 960 : (config_.internalResolution >= 15 ? 720 : 480));
     if (!impl_->createFrontendFramebuffer(renderWidth, renderHeight)) {
         setMessage("N64 BOOT E02 • framebuffer GLES3 inválido");
         cleanup();
@@ -1428,6 +1444,9 @@ void LibretroHost::run() {
             nextFrame = std::chrono::steady_clock::now() + targetDuration;
         }
 
+        if (menuTransitionBoost_.exchange(false, std::memory_order_acq_rel)) {
+            impl_->adaptAudio(8);
+        }
         impl_->presentationTargetNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
             nextFrame.time_since_epoch()).count();
         const auto begin = std::chrono::steady_clock::now();

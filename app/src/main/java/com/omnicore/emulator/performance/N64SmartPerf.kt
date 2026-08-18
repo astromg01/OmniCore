@@ -43,6 +43,7 @@ object N64SmartPerf {
         val preferPowerEfficiency: Boolean,
         val aggressiveFramePacing: Boolean,
         val allowResolutionPromotion: Boolean,
+        val leanGraphics: Boolean = false,
         val reason: String
     )
 
@@ -65,8 +66,12 @@ object N64SmartPerf {
         private var healthyStreak = 0
         private var lastTransitionAt = 0L
         private var lastAudioStressAt = 0L
+        private val startupGraceUntil = SystemClock.elapsedRealtime() + 10_000L
 
-        fun initial(): Decision = current
+        fun initial(): Decision = current.copy(
+            audioBufferBursts = max(current.audioBufferBursts, 6),
+            reason = "SmartPerf N64 aquecendo shaders e protegendo áudio inicial"
+        )
 
         fun adapt(raw: Telemetry): Decision {
             val recentUnderruns = (raw.audioUnderruns - lastUnderruns).coerceAtLeast(0)
@@ -76,7 +81,9 @@ object N64SmartPerf {
             val candidate = resolve(profile, requested, signals, telemetry)
             val now = SystemClock.elapsedRealtime()
             if (recentUnderruns > 0 || telemetry.audioCritical) lastAudioStressAt = now
-            fun protectAudio(decision: Decision): Decision = if (now - lastAudioStressAt < 12_000L) {
+            fun protectAudio(decision: Decision): Decision = if (
+                now < startupGraceUntil || now - lastAudioStressAt < 12_000L
+            ) {
                 decision.copy(
                     audioBufferBursts = max(decision.audioBufferBursts, 6),
                     reason = if (recentUnderruns > 0) "SmartPerf N64 recuperando áudio sem oscilar buffer" else decision.reason
@@ -195,7 +202,16 @@ object N64SmartPerf {
                 level = Level.ECO,
                 effective = safe(
                     requested.copy(
-                        internalResolution = N64Settings.InternalResolution.NATIVE,
+                        internalResolution = when {
+                            severeThermal -> N64Settings.InternalResolution.NATIVE
+                            telemetry.gpuBound || signals.memoryPressure ->
+                                if (requested.internalResolution == N64Settings.InternalResolution.X2) {
+                                    N64Settings.InternalResolution.X15
+                                } else {
+                                    requested.internalResolution
+                                }
+                            else -> requested.internalResolution
+                        },
                         framebufferEmulation = compatibleFramebuffer(telemetry.gpuBound || signals.memoryPressure)
                     ),
                     threaded = !severeThermal
@@ -204,6 +220,7 @@ object N64SmartPerf {
                 preferPowerEfficiency = severeThermal,
                 aggressiveFramePacing = false,
                 allowResolutionPromotion = false,
+                leanGraphics = telemetry.gpuBound || signals.memoryPressure || severeThermal,
                 reason = when {
                     severeThermal -> "SmartPerf N64 reduziu carga por temperatura"
                     telemetry.audioCritical -> "SmartPerf N64 recuperando buffer de áudio"
@@ -220,7 +237,15 @@ object N64SmartPerf {
                 level = Level.BALANCED,
                 effective = safe(
                     requested.copy(
-                        internalResolution = N64Settings.InternalResolution.NATIVE,
+                        internalResolution = if (telemetry.gpuBound || signals.memoryPressure) {
+                            if (requested.internalResolution == N64Settings.InternalResolution.X2) {
+                                N64Settings.InternalResolution.X15
+                            } else {
+                                requested.internalResolution
+                            }
+                        } else {
+                            requested.internalResolution
+                        },
                         framebufferEmulation = compatibleFramebuffer(
                             telemetry.gpuBound || signals.memoryPressure
                         )
@@ -231,6 +256,7 @@ object N64SmartPerf {
                 preferPowerEfficiency = warmThermal || signals.powerSave,
                 aggressiveFramePacing = false,
                 allowResolutionPromotion = false,
+                leanGraphics = telemetry.gpuBound || signals.memoryPressure || warmThermal,
                 reason = when {
                     warmThermal -> "SmartPerf N64 preservando desempenho sustentável"
                     signals.memoryPressure -> "SmartPerf N64 reduzindo pressão de memória/GPU"
