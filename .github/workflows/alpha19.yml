@@ -1,0 +1,38 @@
+name: N64 Alpha 21 Registered Bridge
+
+on:
+  push:
+    branches: [ "agent/0.10.0-n64-foundation" ]
+    paths:
+      - ".ci/alpha19-trigger.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-n64-alpha21-registered-bridge
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone N64 foundation branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin agent/0.10.0-n64-foundation
+          git checkout -B agent/0.10.0-n64-foundation origin/agent/0.10.0-n64-foundation
+
+      - name: Run Alpha 21 ElasticAudioBridge validation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          chmod +x tools/run_alpha21_bridge_ci.sh
+          ./tools/run_alpha21_bridge_ci.sh
