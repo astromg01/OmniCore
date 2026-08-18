@@ -1,1 +1,1 @@
-diagnose=alpha8-full-2
+diagnose=alpha8-gates-3
