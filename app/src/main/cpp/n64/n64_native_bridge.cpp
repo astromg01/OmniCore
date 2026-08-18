@@ -38,7 +38,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeHasCore(JNIEnv*, jobje
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeRuntimeInfo(JNIEnv* env, jobject) {
-    const std::string value = std::string("OmniCore N64 Runtime 0.10.17 • Mupen64Plus-Next • GLES3 + AAudio host v14 • PrecisionGovernor v2 + PassiveWarmCache + DirectPresenter + GameAware SmartAnalog • ") +
+    const std::string value = std::string("OmniCore N64 Runtime 0.10.18 • Mupen64Plus-Next • GLES3 + AAudio host v15 • PrecisionGovernor v2.1 + MicroBurstShield + CruiseGuard + ComfortAnalog + PassiveWarmCache + DirectPresenter • ") +
         (hasLibretroCore() ? "core ready" : "core missing");
     return env->NewStringUTF(value.c_str());
 }

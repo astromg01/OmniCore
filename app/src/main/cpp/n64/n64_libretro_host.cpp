@@ -85,7 +85,19 @@ AnalogVector shapeAnalog(float x, float y, int deadzonePercent, int sensitivityP
     if (magnitude <= deadzone) return {};
     const float sourceMagnitude = std::min(1.0f, magnitude);
     float normalized = (sourceMagnitude - deadzone) / std::max(0.01f, 1.0f - deadzone);
-    normalized = std::pow(std::clamp(normalized, 0.0f, 1.0f), 1.12f);
+    normalized = std::clamp(normalized, 0.0f, 1.0f);
+
+    // ComfortAnalog keeps a small high-precision zone around center, then
+    // returns to a nearly linear response instead of suppressing the entire
+    // stick range. This makes slow walking/aiming controllable without making
+    // normal movement feel heavy. The last ~1.5% of the physical/touch radius
+    // is treated as full travel so users do not have to pin the thumb to the rim.
+    constexpr float kFineZone = 0.28f;
+    if (normalized < kFineZone) {
+        const float local = normalized / kFineZone;
+        normalized = std::pow(local, 1.08f) * kFineZone;
+    }
+    normalized = std::min(1.0f, normalized / 0.985f);
     normalized *= std::clamp(static_cast<float>(sensitivityPercent) / 100.0f, 0.70f, 1.30f);
     normalized = std::clamp(normalized, 0.0f, 1.0f);
     return {x / magnitude * normalized, y / magnitude * normalized};
@@ -946,6 +958,7 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     buttonMask_.store(0, std::memory_order_release);
     smartDpadMask_.store(0, std::memory_order_release);
     smartAnalogDpadActive_.store(false, std::memory_order_release);
+    interactionTransitionBoost_.store(false, std::memory_order_release);
     setAnalog(0.0f, 0.0f, 0.0f, 0.0f);
     {
         std::lock_guard<std::mutex> lock(telemetryMutex_);
@@ -980,7 +993,7 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     hwRenderRequested_ = false;
     hwRender_ = {};
     precisionGovernorMode_.store(0, std::memory_order_release);
-    setMessage("N64 BOOT 1/6 • Alpha 15 PrecisionGovernor + passive cache…");
+    setMessage("N64 BOOT 1/6 • Alpha 19 PrecisionGovernor v2.1 + MicroBurstShield…");
     try {
         thread_ = std::thread(&LibretroHost::run, this);
     } catch (...) {
@@ -1045,9 +1058,19 @@ void LibretroHost::setButton(unsigned retroPadId, bool pressed) {
     if (retroPadId > RETRO_DEVICE_ID_JOYPAD_R3) return;
     if (pressed && retroPadId == RETRO_DEVICE_ID_JOYPAD_START) {
         // Pause/menu screens often trigger the first expensive framebuffer
-        // copy. Ask the emulation thread for a larger audio cushion before
-        // the core consumes the Start press.
+        // copy. Ask the emulation thread for GPU headroom before the core
+        // consumes the Start press.
         menuTransitionBoost_.store(true, std::memory_order_release);
+    }
+    if (pressed && (
+            retroPadId == RETRO_DEVICE_ID_JOYPAD_B ||
+            retroPadId == RETRO_DEVICE_ID_JOYPAD_Y ||
+            retroPadId == RETRO_DEVICE_ID_JOYPAD_L2)) {
+        // A/B/Z in OmniCore's N64 mapping are the most common action/attack
+        // inputs. Collisions and hit effects frequently activate fresh CPU/RDP
+        // work immediately after these presses. Signal a tiny predictive burst;
+        // PerformanceHintSession bounds it to at most one notification / 700 ms.
+        interactionTransitionBoost_.store(true, std::memory_order_release);
     }
     const auto bit = static_cast<std::uint16_t>(1u << retroPadId);
     if (pressed) buttonMask_.fetch_or(bit, std::memory_order_acq_rel);
@@ -1350,7 +1373,10 @@ std::int16_t LibretroHost::inputState(unsigned port, unsigned device, unsigned i
 
 void LibretroHost::recordFrame(float frameMs, float targetMs) {
     targetFrameMs_.store(targetMs, std::memory_order_release);
-    std::lock_guard<std::mutex> lock(telemetryMutex_);
+    // Telemetry is observational. If the UI is copying the diagnostic window,
+    // skipping one sample is always preferable to blocking an emulation frame.
+    std::unique_lock<std::mutex> lock(telemetryMutex_, std::try_to_lock);
+    if (!lock.owns_lock()) return;
     frameWindow_[frameWindowWrite_] = frameMs;
     frameWindowWrite_ = (frameWindowWrite_ + 1) % kTelemetryCapacity;
     frameWindowCount_ = std::min(frameWindowCount_ + 1, kTelemetryCapacity);
@@ -1358,7 +1384,10 @@ void LibretroHost::recordFrame(float frameMs, float targetMs) {
 
 void LibretroHost::recordPresent(float presentMs) {
     lastPresentMs_.store(presentMs, std::memory_order_release);
-    std::lock_guard<std::mutex> lock(telemetryMutex_);
+    // Same rule for presentation telemetry: diagnostics must never become a
+    // source of periodic micro-stutter.
+    std::unique_lock<std::mutex> lock(telemetryMutex_, std::try_to_lock);
+    if (!lock.owns_lock()) return;
     presentWindow_[presentWindowWrite_] = presentMs;
     presentWindowWrite_ = (presentWindowWrite_ + 1) % kTelemetryCapacity;
     presentWindowCount_ = std::min(presentWindowCount_ + 1, kTelemetryCapacity);
@@ -1684,7 +1713,9 @@ void LibretroHost::run() {
     const auto warmStartBegan = std::chrono::steady_clock::now();
     auto lastGovernorChange = warmStartBegan - std::chrono::seconds(5);
     auto governorHeadroomUntil = std::chrono::steady_clock::time_point{};
+    auto governorBoostBegan = warmStartBegan;
     int governorMode = 0;  // 0 stable, 1 CPU, 2 GPU/present, 3 mixed.
+    bool cruiseRelaxed = false;
     bool wasPaused = false;
     while (!stopRequested_.load(std::memory_order_acquire)) {
         const bool commandRan = processPendingCommand();
@@ -1711,6 +1742,16 @@ void LibretroHost::run() {
             governorHeadroomUntil = std::max(
                 governorHeadroomUntil,
                 std::chrono::steady_clock::now() + std::chrono::milliseconds(800));
+        }
+        if (interactionTransitionBoost_.exchange(false, std::memory_order_acq_rel)) {
+            // Predictive, bounded action burst. It is intentionally a workload
+            // hint only: no clock mutation, no resolution change and no audio
+            // buffer growth. This helps the frames immediately following
+            // attacks/collisions where CPU logic and a new RDP effect often meet.
+            impl_->perfHint.notifySpike(true, true, "omnicore-n64-action-microburst");
+            governorHeadroomUntil = std::max(
+                governorHeadroomUntil,
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(420));
         }
 
         impl_->presentationTargetNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -1784,14 +1825,22 @@ void LibretroHost::run() {
             : std::clamp(static_cast<float>(candidateStreak) / 45.0f, 0.0f, 1.0f);
         precisionGovernorConfidence_.store(classifierConfidence, std::memory_order_release);
 
-        // Isolated catastrophic spikes receive only a bounded transient hint.
-        // They never change the governor mode by themselves.
-        if (frameMs > targetMs * 1.85f) {
-            const bool spikeGpu = presentMs >= std::max(4.0f, targetMs * 0.25f);
+        // MicroBurstShield catches short sudden hitches that are visible but
+        // too small to justify a governor mode change. This is especially useful
+        // for collision/hit effects and first-use scene work. The hint is bounded
+        // by PerformanceHintSession's cooldown and never changes fidelity.
+        const float transientBaseline = std::max(targetMs, slowFrameEwma);
+        const bool suddenMicroSpike = frameMs > targetMs * 1.30f &&
+            frameMs > transientBaseline * 1.16f && pressureDebt < 0.55f;
+        const bool catastrophicSpike = frameMs > targetMs * 1.85f;
+        if (suddenMicroSpike || catastrophicSpike) {
+            const bool spikeGpu = presentMs >= std::max(3.6f, targetMs * 0.22f);
             impl_->perfHint.notifySpike(
                 !spikeGpu,
                 spikeGpu,
-                spikeGpu ? "omnicore-n64-v2-single-gpu-spike" : "omnicore-n64-v2-single-cpu-spike");
+                spikeGpu ? "omnicore-n64-v21-transient-gpu" : "omnicore-n64-v21-transient-cpu");
+            governorHeadroomUntil = std::max(
+                governorHeadroomUntil, controlNow + std::chrono::milliseconds(520));
         }
 
         const auto modeDwell = controlNow - lastGovernorChange;
@@ -1816,8 +1865,38 @@ void LibretroHost::run() {
             governorMode = nextMode;
             precisionGovernorMode_.store(nextMode, std::memory_order_release);
             governorHeadroomUntil = controlNow + std::chrono::milliseconds(1800);
+            governorBoostBegan = controlNow;
+            cruiseRelaxed = false;
             lastGovernorChange = controlNow;
             stableStreak = 0;
+        }
+
+        // CruiseGuard prevents a modest, already-controlled workload from
+        // holding the strictest ADPF target forever. After several seconds of
+        // contained pressure it relaxes slightly to reduce long-session thermal
+        // oscillation. Any renewed pressure immediately restores full headroom.
+        if (governorMode != 0 && !cruiseRelaxed &&
+            controlNow - governorBoostBegan >= std::chrono::seconds(7) &&
+            controlNow >= governorHeadroomUntil &&
+            slowRatio <= 1.09f && pressureDebt <= 0.56f &&
+            jitterEwma <= targetMs * 0.20f) {
+            if (adpfReady) {
+                impl_->perfHint.setTargetScale(governorMode == 3 ? 0.95 : 0.97);
+            }
+            cruiseRelaxed = true;
+        }
+        if (governorMode != 0 && cruiseRelaxed &&
+            (fastRatio > 1.14f || pressureDebt >= 0.62f || jitterEwma > targetMs * 0.27f)) {
+            const bool cpuPressure = governorMode == 1 || governorMode == 3;
+            const bool gpuPressure = governorMode == 2 || governorMode == 3;
+            impl_->perfHint.notifySpike(cpuPressure, gpuPressure, "omnicore-n64-v21-cruise-reengage");
+            if (adpfReady) {
+                impl_->perfHint.setTargetScale(
+                    governorMode == 1 ? 0.92 : (governorMode == 2 ? 0.94 : 0.90));
+            }
+            cruiseRelaxed = false;
+            governorBoostBegan = controlNow;
+            governorHeadroomUntil = controlNow + std::chrono::milliseconds(900);
         }
 
         const bool recoveryConfidence = slowRatio <= 1.045f && pressureDebt <= 0.12f &&
@@ -1835,6 +1914,8 @@ void LibretroHost::run() {
             stableStreak = 0;
             candidateStreak = 0;
             candidateMode = 0;
+            cruiseRelaxed = false;
+            governorBoostBegan = controlNow;
             lastGovernorChange = controlNow;
         }
 

@@ -122,6 +122,7 @@ private:
     std::atomic<std::int16_t> cY_{0};
     std::atomic<int> audioTargetBursts_{4};
     std::atomic<bool> menuTransitionBoost_{false};
+    std::atomic<bool> interactionTransitionBoost_{false};
     std::atomic<float> audioFillMs_{0.0f};
     std::atomic<float> audioBufferMs_{0.0f};
     std::atomic<float> targetFps_{60.0f};

@@ -144,7 +144,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             val nextPollMs = when {
                 !started -> 220L
                 runOkPolls < 5 -> 350L
-                else -> 900L
+                else -> 1200L
             }
             handler.postDelayed(this, nextPollMs)
         }
