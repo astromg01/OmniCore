@@ -38,7 +38,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeHasCore(JNIEnv*, jobje
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeRuntimeInfo(JNIEnv* env, jobject) {
-    const std::string value = std::string("OmniCore N64 Runtime 0.10.5 • Mupen64Plus-Next • GLES3 + AAudio host v4 • ") +
+    const std::string value = std::string("OmniCore N64 Runtime 0.10.6 • Mupen64Plus-Next • GLES3 + AAudio host v5 • ") +
         (hasLibretroCore() ? "core ready" : "core missing");
     return env->NewStringUTF(value.c_str());
 }
@@ -51,6 +51,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     jstring romPath,
     jstring systemDir,
     jstring saveDir,
+    jstring saveRamPath,
     jstring diagnosticPath,
     jstring verificationPath,
     jstring cpuMode,
@@ -72,6 +73,7 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeStart(
     config.romPath = fromJString(env, romPath);
     config.systemDir = fromJString(env, systemDir);
     config.saveDir = fromJString(env, saveDir);
+    config.saveRamPath = fromJString(env, saveRamPath);
     config.diagnosticPath = fromJString(env, diagnosticPath);
     config.verificationPath = fromJString(env, verificationPath);
     config.cpuMode = fromJString(env, cpuMode);
@@ -96,6 +98,25 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeSetAudioTargetBursts(
     JNIEnv*, jobject, jint bursts) {
     omnicore::n64::LibretroHost::instance().setAudioTargetBursts(static_cast<int>(bursts));
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeRequestSaveState(
+    JNIEnv* env, jobject, jstring path) {
+    return omnicore::n64::LibretroHost::instance().requestSaveState(fromJString(env, path))
+        ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeRequestLoadState(
+    JNIEnv* env, jobject, jstring path) {
+    return omnicore::n64::LibretroHost::instance().requestLoadState(fromJString(env, path))
+        ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeRequestReset(JNIEnv*, jobject) {
+    return omnicore::n64::LibretroHost::instance().requestReset() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -123,15 +144,19 @@ Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeLastMessage(JNIEnv* en
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_omnicore_emulator_core_n64_N64NativeBridge_nativeTelemetry(JNIEnv* env, jobject) {
     const auto telemetry = omnicore::n64::LibretroHost::instance().telemetry();
-    const jfloat values[5] = {
+    const jfloat values[9] = {
         telemetry.averageFrameMs,
         telemetry.p95FrameMs,
         static_cast<jfloat>(telemetry.droppedFrames),
         static_cast<jfloat>(telemetry.audioUnderruns),
-        static_cast<jfloat>(telemetry.sampleWindowFrames)
+        static_cast<jfloat>(telemetry.sampleWindowFrames),
+        telemetry.audioFillMs,
+        telemetry.audioBufferMs,
+        telemetry.targetFps,
+        telemetry.pacingCorrectionPct
     };
-    jfloatArray result = env->NewFloatArray(5);
-    if (result) env->SetFloatArrayRegion(result, 0, 5, values);
+    jfloatArray result = env->NewFloatArray(9);
+    if (result) env->SetFloatArrayRegion(result, 0, 9, values);
     return result;
 }
 
