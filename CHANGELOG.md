@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.10.13 — N64 Alpha 14
+
+### SmartPrecompile / shaders
+- Added a bounded hidden N64 pre-execution pass before the first visible frame.
+- The runtime snapshots the boot state when available, runs a few no-input/no-present frames, flushes GPU work and restores the original state before normal presentation.
+- Early GLideN64 shader programs and Dynarec blocks can therefore materialize outside visible gameplay instead of all landing on the first interactive frames.
+- Expanded persistent GLideN64 shader-cache page warm-up to a bounded 12 MiB budget.
+- Shader-cache warm-up now prioritizes recent files rather than arbitrary directory order.
+- SmartPrecompile remains fail-safe: unsupported serialization paths skip the hidden pass rather than breaking game boot.
+
+### Performance intelligence
+- SmartPrecompile completion is exposed through native telemetry.
+- SmartPerf consumes the precompile-ready signal and can shorten WarmStart once runtime stability is demonstrated.
+- ADPF can request transient CPU + GPU headroom during the bounded precompile stage.
+- Existing RenderShield / BurstShield behavior remains responsible for measured presentation and frame-time spikes.
+- Protected Intelligent 1.5× N64 rendering is retained; short performance spikes are not solved by blindly reducing resolution.
+
+### Input / Game Intelligence
+- Added `N64GameIntelligence`, a small ROM-identity compatibility layer used only by the N64 runtime.
+- Smart Analog AUTO can now enable analog-to-D-pad bridging for known digital-movement titles even when the virtual D-pad remains visible.
+- Added the first explicit digital-movement profile for Kirby-class N64 titles.
+- Explicit Analog-only and Analog-to-D-pad modes continue overriding AUTO behavior.
+- Existing radial precision, deadzone/sensitivity shaping, hysteresis and diagonal projection remain intact.
+
+### Rendering / compatibility
+- Preserved DirectPresenter with automatic RenderBridge fallback.
+- Preserved framebuffer emulation for compatibility-sensitive N64 effects and menus.
+- Preserved widescreen independence, Dynarec, GLideN64, AAudio, save states, editable touch controls and external-controller support.
+- PS1-specific source remains isolated from N64 Alpha work.
+
+### Build / validation
+- Version code: 29.
+- Version name: 0.10.13.
+- Release tag: `v0.10.13-n64-alpha14`.
+- GitHub Actions run `32155750953` passed architecture checks, Kotlin/native compilation, isolated PS1/N64 core builds, DEV signing verification and 16 KB ELF/APK alignment.
+
 ## 0.9.0 — Input & Frontend Polish
 
 ### Input
