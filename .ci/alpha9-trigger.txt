@@ -1,0 +1,2 @@
+OmniCore 0.10.8 N64 Alpha 9 validation trigger.
+Device feedback fixes: Zelda framebuffer menu compatibility, widescreen + Intelligent coexistence, stronger audio recovery, low-cost graphics separated from framebuffer correctness, animated boot star.
