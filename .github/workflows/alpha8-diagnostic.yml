@@ -1,0 +1,73 @@
+name: Alpha 8 Diagnostic
+
+on:
+  push:
+    branches: [ "agent/0.10.0-n64-foundation" ]
+    paths:
+      - ".ci/alpha8-diagnostic-trigger.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin agent/0.10.0-n64-foundation
+          git checkout -B agent/0.10.0-n64-foundation origin/agent/0.10.0-n64-foundation
+
+      - name: Diagnose migration and compile
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+          mkdir -p .ci
+
+          python3 tools/agent_0107_alpha8.py > /tmp/alpha8-migration.log 2>&1
+          MIG=$?
+          if [ "$MIG" -ne 0 ]; then
+            {
+              echo "stage=migration"
+              echo "exit_code=$MIG"
+              echo "run_id=$GITHUB_RUN_ID"
+              echo "commit=$GITHUB_SHA"
+              echo "--- log ---"
+              tail -n 180 /tmp/alpha8-migration.log
+            } > /tmp/alpha8-result.txt
+          else
+            gradle :app:externalNativeBuildDebug :app:compileDebugKotlin --stacktrace --no-daemon > /tmp/alpha8-compile.log 2>&1
+            COMPILE=$?
+            {
+              if [ "$COMPILE" -eq 0 ]; then
+                echo "stage=compile_success"
+              else
+                echo "stage=compile"
+              fi
+              echo "exit_code=$COMPILE"
+              echo "run_id=$GITHUB_RUN_ID"
+              echo "commit=$GITHUB_SHA"
+              echo "--- focused errors ---"
+              grep -nEi "error:|FAILURE:|Compilation error|^e:|undefined reference|FAILED" /tmp/alpha8-compile.log | tail -n 120
+              echo "--- log tail ---"
+              tail -n 220 /tmp/alpha8-compile.log
+            } > /tmp/alpha8-result.txt
+          fi
+
+          git reset --hard HEAD
+          cp /tmp/alpha8-result.txt .ci/alpha8-diagnostic-result.txt
+          git config user.name "Mauricio.dev"
+          git config user.email "antoniomauriciorodriguesalves@gmail.com"
+          git add .ci/alpha8-diagnostic-result.txt
+          git commit -m "Record Alpha 8 CI diagnostic [skip ci]" || true
+          git push origin HEAD:agent/0.10.0-n64-foundation
