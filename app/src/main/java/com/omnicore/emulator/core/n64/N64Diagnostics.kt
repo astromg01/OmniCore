@@ -19,6 +19,7 @@ object N64Diagnostics {
     private const val KEY_LAST_EXIT_TS = "last_exit_timestamp"
     private const val BREADCRUMB = "last_boot_stage.txt"
     private const val VERIFIED_BOOT = "boot_verified.flag"
+    private const val EXIT_ASSOCIATION_WINDOW_MS = 2L * 60L * 60L * 1000L
 
     private fun root(context: Context) = File(context.filesDir, "n64")
 
@@ -53,7 +54,8 @@ object N64Diagnostics {
 
     /**
      * Returns a one-shot human readable crash report for the most recent :n64
-     * process death. Normal user exits/package updates are intentionally hidden.
+     * process death. Normal user exits/package updates and stale exits from an
+     * older build/session are intentionally hidden.
      */
     fun consumeRecentProcessExit(context: Context): String? {
         if (Build.VERSION.SDK_INT < 30) return null
@@ -68,6 +70,14 @@ object N64Diagnostics {
         val lastSeen = prefs.getLong(KEY_LAST_EXIT_TS, 0L)
         if (exit.timestamp <= lastSeen) return null
         prefs.edit().putLong(KEY_LAST_EXIT_TS, exit.timestamp).apply()
+
+        // Associate Android's process exit with a launch breadcrumb created by
+        // this build/session. This prevents an old Alpha crash from being shown
+        // immediately after installing a newer diagnostic build.
+        val breadcrumbFile = breadcrumbFile(context)
+        val breadcrumbModified = breadcrumbFile.takeIf { it.isFile }?.lastModified() ?: return null
+        val delta = exit.timestamp - breadcrumbModified
+        if (delta < -5_000L || delta > EXIT_ASSOCIATION_WINDOW_MS) return null
 
         val crashLike = exit.reason == ApplicationExitInfo.REASON_CRASH_NATIVE ||
             exit.reason == ApplicationExitInfo.REASON_CRASH ||
