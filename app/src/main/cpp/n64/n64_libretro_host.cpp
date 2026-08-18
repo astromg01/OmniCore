@@ -303,7 +303,7 @@ struct LibretroHost::Impl {
     double coreSampleRate = 44100.0;
     int outputSampleRate = 44100;
     int framesPerBurst = 0;
-    int appliedAudioBursts = 3;
+    int appliedAudioBursts = 4;
     int audioPrimeFrames = 0;
     int minimumAudioLatencyMs = 0;
     int lastXRunCount = 0;
@@ -432,7 +432,7 @@ struct LibretroHost::Impl {
             AAudioStream_setBufferSizeInFrames(audioStream, framesPerBurst * appliedAudioBursts);
             audioPrimeFrames = std::min<int>(
                 static_cast<int>(audioRing.capacitySamples() / 4u),
-                std::max(framesPerBurst * 2, outputSampleRate / 50));
+                std::max(framesPerBurst * 3, outputSampleRate / 40));
             lastXRunCount = std::max(0, AAudioStream_getXRunCount(audioStream));
             lastRingUnderruns = audioRing.underruns();
             stableAudioChecks = 0;
@@ -503,7 +503,7 @@ struct LibretroHost::Impl {
         if (xruns > lastXRunCount || underruns > lastRingUnderruns) {
             next = std::min(7, std::max(requestedBursts, appliedAudioBursts + 1));
             stableAudioChecks = 0;
-        } else if (next > requestedBursts && ++stableAudioChecks >= 8) {
+        } else if (next > requestedBursts && ++stableAudioChecks >= 10) {
             --next;
             stableAudioChecks = 0;
         }
@@ -530,6 +530,7 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     window_ = window;
     config_ = std::move(config);
     config_.audioBufferBursts = std::clamp(config_.audioBufferBursts, 2, 7);
+    audioTargetBursts_.store(config_.audioBufferBursts, std::memory_order_release);
     stopRequested_.store(false, std::memory_order_release);
     paused_.store(false, std::memory_order_release);
     buttonMask_.store(0, std::memory_order_release);
@@ -564,6 +565,10 @@ void LibretroHost::stop() {
 
 void LibretroHost::setPaused(bool paused) { paused_.store(paused, std::memory_order_release); }
 
+void LibretroHost::setAudioTargetBursts(int bursts) {
+    audioTargetBursts_.store(std::clamp(bursts, 2, 7), std::memory_order_release);
+}
+
 std::string LibretroHost::lastMessage() const {
     std::lock_guard<std::mutex> lock(messageMutex_);
     return message_;
@@ -591,13 +596,29 @@ void LibretroHost::setAnalog(float x, float y, float cX, float cY) {
 void LibretroHost::buildCoreOptions() {
     std::lock_guard<std::mutex> lock(optionMutex_);
     options_.clear();
+    const bool wide = config_.aspectRatio == "16:9" || config_.aspectRatio == "16:9 adjusted";
+    const bool leanGraphics = !config_.framebufferEmulation;
+
     options_["mupen64plus-rdp-plugin"] = "gliden64";
     options_["mupen64plus-rsp-plugin"] = "hle";
     options_["mupen64plus-cpucore"] = config_.cpuMode == "cached_interpreter" ? "cached_interpreter" : "dynamic_recompiler";
     options_["mupen64plus-43screensize"] = config_.internalResolution >= 2 ? "1280x960" : "640x480";
-    options_["mupen64plus-aspect"] = "4:3";
+    options_["mupen64plus-169screensize"] = config_.internalResolution >= 2 ? "1280x720" : "640x360";
+    options_["mupen64plus-aspect"] = wide ? config_.aspectRatio : "4:3";
     options_["mupen64plus-ThreadedRenderer"] = boolOption(config_.threadedRenderer);
     options_["mupen64plus-EnableFBEmulation"] = boolOption(config_.framebufferEmulation);
+    options_["mupen64plus-EnableCopyColorToRDRAM"] = leanGraphics ? "Off" : "Async";
+    options_["mupen64plus-EnableCopyDepthToRDRAM"] = leanGraphics ? "Off" : "Software";
+    options_["mupen64plus-EnableCopyColorFromRDRAM"] = "False";
+    options_["mupen64plus-EnableCopyAuxToRDRAM"] = "False";
+    options_["mupen64plus-EnableLODEmulation"] = leanGraphics ? "False" : "True";
+    options_["mupen64plus-BackgroundMode"] = "OnePiece";
+    options_["mupen64plus-BilinearMode"] = "3point";
+    options_["mupen64plus-EnableNativeResFactor"] = "0";
+    options_["mupen64plus-EnableHWLighting"] = "False";
+    options_["mupen64plus-DitheringPattern"] = "False";
+    options_["mupen64plus-DitheringQuantization"] = "False";
+    options_["mupen64plus-RDRAMImageDitheringMode"] = "False";
     options_["mupen64plus-FXAA"] = "0";
     options_["mupen64plus-MultiSampling"] = "0";
     options_["mupen64plus-HybridFilter"] = "False";
@@ -855,8 +876,11 @@ void LibretroHost::run() {
         cleanup();
         return;
     }
+    const bool wide = config_.aspectRatio == "16:9" || config_.aspectRatio == "16:9 adjusted";
     const int renderWidth = config_.internalResolution >= 2 ? 1280 : 640;
-    const int renderHeight = config_.internalResolution >= 2 ? 960 : 480;
+    const int renderHeight = wide
+        ? (config_.internalResolution >= 2 ? 720 : 360)
+        : (config_.internalResolution >= 2 ? 960 : 480);
     if (!impl_->createFrontendFramebuffer(renderWidth, renderHeight)) {
         setMessage("N64 BOOT E02 • framebuffer GLES3 inválido");
         cleanup();
@@ -925,10 +949,13 @@ void LibretroHost::run() {
     impl_->targetFps = (avInfo.timing.fps >= 40.0 && avInfo.timing.fps <= 75.0)
         ? avInfo.timing.fps : 60.0;
     impl_->coreSampleRate = avInfo.timing.sample_rate > 1000.0 ? avInfo.timing.sample_rate : 44100.0;
-    const bool audioReady = impl_->openAudio(impl_->coreSampleRate, config_.audioBufferBursts);
+    const bool audioReady = impl_->openAudio(
+        impl_->coreSampleRate,
+        audioTargetBursts_.load(std::memory_order_acquire));
     if (!audioReady) logPrint(ANDROID_LOG_WARN, "N64 AAudio unavailable; continuing without audio output");
 
     const auto target = std::chrono::duration<double>(1.0 / impl_->targetFps);
+    const auto lateResetThreshold = std::chrono::duration_cast<std::chrono::steady_clock::duration>(target * 0.55);
     const float targetMs = static_cast<float>(1000.0 / impl_->targetFps);
     targetFrameMs_.store(targetMs, std::memory_order_release);
     setMessage(audioReady
@@ -949,13 +976,16 @@ void LibretroHost::run() {
         recordFrame(std::chrono::duration<float, std::milli>(afterRun - begin).count(), targetMs);
         if (++adaptationCounter >= 120u) {
             adaptationCounter = 0;
-            impl_->adaptAudio(config_.audioBufferBursts);
+            impl_->adaptAudio(audioTargetBursts_.load(std::memory_order_acquire));
         }
         nextFrame += std::chrono::duration_cast<std::chrono::steady_clock::duration>(target);
         const auto now = std::chrono::steady_clock::now();
         if (nextFrame > now) {
             std::this_thread::sleep_until(nextFrame);
-        } else if (now - nextFrame > std::chrono::milliseconds(80)) {
+        } else if (now - nextFrame > lateResetThreshold) {
+            // Never run a burst of back-to-back frames trying to repay old debt.
+            // That pattern creates exactly the visible/audio stutter SmartPerf is
+            // trying to eliminate on slower Android hardware.
             nextFrame = now;
         }
     }
