@@ -23,12 +23,13 @@ struct RuntimeConfig {
     std::string rspMode;
     std::string pakMode;
     std::string expansionPak;
+    std::string aspectRatio = "4:3";
     bool framebufferEmulation = true;
     bool threadedRenderer = false;
     int internalResolution = 1;
     int analogDeadzonePercent = 12;
     int analogSensitivityPercent = 100;
-    int audioBufferBursts = 3;
+    int audioBufferBursts = 4;
 };
 
 struct Telemetry {
@@ -45,6 +46,7 @@ public:
     bool start(ANativeWindow* window, RuntimeConfig config);
     void stop();
     void setPaused(bool paused);
+    void setAudioTargetBursts(int bursts);
     bool running() const { return running_.load(std::memory_order_acquire); }
     std::string lastMessage() const;
     Telemetry telemetry() const;
@@ -87,6 +89,7 @@ private:
     std::atomic<std::int16_t> analogY_{0};
     std::atomic<std::int16_t> cX_{0};
     std::atomic<std::int16_t> cY_{0};
+    std::atomic<int> audioTargetBursts_{4};
     mutable std::mutex messageMutex_;
     std::string message_ = "N64 host idle";
     mutable std::mutex telemetryMutex_;
