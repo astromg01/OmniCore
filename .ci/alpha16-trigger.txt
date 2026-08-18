@@ -1,4 +1,4 @@
 OmniCore N64 Alpha 16 build trigger
 version=0.10.15
 focus=PrecisionGovernor v2 stability + confidence telemetry
-revision=2-compile-fixed
+revision=3-full-validation
