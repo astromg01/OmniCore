@@ -1,0 +1,89 @@
+name: PS2 Foundation
+
+on:
+  push:
+    branches: [ "agent/0.11.0-ps2-foundation" ]
+    paths:
+      - ".ci/ps2-foundation-trigger.txt"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ps2-foundation
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout PS2 foundation
+        uses: actions/checkout@v4
+        with:
+          ref: agent/0.11.0-ps2-foundation
+          fetch-depth: 0
+
+      - name: Protect validated PS1 and N64 runtime sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin agent/0.10.0-n64-foundation
+          changed="$(git diff --name-only origin/agent/0.10.0-n64-foundation...HEAD)"
+          echo "$changed"
+          forbidden='^(app/src/main/cpp/(native_bridge\.cpp|gl_presenter\.cpp|libretro_host_v7\.cpp|n64/)|app/src/main/java/com/omnicore/emulator/core/n64/|app/src/main/java/com/omnicore/emulator/emulation/N64|app/src/main/java/com/omnicore/emulator/performance/N64)'
+          if echo "$changed" | grep -E "$forbidden"; then
+            echo "PS2 foundation modified protected PS1/N64 runtime source." >&2
+            exit 1
+          fi
+
+      - name: Validate PS2 architecture contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'android:process=":ps2"' app/src/main/AndroidManifest.xml
+          grep -q 'omnicore_ps2_runtime' app/src/main/cpp/CMakeLists.txt
+          grep -q 'qualityFloorScale >= 1.0f' app/src/main/java/com/omnicore/emulator/core/ps2/PS2Backend.kt
+          grep -q 'dynamicResolutionAllowed: Boolean = false' app/src/main/java/com/omnicore/emulator/performance/PS2SmartPerf.kt
+          grep -q 'cycleSkippingAllowed: Boolean = false' app/src/main/java/com/omnicore/emulator/performance/PS2SmartPerf.kt
+          grep -q '04bde0df87ee7c0e2f0151b51bb2cc22c88541da' PS2_FOUNDATION.md
+          grep -q '4fd1a4192a2cf4e48ee60cbe92d7d9da98f0ce44' PS2_FOUNDATION.md
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Compile Kotlin and all native runtimes
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:compileDebugKotlin :app:externalNativeBuildDebug
+
+      - name: Build foundation APK container
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon :app:assembleDebug
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -f "$APK"
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libomnicore_runtime.so'
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libomnicore_n64_runtime.so'
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libomnicore_ps2_runtime.so'
+          unzip -l "$APK" | grep -q 'lib/armeabi-v7a/libomnicore_ps2_runtime.so'
+
+      - name: Verify 16 KB APK alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          ZIPALIGN="$(find "$ANDROID_HOME/build-tools" -name zipalign -type f | sort -V | tail -n1)"
+          test -x "$ZIPALIGN"
+          "$ZIPALIGN" -c -P 16 4 "$APK"
+
+      - name: Foundation summary
+        shell: bash
+        run: |
+          echo "PS2 foundation compile/isolation validation passed."
+          echo "No PS2 gameplay backend is claimed by this workflow."
