@@ -22,13 +22,18 @@ object N64SmartPerf {
         val audioFillMs: Float = 0f,
         val audioBufferMs: Float = 0f,
         val targetFps: Float = 0f,
-        val pacingCorrectionPct: Float = 0f
+        val pacingCorrectionPct: Float = 0f,
+        val presentAverageMs: Float = 0f,
+        val presentP95Ms: Float = 0f
     ) {
         val hasUsefulWindow: Boolean get() = sampleWindowFrames >= 90
         val targetFrameMs: Float
             get() = if (targetFps in 40f..75f) 1000f / targetFps else 1000f / 60f
         val audioCritical: Boolean
             get() = audioBufferMs > 0f && audioFillMs in 0f..max(8f, audioBufferMs * 0.35f)
+        val gpuBound: Boolean
+            get() = hasUsefulWindow && presentP95Ms >= 4.8f &&
+                p95FrameMs > 0f && presentP95Ms >= p95FrameMs * 0.24f
     }
 
     data class Decision(
@@ -175,7 +180,11 @@ object N64SmartPerf {
                 effective = safe(
                     requested.copy(
                         internalResolution = N64Settings.InternalResolution.NATIVE,
-                        framebufferEmulation = false
+                        framebufferEmulation = if (telemetry.gpuBound || signals.memoryPressure) {
+                            false
+                        } else {
+                            requested.framebufferEmulation
+                        }
                     ),
                     threaded = !severeThermal
                 ),
@@ -201,7 +210,8 @@ object N64SmartPerf {
                     requested.copy(
                         internalResolution = N64Settings.InternalResolution.NATIVE,
                         framebufferEmulation = if (
-                            framePressure || signals.memoryPressure || profile.tier == N64PerformanceProfile.Tier.LOW
+                            telemetry.gpuBound || signals.memoryPressure ||
+                                profile.tier == N64PerformanceProfile.Tier.LOW
                         ) false else requested.framebufferEmulation
                     ),
                     threaded = canThread && !warmThermal
@@ -214,7 +224,8 @@ object N64SmartPerf {
                     warmThermal -> "SmartPerf N64 preservando desempenho sustentável"
                     signals.memoryPressure -> "SmartPerf N64 reduzindo pressão de memória/GPU"
                     signals.powerSave -> "SmartPerf N64 compensando economia de energia ativa"
-                    framePressure -> "SmartPerf N64 estabilizando frame pacing e áudio"
+                    telemetry.gpuBound -> "SmartPerf N64 reduziu custo gráfico medido"
+                    framePressure -> "SmartPerf N64 preservou imagem e atacou CPU/pacing"
                     else -> "SmartPerf N64 otimizado para hardware limitado"
                 }
             )

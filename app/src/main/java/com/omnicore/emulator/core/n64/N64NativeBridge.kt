@@ -18,7 +18,10 @@ object N64NativeBridge {
         val audioFillMs: Float = 0f,
         val audioBufferMs: Float = 0f,
         val targetFps: Float = 0f,
-        val pacingCorrectionPct: Float = 0f
+        val pacingCorrectionPct: Float = 0f,
+        val presentAverageMs: Float = 0f,
+        val presentP95Ms: Float = 0f,
+        val adpfActive: Boolean = false
     ) {
         fun smartPerf(): N64SmartPerf.Telemetry = N64SmartPerf.Telemetry(
             averageFrameMs = averageFrameMs,
@@ -29,7 +32,9 @@ object N64NativeBridge {
             audioFillMs = audioFillMs,
             audioBufferMs = audioBufferMs,
             targetFps = targetFps,
-            pacingCorrectionPct = pacingCorrectionPct
+            pacingCorrectionPct = pacingCorrectionPct,
+            presentAverageMs = presentAverageMs,
+            presentP95Ms = presentP95Ms
         )
     }
 
@@ -198,7 +203,10 @@ object N64NativeBridge {
             audioFillMs = raw.getOrElse(5) { 0f },
             audioBufferMs = raw.getOrElse(6) { 0f },
             targetFps = raw.getOrElse(7) { 0f },
-            pacingCorrectionPct = raw.getOrElse(8) { 0f }
+            pacingCorrectionPct = raw.getOrElse(8) { 0f },
+            presentAverageMs = raw.getOrElse(9) { 0f },
+            presentP95Ms = raw.getOrElse(10) { 0f },
+            adpfActive = raw.getOrElse(11) { 0f } >= 0.5f
         )
     }
 

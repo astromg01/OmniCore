@@ -43,6 +43,9 @@ struct Telemetry {
     float audioBufferMs = 0.0f;
     float targetFps = 0.0f;
     float pacingCorrectionPct = 0.0f;
+    float presentAverageMs = 0.0f;
+    float presentP95Ms = 0.0f;
+    float adpfActive = 0.0f;
 };
 
 class LibretroHost final {
@@ -72,6 +75,7 @@ private:
     void setMessage(std::string message);
     void buildCoreOptions();
     void recordFrame(float frameMs, float targetMs);
+    void recordPresent(float presentMs);
     bool environment(unsigned cmd, void* data);
     void videoRefresh(const void* data, unsigned width, unsigned height, std::size_t pitch);
     void audioSample(std::int16_t left, std::int16_t right);
@@ -112,8 +116,12 @@ private:
     std::array<float, kTelemetryCapacity> frameWindow_{};
     std::size_t frameWindowCount_ = 0;
     std::size_t frameWindowWrite_ = 0;
+    std::array<float, kTelemetryCapacity> presentWindow_{};
+    std::size_t presentWindowCount_ = 0;
+    std::size_t presentWindowWrite_ = 0;
     std::atomic<int> audioUnderruns_{0};
     std::atomic<float> targetFrameMs_{1000.0f / 60.0f};
+    std::atomic<bool> adpfActive_{false};
     mutable std::mutex optionMutex_;
     std::unordered_map<std::string, std::string> options_;
     mutable std::mutex commandMutex_;

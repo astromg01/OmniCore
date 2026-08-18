@@ -1,6 +1,7 @@
 #include "n64_libretro_host.h"
 
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
 #include <GLES3/gl3.h>
 #include <aaudio/AAudio.h>
 #include <android/log.h>
@@ -8,7 +9,10 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -68,6 +72,65 @@ std::string boolOption(bool value) { return value ? "True" : "False"; }
 std::int16_t axisFromFloat(float value) {
     return static_cast<std::int16_t>(std::lround(std::clamp(value, -1.0f, 1.0f) * 32767.0f));
 }
+
+class PerformanceHintSession final {
+public:
+    using GetManagerFn = void* (*)();
+    using CreateSessionFn = void* (*)(void*, const std::int32_t*, std::size_t, std::int64_t);
+    using ReportFn = int (*)(void*, std::int64_t);
+    using UpdateTargetFn = int (*)(void*, std::int64_t);
+    using CloseFn = void (*)(void*);
+
+    bool open(double fps) {
+        close();
+        library_ = dlopen("libandroid.so", RTLD_NOW | RTLD_LOCAL);
+        if (!library_) return false;
+        getManager_ = reinterpret_cast<GetManagerFn>(dlsym(library_, "APerformanceHint_getManager"));
+        createSession_ = reinterpret_cast<CreateSessionFn>(dlsym(library_, "APerformanceHint_createSession"));
+        report_ = reinterpret_cast<ReportFn>(dlsym(library_, "APerformanceHint_reportActualWorkDuration"));
+        updateTarget_ = reinterpret_cast<UpdateTargetFn>(dlsym(library_, "APerformanceHint_updateTargetWorkDuration"));
+        closeSession_ = reinterpret_cast<CloseFn>(dlsym(library_, "APerformanceHint_closeSession"));
+        if (!getManager_ || !createSession_ || !report_ || !closeSession_) { close(); return false; }
+        manager_ = getManager_();
+        if (!manager_) { close(); return false; }
+        const std::int32_t tid = static_cast<std::int32_t>(syscall(__NR_gettid));
+        targetNs_ = static_cast<std::int64_t>(1.0e9 / std::clamp(fps, 40.0, 75.0));
+        session_ = createSession_(manager_, &tid, 1u, targetNs_);
+        return session_ != nullptr;
+    }
+
+    void report(std::int64_t actualNs) {
+        if (session_ && report_ && actualNs > 0) report_(session_, actualNs);
+    }
+
+    void close() {
+        if (session_ && closeSession_) closeSession_(session_);
+        session_ = nullptr;
+        manager_ = nullptr;
+        getManager_ = nullptr;
+        createSession_ = nullptr;
+        report_ = nullptr;
+        updateTarget_ = nullptr;
+        closeSession_ = nullptr;
+        if (library_) dlclose(library_);
+        library_ = nullptr;
+        targetNs_ = 0;
+    }
+
+    bool active() const { return session_ != nullptr; }
+    ~PerformanceHintSession() { close(); }
+
+private:
+    void* library_ = nullptr;
+    void* manager_ = nullptr;
+    void* session_ = nullptr;
+    GetManagerFn getManager_ = nullptr;
+    CreateSessionFn createSession_ = nullptr;
+    ReportFn report_ = nullptr;
+    UpdateTargetFn updateTarget_ = nullptr;
+    CloseFn closeSession_ = nullptr;
+    std::int64_t targetNs_ = 0;
+};
 
 std::uint64_t hashBytes(const void* data, std::size_t size) {
     if (!data || size == 0) return 0;
@@ -225,9 +288,21 @@ public:
             reset();
             return false;
         }
-#ifdef MADV_SEQUENTIAL
-        madvise(data_, size_, MADV_SEQUENTIAL);
+#ifdef POSIX_FADV_WILLNEED
+        posix_fadvise(fd_, 0, 0, POSIX_FADV_WILLNEED);
 #endif
+#ifdef MADV_WILLNEED
+        madvise(data_, size_, MADV_WILLNEED);
+#endif
+        // N64 ROM fetches are not a sequential media stream. Warm one byte
+        // per OS page before retro_load_game so random first-touch faults do
+        // not become visible gameplay micro-stutters later.
+        const long page = std::max<long>(4096, sysconf(_SC_PAGESIZE));
+        const auto* bytes = static_cast<const std::uint8_t*>(data_);
+        volatile std::uint8_t warm = 0;
+        for (std::size_t offset = 0; offset < size_; offset += static_cast<std::size_t>(page)) warm ^= bytes[offset];
+        if (size_ > 0) warm ^= bytes[size_ - 1];
+        (void)warm;
         return true;
     }
 
@@ -392,6 +467,9 @@ struct LibretroHost::Impl {
     bool coreInitialized = false;
     bool gameLoaded = false;
     double targetFps = 60.0;
+    PFNEGLPRESENTATIONTIMEANDROIDPROC presentationTimeFn = nullptr;
+    std::int64_t presentationTargetNs = 0;
+    PerformanceHintSession perfHint;
 
     AudioRing audioRing;
     AAudioStream* audioStream = nullptr;
@@ -404,6 +482,7 @@ struct LibretroHost::Impl {
     int minimumAudioLatencyMs = 0;
     int lastXRunCount = 0;
     int stableAudioChecks = 0;
+    int audioBufferFrames = 0;
     std::uint64_t lastRingUnderruns = 0;
     double resampleAccumulator = 0.0;
     std::array<std::int16_t, 8192> resampleScratch{};
@@ -440,6 +519,8 @@ struct LibretroHost::Impl {
         // OmniCore owns pacing. Blocking on EGL VSync and then sleeping again in
         // the emulation loop caused the old double-pacing path and severe jitter.
         eglSwapInterval(display, 0);
+        presentationTimeFn = reinterpret_cast<PFNEGLPRESENTATIONTIMEANDROIDPROC>(
+            eglGetProcAddress("eglPresentationTimeANDROID"));
         eglQuerySurface(display, surface, EGL_WIDTH, &surfaceWidth);
         eglQuerySurface(display, surface, EGL_HEIGHT, &surfaceHeight);
         return surfaceWidth > 0 && surfaceHeight > 0;
@@ -494,14 +575,15 @@ struct LibretroHost::Impl {
         surface = EGL_NO_SURFACE;
         display = EGL_NO_DISPLAY;
         eglConfig = nullptr;
+        presentationTimeFn = nullptr;
+        presentationTargetNs = 0;
     }
 
     void updateAudioTelemetry() {
         if (!owner || outputSampleRate <= 0) return;
         const float fillMs = static_cast<float>(audioRing.availableSamples() / 2u) * 1000.0f /
             static_cast<float>(outputSampleRate);
-        int bufferFrames = 0;
-        if (audioStream) bufferFrames = std::max(0, AAudioStream_getBufferSizeInFrames(audioStream));
+        const int bufferFrames = std::max(0, audioBufferFrames);
         const float bufferMs = static_cast<float>(bufferFrames) * 1000.0f /
             static_cast<float>(outputSampleRate);
         owner->audioFillMs_.store(fillMs, std::memory_order_release);
@@ -541,7 +623,9 @@ struct LibretroHost::Impl {
                 minBursts = std::max(minBursts, (latencyFrames + framesPerBurst - 1) / framesPerBurst);
             }
             appliedAudioBursts = std::clamp(minBursts, 2, 8);
-            AAudioStream_setBufferSizeInFrames(audioStream, framesPerBurst * appliedAudioBursts);
+            const int requestedFrames = framesPerBurst * appliedAudioBursts;
+            const int appliedFrames = AAudioStream_setBufferSizeInFrames(audioStream, requestedFrames);
+            audioBufferFrames = appliedFrames > 0 ? appliedFrames : requestedFrames;
             // Start with enough PCM queued to survive scheduler jitter, then let
             // SmartPerf reduce latency only after the stream proves stable.
             audioPrimeFrames = std::min<int>(
@@ -567,6 +651,7 @@ struct LibretroHost::Impl {
         }
         audioStarted = false;
         framesPerBurst = 0;
+        audioBufferFrames = 0;
         audioPrimeFrames = 0;
         resampleAccumulator = 0.0;
         audioRing.clear();
@@ -660,7 +745,9 @@ struct LibretroHost::Impl {
             stableAudioChecks = 0;
         }
         if (next != appliedAudioBursts) {
-            AAudioStream_setBufferSizeInFrames(audioStream, framesPerBurst * next);
+            const int requestedFrames = framesPerBurst * next;
+            const int appliedFrames = AAudioStream_setBufferSizeInFrames(audioStream, requestedFrames);
+            audioBufferFrames = appliedFrames > 0 ? appliedFrames : requestedFrames;
             appliedAudioBursts = next;
         }
         lastXRunCount = xruns;
@@ -693,6 +780,9 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
         frameWindow_.fill(0.0f);
         frameWindowCount_ = 0;
         frameWindowWrite_ = 0;
+        presentWindow_.fill(0.0f);
+        presentWindowCount_ = 0;
+        presentWindowWrite_ = 0;
     }
     {
         std::lock_guard<std::mutex> lock(commandMutex_);
@@ -706,6 +796,7 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     targetFps_.store(60.0f, std::memory_order_release);
     pacingCorrectionPct_.store(0.0f, std::memory_order_release);
     targetFrameMs_.store(1000.0f / 60.0f, std::memory_order_release);
+    adpfActive_.store(false, std::memory_order_release);
     hwRenderRequested_ = false;
     hwRender_ = {};
     setMessage("N64 BOOT 1/6 • runtime Alpha 7 single-pacer…");
@@ -801,12 +892,15 @@ void LibretroHost::buildCoreOptions() {
     options_["mupen64plus-EnableCopyDepthToRDRAM"] = leanGraphics ? "Off" : "Software";
     options_["mupen64plus-EnableCopyColorFromRDRAM"] = "False";
     options_["mupen64plus-EnableCopyAuxToRDRAM"] = "False";
-    options_["mupen64plus-EnableLODEmulation"] = leanGraphics ? "False" : "True";
+    // Readability floor: LOD is part of normal N64 texture selection and was
+    // too visually destructive to disable merely for performance.
+    options_["mupen64plus-EnableLODEmulation"] = "True";
     options_["mupen64plus-EnableLegacyBlending"] = leanGraphics ? "True" : "False";
     options_["mupen64plus-EnableFragmentDepthWrite"] = "False";
     options_["mupen64plus-BackgroundMode"] = "OnePiece";
     options_["mupen64plus-BilinearMode"] = "3point";
     options_["mupen64plus-EnableNativeResFactor"] = "0";
+    options_["mupen64plus-EnableNativeResTexrects"] = "Optimized";
     options_["mupen64plus-EnableHWLighting"] = "False";
     options_["mupen64plus-DitheringPattern"] = "False";
     options_["mupen64plus-DitheringQuantization"] = "False";
@@ -954,14 +1048,23 @@ void LibretroHost::videoRefresh(const void* data, unsigned, unsigned, std::size_
     if (data != abi::RETRO_HW_FRAME_BUFFER_VALID) return;
     glBindFramebuffer(GL_READ_FRAMEBUFFER, impl_->frontFbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    const auto presentBegin = std::chrono::steady_clock::now();
+    // Native N64 output was being blurred twice by linear upscaling. Keep
+    // 2x output smooth, but preserve low-resolution text/UI pixels at 1x.
+    const GLenum presentFilter = config_.internalResolution >= 2 ? GL_LINEAR : GL_NEAREST;
     glBlitFramebuffer(0, 0, impl_->renderWidth, impl_->renderHeight,
                       0, 0, impl_->surfaceWidth, impl_->surfaceHeight,
-                      GL_COLOR_BUFFER_BIT, GL_LINEAR);
+                      GL_COLOR_BUFFER_BIT, presentFilter);
+    if (impl_->presentationTimeFn && impl_->presentationTargetNs > 0) {
+        impl_->presentationTimeFn(impl_->display, impl_->surface, impl_->presentationTargetNs);
+    }
     if (!eglSwapBuffers(impl_->display, impl_->surface)) {
         setMessage("N64 RUNTIME E04 • falha ao apresentar frame GLES3");
         stopRequested_.store(true, std::memory_order_release);
         return;
     }
+    const auto presentEnd = std::chrono::steady_clock::now();
+    recordPresent(std::chrono::duration<float, std::milli>(presentEnd - presentBegin).count());
     glBindFramebuffer(GL_FRAMEBUFFER, impl_->frontFbo);
     glViewport(0, 0, impl_->renderWidth, impl_->renderHeight);
     ++impl_->presentedFrames;
@@ -1012,13 +1115,24 @@ void LibretroHost::recordFrame(float frameMs, float targetMs) {
     frameWindowCount_ = std::min(frameWindowCount_ + 1, kTelemetryCapacity);
 }
 
+void LibretroHost::recordPresent(float presentMs) {
+    std::lock_guard<std::mutex> lock(telemetryMutex_);
+    presentWindow_[presentWindowWrite_] = presentMs;
+    presentWindowWrite_ = (presentWindowWrite_ + 1) % kTelemetryCapacity;
+    presentWindowCount_ = std::min(presentWindowCount_ + 1, kTelemetryCapacity);
+}
+
 Telemetry LibretroHost::telemetry() const {
     std::array<float, kTelemetryCapacity> snapshot{};
+    std::array<float, kTelemetryCapacity> presentSnapshot{};
     std::size_t count = 0;
+    std::size_t presentCount = 0;
     {
         std::lock_guard<std::mutex> lock(telemetryMutex_);
         count = frameWindowCount_;
+        presentCount = presentWindowCount_;
         for (std::size_t i = 0; i < count; ++i) snapshot[i] = frameWindow_[i];
+        for (std::size_t i = 0; i < presentCount; ++i) presentSnapshot[i] = presentWindow_[i];
     }
     Telemetry out;
     out.sampleWindowFrames = static_cast<int>(count);
@@ -1027,6 +1141,15 @@ Telemetry LibretroHost::telemetry() const {
     out.audioBufferMs = audioBufferMs_.load(std::memory_order_acquire);
     out.targetFps = targetFps_.load(std::memory_order_acquire);
     out.pacingCorrectionPct = pacingCorrectionPct_.load(std::memory_order_acquire);
+    out.adpfActive = adpfActive_.load(std::memory_order_acquire) ? 1.0f : 0.0f;
+    if (presentCount > 0) {
+        float totalPresent = 0.0f;
+        for (std::size_t i = 0; i < presentCount; ++i) totalPresent += presentSnapshot[i];
+        out.presentAverageMs = totalPresent / static_cast<float>(presentCount);
+        std::sort(presentSnapshot.begin(), presentSnapshot.begin() + static_cast<std::ptrdiff_t>(presentCount));
+        const std::size_t pi = std::min(presentCount - 1, static_cast<std::size_t>(std::floor((presentCount - 1) * 0.95)));
+        out.presentP95Ms = presentSnapshot[pi];
+    }
     if (count == 0) return out;
     float total = 0.0f;
     for (std::size_t i = 0; i < count; ++i) total += snapshot[i];
@@ -1138,11 +1261,17 @@ bool LibretroHost::processPendingCommand() {
 }
 
 void LibretroHost::run() {
+    // App-owned emulation thread only; no governor/clock/system mutation.
+    // Android may reject the priority request, in which case ADPF/default
+    // scheduling remains in effect.
+    setpriority(PRIO_PROCESS, 0, -4);
     impl_ = std::make_unique<Impl>(this);
     bool callContextDestroy = false;
     auto cleanup = [&]() {
         if (impl_) {
             if (impl_->gameLoaded) persistSaveRam(true);
+            impl_->perfHint.close();
+            adpfActive_.store(false, std::memory_order_release);
             impl_->closeAudio();
             if (impl_->gameLoaded && impl_->core.unloadGame) {
                 impl_->core.unloadGame();
@@ -1253,53 +1382,57 @@ void LibretroHost::run() {
     const auto lateResetThreshold = std::chrono::duration_cast<std::chrono::steady_clock::duration>(target * 0.55);
     const float targetMs = static_cast<float>(1000.0 / impl_->targetFps);
     targetFrameMs_.store(targetMs, std::memory_order_release);
+    adpfActive_.store(impl_->perfHint.open(impl_->targetFps), std::memory_order_release);
     setMessage(audioReady
         ? "N64 BOOT 5/6 • GLideN64 + AAudio nativo, aguardando primeiro frame…"
         : "N64 BOOT 5/6 • GLideN64 pronto, aguardando primeiro frame…");
 
-    auto nextFrame = std::chrono::steady_clock::now();
+    auto nextFrame = std::chrono::steady_clock::now() + targetDuration;
     std::uint32_t adaptationCounter = 0;
-    std::uint32_t saveCounter = 0;
     bool wasPaused = false;
     while (!stopRequested_.load(std::memory_order_acquire)) {
         const bool commandRan = processPendingCommand();
         const bool paused = paused_.load(std::memory_order_acquire);
         if (paused) {
-            if (!wasPaused && impl_->audioStream) impl_->reprimeAudio();
+            if (!wasPaused) {
+                persistSaveRam(false);
+                if (impl_->audioStream) impl_->reprimeAudio();
+            }
             wasPaused = true;
             std::this_thread::sleep_for(std::chrono::milliseconds(8));
-            nextFrame = std::chrono::steady_clock::now();
+            nextFrame = std::chrono::steady_clock::now() + targetDuration;
             continue;
         }
         if (wasPaused || commandRan) {
             wasPaused = false;
-            nextFrame = std::chrono::steady_clock::now();
+            nextFrame = std::chrono::steady_clock::now() + targetDuration;
         }
 
+        impl_->presentationTargetNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            nextFrame.time_since_epoch()).count();
         const auto begin = std::chrono::steady_clock::now();
         impl_->core.run();
         const auto afterRun = std::chrono::steady_clock::now();
+        const auto workNs = std::chrono::duration_cast<std::chrono::nanoseconds>(afterRun - begin).count();
+        impl_->perfHint.report(workNs);
         recordFrame(std::chrono::duration<float, std::milli>(afterRun - begin).count(), targetMs);
 
         if (++adaptationCounter >= 60u) {
             adaptationCounter = 0;
             impl_->adaptAudio(audioTargetBursts_.load(std::memory_order_acquire));
         }
-        if (++saveCounter >= 600u) {
-            saveCounter = 0;
-            persistSaveRam(false);
-        }
-
         // Single pacing owner: EGL swap interval is zero, so this is the only
         // explicit frame scheduler. If emulation itself is slower than target,
         // no extra sleep is added. Old debt is discarded rather than repaid with
         // a burst of back-to-back frames.
-        nextFrame += targetDuration;
         const auto now = std::chrono::steady_clock::now();
         if (nextFrame > now) {
             std::this_thread::sleep_until(nextFrame);
+            nextFrame += targetDuration;
         } else if (now - nextFrame > lateResetThreshold) {
-            nextFrame = now;
+            nextFrame = now + targetDuration;
+        } else {
+            nextFrame += targetDuration;
         }
     }
     setMessage("N64 STOP • persistindo saves e encerrando sessão…");
