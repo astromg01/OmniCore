@@ -77,11 +77,16 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
                 val now = SystemClock.elapsedRealtime()
                 if (telemetry.sampleWindowFrames >= 90 && now - lastAdaptAt >= 2500L) {
                     lastAdaptAt = now
-                    pendingDecision = N64SmartPerf.adapt(
+                    val nextDecision = N64SmartPerf.adapt(
                         this@N64EmulationActivity,
                         requestedConfig,
                         telemetry.smartPerf()
                     )
+                    pendingDecision = nextDecision
+                    // Audio latency is safe to tune while running. CPU/RDP options
+                    // remain next-session decisions because changing them mid-frame
+                    // can invalidate core-owned GL/coroutine state.
+                    N64NativeBridge.setAudioTargetBursts(nextDecision.audioBufferBursts)
                 }
 
                 if (message.startsWith("N64 RUN OK")) {
@@ -126,7 +131,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         N64Diagnostics.mark(
             this,
             "activity:build_ui",
-            "cpu=${launchDecision.effective.cpuMode.storage},threaded=${launchDecision.effective.threadedRenderer},fb=${launchDecision.effective.framebufferEmulation}"
+            "cpu=${launchDecision.effective.cpuMode.storage},threaded=${launchDecision.effective.threadedRenderer},fb=${launchDecision.effective.framebufferEmulation},aspect=${launchDecision.effective.aspectRatio.storage}"
         )
         buildUi(game.title)
         scheduleImmersiveMode()
@@ -137,19 +142,22 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
 
     private fun firstBootDecision(base: N64SmartPerf.Decision): N64SmartPerf.Decision {
         if (N64Diagnostics.hasVerifiedBoot(this)) return base
+        // Real-device Alpha 5 proved the Mupen/GLES path. Keep the safe native
+        // resolution and single-thread renderer for a fresh install, but no longer
+        // force the extremely slow cached interpreter: Dynarec is the usable N64 path.
         return base.copy(
-            level = N64SmartPerf.Level.ECO,
+            level = N64SmartPerf.Level.BALANCED,
             effective = base.effective.copy(
-                cpuMode = N64Settings.CpuMode.CACHED_INTERPRETER,
+                cpuMode = N64Settings.CpuMode.DYNAREC,
                 rspMode = N64Settings.RspMode.HLE,
                 internalResolution = N64Settings.InternalResolution.NATIVE,
                 framebufferEmulation = false,
                 threadedRenderer = false
             ),
-            audioBufferBursts = maxOf(base.audioBufferBursts, 3),
+            audioBufferBursts = maxOf(base.audioBufferBursts, 4),
             aggressiveFramePacing = false,
             allowResolutionPromotion = false,
-            reason = "Boot seguro até validar o primeiro frame N64"
+            reason = "Boot rápido N64: Dynarec + resolução nativa + GL seguro"
         )
     }
 
@@ -157,7 +165,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         root = FrameLayout(this).apply { setBackgroundColor(Color.rgb(3, 4, 8)) }
         setContentView(root)
 
-        surfaceView = AspectSurfaceView(this).apply {
+        surfaceView = AspectSurfaceView(this, launchDecision.effective.aspectRatio).apply {
             setWillNotDraw(true)
             holder.addCallback(this@N64EmulationActivity)
         }
@@ -167,7 +175,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             Gravity.CENTER
         ))
 
-        controls = N64GamepadOverlayView(this, inputConfig.haptics)
+        controls = N64GamepadOverlayView(this, inputConfig)
         root.addView(controls, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
@@ -193,7 +201,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
             setTextColor(Color.argb(225, 245, 245, 255))
             textSize = 26f
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.argb(78, 20, 22, 36))
+            setBackgroundColor(Color.argb(58, 20, 22, 36))
             setOnClickListener { showQuickMenu(this) }
         }
         root.addView(menuButton, FrameLayout.LayoutParams(dp(42), dp(42), Gravity.TOP or Gravity.END).apply {
@@ -291,7 +299,7 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
         N64Diagnostics.mark(
             this,
             "session:native_start",
-            "cpu=${decision.effective.cpuMode.storage},threaded=${decision.effective.threadedRenderer},fb=${decision.effective.framebufferEmulation},rom=${rom.length()}"
+            "cpu=${decision.effective.cpuMode.storage},threaded=${decision.effective.threadedRenderer},fb=${decision.effective.framebufferEmulation},aspect=${decision.effective.aspectRatio.storage},rom=${rom.length()}"
         )
         started = N64NativeBridge.start(surface, rom, paths, decision, inputConfig)
         N64Diagnostics.mark(this, if (started) "session:native_started" else "session:native_rejected")
@@ -460,15 +468,19 @@ class N64EmulationActivity : Activity(), SurfaceHolder.Callback {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    private class AspectSurfaceView(context: Context) : SurfaceView(context) {
+    private class AspectSurfaceView(
+        context: Context,
+        private val aspectRatio: N64Settings.AspectRatio
+    ) : SurfaceView(context) {
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
             val maxWidth = MeasureSpec.getSize(widthMeasureSpec).coerceAtLeast(1)
             val maxHeight = MeasureSpec.getSize(heightMeasureSpec).coerceAtLeast(1)
+            val ratio = if (aspectRatio.wide) 16f / 9f else 4f / 3f
             var width = maxWidth
-            var height = (width * 3f / 4f).toInt()
+            var height = (width / ratio).toInt()
             if (height > maxHeight) {
                 height = maxHeight
-                width = (height * 4f / 3f).toInt()
+                width = (height * ratio).toInt()
             }
             setMeasuredDimension(width.coerceAtLeast(1), height.coerceAtLeast(1))
         }
