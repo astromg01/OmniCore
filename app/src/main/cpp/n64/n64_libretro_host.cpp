@@ -13,18 +13,22 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <vector>
 
 namespace omnicore::n64 {
 namespace {
 constexpr const char* kLogTag = "OmniCoreN64";
 constexpr const char* kCoreSoname = "libmupen64plus_next_libretro.so";
-constexpr std::size_t kAudioRingSamples = 32768;
+constexpr std::size_t kAudioRingSamples = 65536;
+constexpr std::uint64_t kFnvOffset = 1469598103934665603ull;
+constexpr std::uint64_t kFnvPrime = 1099511628211ull;
 
 #ifndef EGL_OPENGL_ES3_BIT_KHR
 #define EGL_OPENGL_ES3_BIT_KHR 0x0040
@@ -63,6 +67,69 @@ std::string boolOption(bool value) { return value ? "True" : "False"; }
 
 std::int16_t axisFromFloat(float value) {
     return static_cast<std::int16_t>(std::lround(std::clamp(value, -1.0f, 1.0f) * 32767.0f));
+}
+
+std::uint64_t hashBytes(const void* data, std::size_t size) {
+    if (!data || size == 0) return 0;
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    std::uint64_t hash = kFnvOffset;
+    for (std::size_t i = 0; i < size; ++i) {
+        hash ^= bytes[i];
+        hash *= kFnvPrime;
+    }
+    return hash;
+}
+
+bool readWholeFile(const std::string& path, std::vector<std::uint8_t>& output) {
+    output.clear();
+    if (path.empty()) return false;
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return false;
+    struct stat st {};
+    if (fstat(fd, &st) != 0 || st.st_size <= 0) {
+        ::close(fd);
+        return false;
+    }
+    output.resize(static_cast<std::size_t>(st.st_size));
+    std::size_t done = 0;
+    while (done < output.size()) {
+        const ssize_t count = ::read(fd, output.data() + done, output.size() - done);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) {
+            ::close(fd);
+            output.clear();
+            return false;
+        }
+        done += static_cast<std::size_t>(count);
+    }
+    ::close(fd);
+    return true;
+}
+
+bool writeWholeFileAtomic(const std::string& path, const void* data, std::size_t size) {
+    if (path.empty() || !data || size == 0) return false;
+    const std::string temp = path + ".tmp";
+    const int fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (fd < 0) return false;
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    std::size_t done = 0;
+    bool ok = true;
+    while (done < size) {
+        const ssize_t count = ::write(fd, bytes + done, size - done);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) {
+            ok = false;
+            break;
+        }
+        done += static_cast<std::size_t>(count);
+    }
+    if (ok && ::fsync(fd) != 0) ok = false;
+    if (::close(fd) != 0) ok = false;
+    if (ok) {
+        if (::rename(temp.c_str(), path.c_str()) != 0) ok = false;
+    }
+    if (!ok) ::unlink(temp.c_str());
+    return ok;
 }
 
 class AudioRing final {
@@ -191,12 +258,18 @@ struct CoreApi final {
     using retro_set_input_state_t = void (*)(retro_input_state_t);
     using retro_init_t = void (*)();
     using retro_deinit_t = void (*)();
+    using retro_reset_t = void (*)();
     using retro_get_system_info_t = void (*)(retro_system_info*);
     using retro_get_system_av_info_t = void (*)(retro_system_av_info*);
     using retro_load_game_t = bool (*)(const retro_game_info*);
     using retro_unload_game_t = void (*)();
     using retro_run_t = void (*)();
     using retro_set_controller_port_device_t = void (*)(unsigned, unsigned);
+    using retro_serialize_size_t = std::size_t (*)();
+    using retro_serialize_t = bool (*)(void*, std::size_t);
+    using retro_unserialize_t = bool (*)(const void*, std::size_t);
+    using retro_get_memory_data_t = void* (*)(unsigned);
+    using retro_get_memory_size_t = std::size_t (*)(unsigned);
 
     void* handle = nullptr;
     retro_api_version_t apiVersion = nullptr;
@@ -208,18 +281,29 @@ struct CoreApi final {
     retro_set_input_state_t setInputState = nullptr;
     retro_init_t init = nullptr;
     retro_deinit_t deinit = nullptr;
+    retro_reset_t reset = nullptr;
     retro_get_system_info_t getSystemInfo = nullptr;
     retro_get_system_av_info_t getSystemAvInfo = nullptr;
     retro_load_game_t loadGame = nullptr;
     retro_unload_game_t unloadGame = nullptr;
     retro_run_t run = nullptr;
     retro_set_controller_port_device_t setControllerPortDevice = nullptr;
+    retro_serialize_size_t serializeSize = nullptr;
+    retro_serialize_t serialize = nullptr;
+    retro_unserialize_t unserialize = nullptr;
+    retro_get_memory_data_t getMemoryData = nullptr;
+    retro_get_memory_size_t getMemorySize = nullptr;
 
     template <typename T>
-    bool symbol(T& out, const char* name) {
+    bool required(T& out, const char* name) {
         out = reinterpret_cast<T>(dlsym(handle, name));
         if (!out) logPrint(ANDROID_LOG_ERROR, "missing libretro symbol %s", name);
         return out != nullptr;
+    }
+
+    template <typename T>
+    void optional(T& out, const char* name) {
+        out = reinterpret_cast<T>(dlsym(handle, name));
     }
 
     bool load() {
@@ -230,21 +314,27 @@ struct CoreApi final {
             return false;
         }
         bool ok = true;
-        ok &= symbol(apiVersion, "retro_api_version");
-        ok &= symbol(setEnvironment, "retro_set_environment");
-        ok &= symbol(setVideoRefresh, "retro_set_video_refresh");
-        ok &= symbol(setAudioSample, "retro_set_audio_sample");
-        ok &= symbol(setAudioSampleBatch, "retro_set_audio_sample_batch");
-        ok &= symbol(setInputPoll, "retro_set_input_poll");
-        ok &= symbol(setInputState, "retro_set_input_state");
-        ok &= symbol(init, "retro_init");
-        ok &= symbol(deinit, "retro_deinit");
-        ok &= symbol(getSystemInfo, "retro_get_system_info");
-        ok &= symbol(getSystemAvInfo, "retro_get_system_av_info");
-        ok &= symbol(loadGame, "retro_load_game");
-        ok &= symbol(unloadGame, "retro_unload_game");
-        ok &= symbol(run, "retro_run");
-        ok &= symbol(setControllerPortDevice, "retro_set_controller_port_device");
+        ok &= required(apiVersion, "retro_api_version");
+        ok &= required(setEnvironment, "retro_set_environment");
+        ok &= required(setVideoRefresh, "retro_set_video_refresh");
+        ok &= required(setAudioSample, "retro_set_audio_sample");
+        ok &= required(setAudioSampleBatch, "retro_set_audio_sample_batch");
+        ok &= required(setInputPoll, "retro_set_input_poll");
+        ok &= required(setInputState, "retro_set_input_state");
+        ok &= required(init, "retro_init");
+        ok &= required(deinit, "retro_deinit");
+        ok &= required(getSystemInfo, "retro_get_system_info");
+        ok &= required(getSystemAvInfo, "retro_get_system_av_info");
+        ok &= required(loadGame, "retro_load_game");
+        ok &= required(unloadGame, "retro_unload_game");
+        ok &= required(run, "retro_run");
+        ok &= required(setControllerPortDevice, "retro_set_controller_port_device");
+        optional(reset, "retro_reset");
+        optional(serializeSize, "retro_serialize_size");
+        optional(serialize, "retro_serialize");
+        optional(unserialize, "retro_unserialize");
+        optional(getMemoryData, "retro_get_memory_data");
+        optional(getMemorySize, "retro_get_memory_size");
         if (!ok || apiVersion() != 1u) {
             close();
             return false;
@@ -264,12 +354,18 @@ struct CoreApi final {
         setInputState = nullptr;
         init = nullptr;
         deinit = nullptr;
+        reset = nullptr;
         getSystemInfo = nullptr;
         getSystemAvInfo = nullptr;
         loadGame = nullptr;
         unloadGame = nullptr;
         run = nullptr;
         setControllerPortDevice = nullptr;
+        serializeSize = nullptr;
+        serialize = nullptr;
+        unserialize = nullptr;
+        getMemoryData = nullptr;
+        getMemorySize = nullptr;
     }
 
     ~CoreApi() { close(); }
@@ -301,7 +397,7 @@ struct LibretroHost::Impl {
     AAudioStream* audioStream = nullptr;
     bool audioStarted = false;
     double coreSampleRate = 44100.0;
-    int outputSampleRate = 44100;
+    int outputSampleRate = 48000;
     int framesPerBurst = 0;
     int appliedAudioBursts = 4;
     int audioPrimeFrames = 0;
@@ -341,7 +437,9 @@ struct LibretroHost::Impl {
         const EGLint contextAttrs[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
         context = eglCreateContext(display, eglConfig, EGL_NO_CONTEXT, contextAttrs);
         if (context == EGL_NO_CONTEXT || !eglMakeCurrent(display, surface, surface, context)) return false;
-        eglSwapInterval(display, 1);
+        // OmniCore owns pacing. Blocking on EGL VSync and then sleeping again in
+        // the emulation loop caused the old double-pacing path and severe jitter.
+        eglSwapInterval(display, 0);
         eglQuerySurface(display, surface, EGL_WIDTH, &surfaceWidth);
         eglQuerySurface(display, surface, EGL_HEIGHT, &surfaceHeight);
         return surfaceWidth > 0 && surfaceHeight > 0;
@@ -398,11 +496,23 @@ struct LibretroHost::Impl {
         eglConfig = nullptr;
     }
 
+    void updateAudioTelemetry() {
+        if (!owner || outputSampleRate <= 0) return;
+        const float fillMs = static_cast<float>(audioRing.availableSamples() / 2u) * 1000.0f /
+            static_cast<float>(outputSampleRate);
+        int bufferFrames = 0;
+        if (audioStream) bufferFrames = std::max(0, AAudioStream_getBufferSizeInFrames(audioStream));
+        const float bufferMs = static_cast<float>(bufferFrames) * 1000.0f /
+            static_cast<float>(outputSampleRate);
+        owner->audioFillMs_.store(fillMs, std::memory_order_release);
+        owner->audioBufferMs_.store(bufferMs, std::memory_order_release);
+    }
+
     bool openAudio(double sampleRate, int requestedBursts) {
         closeAudio();
         audioRing.clear();
         coreSampleRate = sampleRate > 1000.0 ? sampleRate : 44100.0;
-        requestedBursts = std::clamp(requestedBursts, 2, 7);
+        requestedBursts = std::clamp(requestedBursts, 2, 8);
         resampleAccumulator = 0.0;
 
         auto tryMode = [&](aaudio_sharing_mode_t sharing) -> bool {
@@ -413,7 +523,9 @@ struct LibretroHost::Impl {
             AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
             AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_I16);
             AAudioStreamBuilder_setChannelCount(builder, 2);
-            AAudioStreamBuilder_setSampleRate(builder, static_cast<std::int32_t>(std::lround(coreSampleRate)));
+            // Do not request the core sample rate here. AAudio can then open the
+            // device's natural low-latency rate (typically 48 kHz), while the
+            // frontend performs the small conversion itself.
             AAudioStreamBuilder_setDataCallback(builder, audioCallback, this);
             const aaudio_result_t result = AAudioStreamBuilder_openStream(builder, &audioStream);
             AAudioStreamBuilder_delete(builder);
@@ -428,15 +540,18 @@ struct LibretroHost::Impl {
                 const int latencyFrames = outputSampleRate * minimumAudioLatencyMs / 1000;
                 minBursts = std::max(minBursts, (latencyFrames + framesPerBurst - 1) / framesPerBurst);
             }
-            appliedAudioBursts = std::clamp(minBursts, 2, 7);
+            appliedAudioBursts = std::clamp(minBursts, 2, 8);
             AAudioStream_setBufferSizeInFrames(audioStream, framesPerBurst * appliedAudioBursts);
+            // Start with enough PCM queued to survive scheduler jitter, then let
+            // SmartPerf reduce latency only after the stream proves stable.
             audioPrimeFrames = std::min<int>(
                 static_cast<int>(audioRing.capacitySamples() / 4u),
-                std::max(framesPerBurst * 3, outputSampleRate / 40));
+                std::max(framesPerBurst * 4, outputSampleRate / 30));
             lastXRunCount = std::max(0, AAudioStream_getXRunCount(audioStream));
             lastRingUnderruns = audioRing.underruns();
             stableAudioChecks = 0;
             audioStarted = false;
+            updateAudioTelemetry();
             return true;
         };
 
@@ -455,22 +570,55 @@ struct LibretroHost::Impl {
         audioPrimeFrames = 0;
         resampleAccumulator = 0.0;
         audioRing.clear();
+        if (owner) {
+            owner->audioFillMs_.store(0.0f, std::memory_order_release);
+            owner->audioBufferMs_.store(0.0f, std::memory_order_release);
+            owner->pacingCorrectionPct_.store(0.0f, std::memory_order_release);
+        }
+    }
+
+    void reprimeAudio() {
+        if (audioStream && audioStarted) AAudioStream_requestPause(audioStream);
+        audioStarted = false;
+        audioRing.clear();
+        resampleAccumulator = 0.0;
+        lastRingUnderruns = 0;
+        stableAudioChecks = 0;
+        updateAudioTelemetry();
     }
 
     void startAudioIfReady() {
         if (!audioStream || audioStarted) return;
         if (audioRing.availableSamples() / 2u < static_cast<std::size_t>(std::max(1, audioPrimeFrames))) return;
-        if (AAudioStream_requestStart(audioStream) == AAUDIO_OK) {
-            audioStarted = true;
+        if (AAudioStream_requestStart(audioStream) == AAUDIO_OK) audioStarted = true;
+    }
+
+    double audioSyncScale() {
+        if (!audioStream || outputSampleRate <= 0) return 1.0;
+        updateAudioTelemetry();
+        const float fillMs = owner ? owner->audioFillMs_.load(std::memory_order_acquire) : 0.0f;
+        const float bufferMs = owner ? owner->audioBufferMs_.load(std::memory_order_acquire) : 0.0f;
+        const float targetFillMs = std::max(34.0f, bufferMs * 1.55f);
+        double scale = 1.0;
+        if (fillMs < targetFillMs * 0.55f) scale = 1.0075;
+        else if (fillMs < targetFillMs * 0.80f) scale = 1.0035;
+        else if (fillMs > targetFillMs * 1.75f) scale = 0.9945;
+        else if (fillMs > targetFillMs * 1.40f) scale = 0.9975;
+        if (owner) {
+            owner->pacingCorrectionPct_.store(
+                static_cast<float>((scale - 1.0) * 100.0), std::memory_order_release);
         }
+        return scale;
     }
 
     void pushAudio(const std::int16_t* data, std::size_t frames) {
         if (!data || frames == 0 || !audioStream) return;
-        const double outRate = static_cast<double>(std::max(1, outputSampleRate));
-        if (std::abs(outRate - coreSampleRate) < 1.0) {
+        const double syncScale = audioSyncScale();
+        const double desiredOutRate = static_cast<double>(std::max(1, outputSampleRate)) * syncScale;
+        if (std::abs(desiredOutRate - coreSampleRate) < 1.0) {
             audioRing.push(data, frames * 2u);
             startAudioIfReady();
+            updateAudioTelemetry();
             return;
         }
 
@@ -482,7 +630,7 @@ struct LibretroHost::Impl {
             }
         };
         for (std::size_t i = 0; i < frames; ++i) {
-            resampleAccumulator += outRate;
+            resampleAccumulator += desiredOutRate;
             while (resampleAccumulator >= coreSampleRate) {
                 if (scratchCount + 2 > resampleScratch.size()) flush();
                 resampleScratch[scratchCount++] = data[i * 2u];
@@ -492,18 +640,22 @@ struct LibretroHost::Impl {
         }
         flush();
         startAudioIfReady();
+        updateAudioTelemetry();
     }
 
     void adaptAudio(int requestedBursts) {
         if (!audioStream || framesPerBurst <= 0) return;
-        requestedBursts = std::clamp(requestedBursts, 2, 7);
+        requestedBursts = std::clamp(requestedBursts, 2, 8);
         const int xruns = std::max(0, AAudioStream_getXRunCount(audioStream));
         const auto underruns = audioRing.underruns();
         int next = appliedAudioBursts;
         if (xruns > lastXRunCount || underruns > lastRingUnderruns) {
-            next = std::min(7, std::max(requestedBursts, appliedAudioBursts + 1));
+            next = std::min(8, std::max(requestedBursts, appliedAudioBursts + 2));
             stableAudioChecks = 0;
-        } else if (next > requestedBursts && ++stableAudioChecks >= 10) {
+        } else if (next < requestedBursts) {
+            next = requestedBursts;
+            stableAudioChecks = 0;
+        } else if (next > requestedBursts && ++stableAudioChecks >= 12) {
             --next;
             stableAudioChecks = 0;
         }
@@ -513,6 +665,7 @@ struct LibretroHost::Impl {
         }
         lastXRunCount = xruns;
         lastRingUnderruns = underruns;
+        updateAudioTelemetry();
     }
 };
 
@@ -529,7 +682,7 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
     ANativeWindow_acquire(window);
     window_ = window;
     config_ = std::move(config);
-    config_.audioBufferBursts = std::clamp(config_.audioBufferBursts, 2, 7);
+    config_.audioBufferBursts = std::clamp(config_.audioBufferBursts, 2, 8);
     audioTargetBursts_.store(config_.audioBufferBursts, std::memory_order_release);
     stopRequested_.store(false, std::memory_order_release);
     paused_.store(false, std::memory_order_release);
@@ -541,11 +694,21 @@ bool LibretroHost::start(ANativeWindow* window, RuntimeConfig config) {
         frameWindowCount_ = 0;
         frameWindowWrite_ = 0;
     }
+    {
+        std::lock_guard<std::mutex> lock(commandMutex_);
+        pendingCommand_ = CommandType::NONE;
+        pendingStatePath_.clear();
+    }
+    lastSaveRamHash_ = 0;
     audioUnderruns_.store(0, std::memory_order_release);
+    audioFillMs_.store(0.0f, std::memory_order_release);
+    audioBufferMs_.store(0.0f, std::memory_order_release);
+    targetFps_.store(60.0f, std::memory_order_release);
+    pacingCorrectionPct_.store(0.0f, std::memory_order_release);
     targetFrameMs_.store(1000.0f / 60.0f, std::memory_order_release);
     hwRenderRequested_ = false;
     hwRender_ = {};
-    setMessage("N64 BOOT 1/6 • iniciando runtime isolado…");
+    setMessage("N64 BOOT 1/6 • runtime Alpha 7 single-pacer…");
     try {
         thread_ = std::thread(&LibretroHost::run, this);
     } catch (...) {
@@ -566,7 +729,34 @@ void LibretroHost::stop() {
 void LibretroHost::setPaused(bool paused) { paused_.store(paused, std::memory_order_release); }
 
 void LibretroHost::setAudioTargetBursts(int bursts) {
-    audioTargetBursts_.store(std::clamp(bursts, 2, 7), std::memory_order_release);
+    audioTargetBursts_.store(std::clamp(bursts, 2, 8), std::memory_order_release);
+}
+
+bool LibretroHost::requestSaveState(std::string path) {
+    if (!running() || path.empty()) return false;
+    std::lock_guard<std::mutex> lock(commandMutex_);
+    if (pendingCommand_ != CommandType::NONE) return false;
+    pendingCommand_ = CommandType::SAVE_STATE;
+    pendingStatePath_ = std::move(path);
+    return true;
+}
+
+bool LibretroHost::requestLoadState(std::string path) {
+    if (!running() || path.empty()) return false;
+    std::lock_guard<std::mutex> lock(commandMutex_);
+    if (pendingCommand_ != CommandType::NONE) return false;
+    pendingCommand_ = CommandType::LOAD_STATE;
+    pendingStatePath_ = std::move(path);
+    return true;
+}
+
+bool LibretroHost::requestReset() {
+    if (!running()) return false;
+    std::lock_guard<std::mutex> lock(commandMutex_);
+    if (pendingCommand_ != CommandType::NONE) return false;
+    pendingCommand_ = CommandType::RESET;
+    pendingStatePath_.clear();
+    return true;
 }
 
 std::string LibretroHost::lastMessage() const {
@@ -612,6 +802,8 @@ void LibretroHost::buildCoreOptions() {
     options_["mupen64plus-EnableCopyColorFromRDRAM"] = "False";
     options_["mupen64plus-EnableCopyAuxToRDRAM"] = "False";
     options_["mupen64plus-EnableLODEmulation"] = leanGraphics ? "False" : "True";
+    options_["mupen64plus-EnableLegacyBlending"] = leanGraphics ? "True" : "False";
+    options_["mupen64plus-EnableFragmentDepthWrite"] = "False";
     options_["mupen64plus-BackgroundMode"] = "OnePiece";
     options_["mupen64plus-BilinearMode"] = "3point";
     options_["mupen64plus-EnableNativeResFactor"] = "0";
@@ -623,6 +815,8 @@ void LibretroHost::buildCoreOptions() {
     options_["mupen64plus-MultiSampling"] = "0";
     options_["mupen64plus-HybridFilter"] = "False";
     options_["mupen64plus-txHiresEnable"] = "False";
+    options_["mupen64plus-txFilterMode"] = "None";
+    options_["mupen64plus-txEnhancementMode"] = "None";
     options_["mupen64plus-alt-map"] = "True";
     options_["mupen64plus-astick-deadzone"] = std::to_string(std::clamp(config_.analogDeadzonePercent, 4, 30));
     options_["mupen64plus-astick-sensitivity"] = std::to_string(std::clamp(config_.analogSensitivityPercent, 70, 130));
@@ -718,7 +912,7 @@ bool LibretroHost::environment(unsigned cmd, void* data) {
             if (data) *static_cast<unsigned*>(data) = RETRO_AV_ENABLE_VIDEO | RETRO_AV_ENABLE_AUDIO;
             return data != nullptr;
         case RETRO_ENVIRONMENT_GET_TARGET_REFRESH_RATE:
-            if (data) *static_cast<float*>(data) = impl_ ? static_cast<float>(impl_->targetFps) : 60.0f;
+            if (data) *static_cast<float*>(data) = targetFps_.load(std::memory_order_acquire);
             return data != nullptr;
         case RETRO_ENVIRONMENT_GET_INPUT_MAX_USERS:
             if (data) *static_cast<unsigned*>(data) = 1u;
@@ -773,8 +967,8 @@ void LibretroHost::videoRefresh(const void* data, unsigned, unsigned, std::size_
     ++impl_->presentedFrames;
     if (impl_->presentedFrames == 1) {
         setMessage(impl_->audioStream
-            ? "N64 RUN OK • primeiro frame GLES3 • AAudio pronto"
-            : "N64 RUN OK • primeiro frame GLES3 • áudio indisponível");
+            ? "N64 RUN OK • single-pacer GLES3 • AAudio nativo pronto"
+            : "N64 RUN OK • single-pacer GLES3 • áudio indisponível");
     }
 }
 
@@ -829,6 +1023,10 @@ Telemetry LibretroHost::telemetry() const {
     Telemetry out;
     out.sampleWindowFrames = static_cast<int>(count);
     out.audioUnderruns = audioUnderruns_.load(std::memory_order_acquire);
+    out.audioFillMs = audioFillMs_.load(std::memory_order_acquire);
+    out.audioBufferMs = audioBufferMs_.load(std::memory_order_acquire);
+    out.targetFps = targetFps_.load(std::memory_order_acquire);
+    out.pacingCorrectionPct = pacingCorrectionPct_.load(std::memory_order_acquire);
     if (count == 0) return out;
     float total = 0.0f;
     for (std::size_t i = 0; i < count; ++i) total += snapshot[i];
@@ -845,11 +1043,106 @@ Telemetry LibretroHost::telemetry() const {
     return out;
 }
 
+void LibretroHost::loadSaveRam() {
+    if (!impl_ || !impl_->core.getMemoryData || !impl_->core.getMemorySize || config_.saveRamPath.empty()) return;
+    void* memory = impl_->core.getMemoryData(RETRO_MEMORY_SAVE_RAM);
+    const std::size_t size = impl_->core.getMemorySize(RETRO_MEMORY_SAVE_RAM);
+    if (!memory || size == 0) return;
+    std::vector<std::uint8_t> saved;
+    if (readWholeFile(config_.saveRamPath, saved) && !saved.empty()) {
+        std::memcpy(memory, saved.data(), std::min(size, saved.size()));
+        setMessage("N64 SAVE • SRAM/Controller Pak carregado");
+    }
+    lastSaveRamHash_ = hashBytes(memory, size);
+}
+
+void LibretroHost::persistSaveRam(bool force) {
+    if (!impl_ || !impl_->core.getMemoryData || !impl_->core.getMemorySize || config_.saveRamPath.empty()) return;
+    void* memory = impl_->core.getMemoryData(RETRO_MEMORY_SAVE_RAM);
+    const std::size_t size = impl_->core.getMemorySize(RETRO_MEMORY_SAVE_RAM);
+    if (!memory || size == 0) return;
+    const std::uint64_t currentHash = hashBytes(memory, size);
+    if (!force && currentHash == lastSaveRamHash_) return;
+    if (writeWholeFileAtomic(config_.saveRamPath, memory, size)) {
+        lastSaveRamHash_ = currentHash;
+    }
+}
+
+bool LibretroHost::processPendingCommand() {
+    CommandType command = CommandType::NONE;
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lock(commandMutex_);
+        command = pendingCommand_;
+        if (command == CommandType::NONE) return false;
+        path = std::move(pendingStatePath_);
+        pendingStatePath_.clear();
+        pendingCommand_ = CommandType::NONE;
+    }
+    if (!impl_ || !impl_->gameLoaded) return false;
+
+    if (command == CommandType::RESET) {
+        if (!impl_->core.reset) {
+            setMessage("N64 STATE E01 • reset não suportado pelo core");
+            return true;
+        }
+        impl_->core.reset();
+        impl_->reprimeAudio();
+        setMessage("N64 STATE • jogo reiniciado");
+        return true;
+    }
+
+    if (command == CommandType::SAVE_STATE) {
+        if (!impl_->core.serializeSize || !impl_->core.serialize) {
+            setMessage("N64 STATE E02 • serialização indisponível");
+            return true;
+        }
+        const std::size_t size = impl_->core.serializeSize();
+        if (size == 0 || size > 256u * 1024u * 1024u) {
+            setMessage("N64 STATE E03 • tamanho de estado inválido");
+            return true;
+        }
+        std::vector<std::uint8_t> state(size);
+        if (!impl_->core.serialize(state.data(), state.size())) {
+            setMessage("N64 STATE E04 • core recusou salvar estado");
+            return true;
+        }
+        if (!writeWholeFileAtomic(path, state.data(), state.size())) {
+            setMessage("N64 STATE E05 • falha ao gravar estado");
+            return true;
+        }
+        persistSaveRam(false);
+        setMessage("N64 STATE • estado salvo");
+        return true;
+    }
+
+    if (command == CommandType::LOAD_STATE) {
+        if (!impl_->core.unserialize) {
+            setMessage("N64 STATE E06 • carregamento de estado indisponível");
+            return true;
+        }
+        std::vector<std::uint8_t> state;
+        if (!readWholeFile(path, state)) {
+            setMessage("N64 STATE E07 • slot vazio ou ilegível");
+            return true;
+        }
+        if (!impl_->core.unserialize(state.data(), state.size())) {
+            setMessage("N64 STATE E08 • core recusou carregar estado");
+            return true;
+        }
+        impl_->reprimeAudio();
+        setMessage("N64 STATE • estado carregado");
+        return true;
+    }
+    return false;
+}
+
 void LibretroHost::run() {
     impl_ = std::make_unique<Impl>(this);
     bool callContextDestroy = false;
     auto cleanup = [&]() {
         if (impl_) {
+            if (impl_->gameLoaded) persistSaveRam(true);
             impl_->closeAudio();
             if (impl_->gameLoaded && impl_->core.unloadGame) {
                 impl_->core.unloadGame();
@@ -886,7 +1179,7 @@ void LibretroHost::run() {
         cleanup();
         return;
     }
-    setMessage("N64 BOOT 2/6 • GLES3 pronto, carregando Mupen64Plus-Next…");
+    setMessage("N64 BOOT 2/6 • GLES3 single-pacer, carregando Mupen64Plus-Next…");
     if (!impl_->core.load()) {
         setMessage("N64 BOOT E03 • Mupen64Plus-Next não carregou");
         cleanup();
@@ -913,7 +1206,6 @@ void LibretroHost::run() {
         return;
     }
 
-    bool loadOk = false;
     MappedFile rom;
     retro_game_info gameInfo{};
     gameInfo.path = config_.romPath.c_str();
@@ -929,8 +1221,7 @@ void LibretroHost::run() {
     } else {
         setMessage("N64 BOOT 4/6 • core usando ROM preparada por caminho…");
     }
-    loadOk = impl_->core.loadGame(&gameInfo);
-    if (!loadOk) {
+    if (!impl_->core.loadGame(&gameInfo)) {
         setMessage("N64 BOOT E06 • Mupen recusou a ROM/contexto gráfico");
         cleanup();
         return;
@@ -944,52 +1235,74 @@ void LibretroHost::run() {
 
     hwRender_.context_reset();
     callContextDestroy = true;
+    loadSaveRam();
+
     retro_system_av_info avInfo{};
     impl_->core.getSystemAvInfo(&avInfo);
     impl_->targetFps = (avInfo.timing.fps >= 40.0 && avInfo.timing.fps <= 75.0)
         ? avInfo.timing.fps : 60.0;
     impl_->coreSampleRate = avInfo.timing.sample_rate > 1000.0 ? avInfo.timing.sample_rate : 44100.0;
+    targetFps_.store(static_cast<float>(impl_->targetFps), std::memory_order_release);
     const bool audioReady = impl_->openAudio(
         impl_->coreSampleRate,
         audioTargetBursts_.load(std::memory_order_acquire));
     if (!audioReady) logPrint(ANDROID_LOG_WARN, "N64 AAudio unavailable; continuing without audio output");
 
     const auto target = std::chrono::duration<double>(1.0 / impl_->targetFps);
+    const auto targetDuration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(target);
     const auto lateResetThreshold = std::chrono::duration_cast<std::chrono::steady_clock::duration>(target * 0.55);
     const float targetMs = static_cast<float>(1000.0 / impl_->targetFps);
     targetFrameMs_.store(targetMs, std::memory_order_release);
     setMessage(audioReady
-        ? "N64 BOOT 5/6 • GLideN64 + AAudio prontos, aguardando primeiro frame…"
+        ? "N64 BOOT 5/6 • GLideN64 + AAudio nativo, aguardando primeiro frame…"
         : "N64 BOOT 5/6 • GLideN64 pronto, aguardando primeiro frame…");
 
     auto nextFrame = std::chrono::steady_clock::now();
     std::uint32_t adaptationCounter = 0;
+    std::uint32_t saveCounter = 0;
+    bool wasPaused = false;
     while (!stopRequested_.load(std::memory_order_acquire)) {
-        if (paused_.load(std::memory_order_acquire)) {
+        const bool commandRan = processPendingCommand();
+        const bool paused = paused_.load(std::memory_order_acquire);
+        if (paused) {
+            if (!wasPaused && impl_->audioStream) impl_->reprimeAudio();
+            wasPaused = true;
             std::this_thread::sleep_for(std::chrono::milliseconds(8));
             nextFrame = std::chrono::steady_clock::now();
             continue;
         }
+        if (wasPaused || commandRan) {
+            wasPaused = false;
+            nextFrame = std::chrono::steady_clock::now();
+        }
+
         const auto begin = std::chrono::steady_clock::now();
         impl_->core.run();
         const auto afterRun = std::chrono::steady_clock::now();
         recordFrame(std::chrono::duration<float, std::milli>(afterRun - begin).count(), targetMs);
-        if (++adaptationCounter >= 120u) {
+
+        if (++adaptationCounter >= 60u) {
             adaptationCounter = 0;
             impl_->adaptAudio(audioTargetBursts_.load(std::memory_order_acquire));
         }
-        nextFrame += std::chrono::duration_cast<std::chrono::steady_clock::duration>(target);
+        if (++saveCounter >= 600u) {
+            saveCounter = 0;
+            persistSaveRam(false);
+        }
+
+        // Single pacing owner: EGL swap interval is zero, so this is the only
+        // explicit frame scheduler. If emulation itself is slower than target,
+        // no extra sleep is added. Old debt is discarded rather than repaid with
+        // a burst of back-to-back frames.
+        nextFrame += targetDuration;
         const auto now = std::chrono::steady_clock::now();
         if (nextFrame > now) {
             std::this_thread::sleep_until(nextFrame);
         } else if (now - nextFrame > lateResetThreshold) {
-            // Never run a burst of back-to-back frames trying to repay old debt.
-            // That pattern creates exactly the visible/audio stutter SmartPerf is
-            // trying to eliminate on slower Android hardware.
             nextFrame = now;
         }
     }
-    setMessage("N64 STOP • encerrando sessão…");
+    setMessage("N64 STOP • persistindo saves e encerrando sessão…");
     cleanup();
 }
 
