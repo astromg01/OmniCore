@@ -1,4 +1,4 @@
-name: N64 Alpha 22 Registered Bridge
+name: N64 Alpha 23 Registered Bridge
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: android-n64-alpha22-registered-bridge
+  group: android-n64-alpha23-registered-bridge
   cancel-in-progress: true
 
 jobs:
@@ -28,11 +28,11 @@ jobs:
           git fetch --no-tags origin agent/0.10.0-n64-foundation
           git checkout -B agent/0.10.0-n64-foundation origin/agent/0.10.0-n64-foundation
 
-      - name: Run Alpha 22 StartupAudioGate validation
+      - name: Run Alpha 23 SmoothAudioResampler validation
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          chmod +x tools/run_alpha22_bridge_ci.sh
-          ./tools/run_alpha22_bridge_ci.sh
+          chmod +x tools/run_alpha23_bridge_ci.sh
+          ./tools/run_alpha23_bridge_ci.sh
