@@ -1,0 +1,7 @@
+status=success
+tag=v0.10.7-n64-alpha8
+apk=OmniCore-v0.10.7-n64-alpha8-debug.apk
+size=24109951
+sha256=c8ea98c894a5a8cd9d550c601a6caa1aed42d7bc7097d9a3f04e917d822018f4
+url=https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.10.7-n64-alpha8
+run_id=32103250734
