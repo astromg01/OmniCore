@@ -1,6 +1,6 @@
 # Third-party notices
 
-OmniCore development builds can bundle separately built libretro cores. Console cores remain independent native components and are distributed with their corresponding source archives when required by their licenses.
+OmniCore development builds can bundle separately built emulator backends. Console runtimes remain isolated native components and are distributed with the notices/source material required by their licenses.
 
 ## PCSX-ReARMed
 
@@ -16,7 +16,7 @@ The Android release workflow archives the exact checked-out PCSX-ReARMed source 
 
 ## Mupen64Plus-Next
 
-OmniCore v0.10.0 N64 Alpha 1 uses Mupen64Plus-Next as the experimental Nintendo 64 backend.
+OmniCore uses Mupen64Plus-Next as the Nintendo 64 backend.
 
 - Project: Mupen64Plus-Next / mupen64plus-libretro-nx
 - Upstream: https://github.com/libretro/mupen64plus-libretro-nx
@@ -24,7 +24,20 @@ OmniCore v0.10.0 N64 Alpha 1 uses Mupen64Plus-Next as the experimental Nintendo 
 - Upstream license: GPL-2.0
 - Local GPL text: `third_party/licenses/GPL-2.0.txt`
 
-The Android N64 Alpha workflow fetches that exact revision, applies only the OmniCore Android packaging/build adjustments required for core coexistence and 16 KB ELF alignment, builds the ARM64 and ARMv7 shared libraries, and publishes the corresponding source archive beside the APK.
+The Android N64 workflow fetches that exact revision, applies only the OmniCore Android packaging/build adjustments required for core coexistence and 16 KB ELF alignment, builds the ARM64 and ARMv7 shared libraries, and publishes the corresponding source archive beside applicable APKs.
+
+## Play! — PS2 backend candidate
+
+The PS2 development branch builds Play! as an external, separately fetched Android backend behind the OmniCore `PS2Backend` boundary. Play! source code is not copied into the OmniCore source tree by the bring-up scripts.
+
+- Project: Play!
+- Upstream: https://github.com/jpd002/Play-
+- Pinned revision: `04bde0df87ee7c0e2f0151b51bb2cc22c88541da`
+- Upstream license: BSD 2-Clause style
+- Local license text: `third_party/licenses/Play-BSD-2-Clause.txt`
+- Packaged backend library during bring-up: `libPlay.so`
+
+The build fetches the exact upstream revision including its declared submodules and compiles the Android `Play` target separately for each supported ABI. OmniCore-specific lifecycle, telemetry, controls, storage and SmartPerf logic remain outside the upstream tree.
 
 ## libretro ABI declarations
 
