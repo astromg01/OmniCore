@@ -1,4 +1,4 @@
-OmniCore N64 Alpha 23 registered bridge trigger
-version=0.10.22
-focus=SmoothAudioResampler + SyncSlew + dense-mix audio polish
-revision=2
+OmniCore N64 Alpha 24 registered bridge trigger
+version=0.10.23
+focus=AudioBackend Auto + AudioHealthWatch + RacingComfort v2
+revision=1
