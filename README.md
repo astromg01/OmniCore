@@ -8,7 +8,7 @@
 [![PS1](https://img.shields.io/badge/PS1-device%20validated-57D8FF)](https://github.com/libretro/pcsx_rearmed)
 [![N64](https://img.shields.io/badge/N64-real--device%20testing-F4C95D)](https://github.com/libretro/mupen64plus-libretro-nx)
 [![Native](https://img.shields.io/badge/native-16%20KB%20ready-3DDC84)](app/src/main/cpp/)
-[![Copyright](https://img.shields.io/badge/copyright-%C2%A9%202026%20%40astromg01-6C63FF)](COPYRIGHT.md)
+[![Copyright](https://img.shields.io/badge/copyright-%C2%A9%202026%20%40mauricio--gamedev-6C63FF)](COPYRIGHT.md)
 
 OmniCore is a **multi-system Android emulation hub**, not a frontend built around a single console. Each supported system owns its own core integration, runtime policy, settings, storage, performance logic and console-specific input behavior while sharing one Android library experience.
 
@@ -191,7 +191,7 @@ OmniCore does **not** include ROMs, game images, BIOS files, firmware, console e
 
 ## Ownership, copyright and third-party licenses
 
-**Copyright © 2026 @astromg01.** The original OmniCore project identity, original documentation, branding and original project code are protected by copyright except where an applicable source/component license grants additional rights.
+**Copyright © 2026 [@mauricio-gamedev](https://github.com/mauricio-gamedev).** The original OmniCore project identity, original documentation, branding and original project code are protected by copyright except where an applicable source/component license grants additional rights.
 
 Public visibility of this repository does not by itself waive copyright ownership. See **[COPYRIGHT.md](COPYRIGHT.md)** for the project ownership notice.
 
@@ -208,4 +208,4 @@ Third-party components remain governed by their own licenses. PCSX-ReARMed, Mupe
 
 ---
 
-**OmniCore — original project authorship and rights: @astromg01. Repository maintained at `mauricio-gamedev/OmniCore`.**
+**OmniCore — original project authorship and rights: [@mauricio-gamedev](https://github.com/mauricio-gamedev). Repository maintained at `mauricio-gamedev/OmniCore`.**
