@@ -1,0 +1,2 @@
+OmniCore 0.10.9 N64 Alpha 10 validation trigger.
+Focus: Intelligent visual floor, 1.5x render tier, pressure-only lean graphics, startup audio cushion, menu transition buffering, framebuffer compatibility and isolated multi-system integrity.
