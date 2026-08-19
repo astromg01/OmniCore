@@ -56,16 +56,16 @@ Alpha 5 keeps the **1.0× minimum quality floor**, keeps cycle skipping disabled
 
 ### Downloads
 
-**PS2 Alpha 5 release**  
+**PS2 Alpha 5 release**
 https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.11.4-ps2-alpha5
 
-**Direct PS2 Alpha 5 APK**  
+**Direct PS2 Alpha 5 APK**
 https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.11.4-ps2-alpha5/OmniCore-v0.11.4-ps2-alpha5-debug.apk
 
-**N64 Alpha 24 release**  
+**N64 Alpha 24 release**
 https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.10.23-n64-alpha24
 
-**Stable PS1 DEV**  
+**Stable PS1 DEV**
 https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.9.4-dev
 
 ### Latest validation
