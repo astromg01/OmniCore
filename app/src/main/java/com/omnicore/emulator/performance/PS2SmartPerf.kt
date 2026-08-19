@@ -5,15 +5,16 @@ import android.content.Context
 import android.os.Build
 import android.os.PowerManager
 import com.omnicore.emulator.core.ps2.PS2Backend
+import com.omnicore.emulator.settings.PS2Settings
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * PS2 SmartPerf foundation.
+ * PS2 adaptive policy.
  *
- * Decisions are bounded recommendations. The backend must advertise support
- * before a recommendation is applied. No cycle skipping or sub-native dynamic
- * resolution is enabled by this policy.
+ * Only proven knobs are applied. Requested image quality is protected: thermal,
+ * memory or timing pressure never silently lowers the selected framebuffer scale
+ * and cycle skipping stays disabled.
  */
 object PS2SmartPerf {
     enum class Mode { ECO, BALANCED, PERFORMANCE }
@@ -23,12 +24,19 @@ object PS2SmartPerf {
         val lowRam: Boolean,
         val memoryClassMiB: Int,
         val thermalStatus: Int,
-        val processors: Int
+        val processors: Int,
+        val powerSave: Boolean
     )
 
     data class Plan(
         val mode: Mode,
         val renderer: PS2Backend.Renderer,
+        val internalResolutionFactor: Int,
+        val widescreen: Boolean,
+        val presentationMode: Int,
+        val forceBilinear: Boolean,
+        val frameLimit: Boolean,
+        val spuBlockCount: Int,
         val textureCacheMiB: Int,
         val jitCacheMiB: Int,
         val audioTargetMs: Int,
@@ -41,6 +49,12 @@ object PS2SmartPerf {
     ) {
         fun asRuntimeConfig(): PS2Backend.RuntimeConfig = PS2Backend.RuntimeConfig(
             renderer = renderer,
+            internalResolutionFactor = internalResolutionFactor,
+            widescreen = widescreen,
+            presentationMode = presentationMode,
+            forceBilinear = forceBilinear,
+            limitFrameRate = frameLimit,
+            spuBlockCount = spuBlockCount,
             qualityFloorScale = max(1.0f, qualityFloorScale),
             textureCacheMiB = textureCacheMiB,
             jitCacheMiB = jitCacheMiB,
@@ -70,23 +84,39 @@ object PS2SmartPerf {
             lowRam = am.isLowRamDevice,
             memoryClassMiB = am.memoryClass,
             thermalStatus = thermal,
-            processors = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+            processors = Runtime.getRuntime().availableProcessors().coerceAtLeast(1),
+            powerSave = power.isPowerSaveMode
         )
     }
 
-    fun initial(context: Context, caps: PS2Backend.Capabilities): Plan {
+    fun initial(
+        context: Context,
+        caps: PS2Backend.Capabilities,
+        requested: PS2Settings.Config = PS2Settings.resolve(context)
+    ): Plan {
         val env = envelope(context)
-        val mode = when {
-            env.lowRam || env.memoryClassMiB <= 256 -> Mode.ECO
-            env.memoryClassMiB >= 512 && !isThermallyConstrained(env.thermalStatus) -> Mode.PERFORMANCE
-            else -> Mode.BALANCED
+        val mode = when (requested.preset) {
+            PS2Settings.Preset.PERFORMANCE -> Mode.PERFORMANCE
+            PS2Settings.Preset.BALANCED, PS2Settings.Preset.QUALITY -> Mode.BALANCED
+            PS2Settings.Preset.CUSTOM -> if (env.lowRam) Mode.ECO else Mode.BALANCED
+            PS2Settings.Preset.AUTO -> when {
+                env.lowRam || isThermallyConstrained(env.thermalStatus) || env.powerSave -> Mode.ECO
+                env.memoryClassMiB >= 384 && env.processors >= 6 -> Mode.PERFORMANCE
+                else -> Mode.BALANCED
+            }
         }
-        val renderer = when {
-            caps.vulkan -> PS2Backend.Renderer.VULKAN
-            caps.gles3 -> PS2Backend.Renderer.GLES3
-            else -> PS2Backend.Renderer.AUTO
-        }
-        return basePlan(mode, renderer, "initial device envelope")
+        val renderer = PS2Settings.rendererFor(requested, caps)
+        val base = basePlan(mode, requested, renderer, "perfil inicial medido do dispositivo")
+        // WarmStart is conservative only in scheduling/audio. It never rewrites
+        // the requested framebuffer scale.
+        return if (isThermallyConstrained(env.thermalStatus)) {
+            base.copy(
+                mode = Mode.ECO,
+                spuBlockCount = max(base.spuBlockCount, 96),
+                queueAheadFrames = 1,
+                reason = "WarmStart PS2: pressão térmica; qualidade solicitada preservada"
+            )
+        } else base
     }
 
     fun adapt(current: Plan, telemetry: PS2Backend.Telemetry): Decision {
@@ -95,7 +125,12 @@ object PS2SmartPerf {
         }
 
         if (isThermallyConstrained(telemetry.thermalStatus)) {
-            val next = basePlan(Mode.ECO, current.renderer, "thermal pressure")
+            val next = current.copy(
+                mode = Mode.ECO,
+                spuBlockCount = max(current.spuBlockCount, 96),
+                queueAheadFrames = 1,
+                reason = "pressão térmica; resolução protegida em ${current.internalResolutionFactor}×"
+            )
             return Decision(next, Pressure.THERMAL, 1f, next != current)
         }
         if (telemetry.memoryPressure >= 0.85f) {
@@ -103,62 +138,51 @@ object PS2SmartPerf {
                 textureCacheMiB = max(48, current.textureCacheMiB - 32),
                 jitCacheMiB = max(12, current.jitCacheMiB - 8),
                 queueAheadFrames = 1,
-                reason = "memory pressure"
+                reason = "pressão de memória; qualidade visual preservada"
             )
             return Decision(next, Pressure.MEMORY, telemetry.memoryPressure.coerceIn(0f, 1f), next != current)
         }
-        if (telemetry.hardAudioUnderruns > 0 && telemetry.audioFillMs in 0f..36f) {
+        if (telemetry.hardAudioUnderruns > 0) {
             val next = current.copy(
-                audioTargetMs = min(112, current.audioTargetMs + 12),
-                queueAheadFrames = max(1, current.queueAheadFrames),
-                reason = "audio starvation"
+                spuBlockCount = min(100, current.spuBlockCount + 4),
+                audioTargetMs = min(112, current.audioTargetMs + 8),
+                reason = "starvation de áudio medido"
             )
-            return Decision(next, Pressure.AUDIO, 0.85f, next != current)
+            return Decision(next, Pressure.AUDIO, 0.9f, next != current)
         }
 
+        // EE/VU/GS classifications only become actionable when the backend
+        // exposes real timing counters. Unknown values remain negative.
         val eeVu = positive(telemetry.eeMs) + positive(telemetry.vuMs)
         val gs = positive(telemetry.gsMs) + positive(telemetry.presentMs)
         if (eeVu <= 0f && gs <= 0f) {
             return Decision(current, Pressure.STABLE, 0f, changed = false)
         }
-
         val total = max(0.001f, eeVu + gs)
         val eeShare = eeVu / total
         val gsShare = gs / total
         return when {
-            eeShare >= 0.62f -> {
-                val next = current.copy(
-                    jitCacheMiB = min(64, current.jitCacheMiB + 8),
-                    reason = "EE/VU dominated window"
-                )
-                Decision(next, Pressure.EE_VU, eeShare.coerceIn(0f, 1f), next != current)
-            }
-            gsShare >= 0.62f -> {
-                val next = current.copy(
-                    asyncTextureUpload = true,
-                    queueAheadFrames = min(2, max(1, current.queueAheadFrames)),
-                    reason = "GS/present dominated window"
-                )
-                Decision(next, Pressure.GS, gsShare.coerceIn(0f, 1f), next != current)
-            }
-            else -> Decision(current, Pressure.MIXED, 0.55f, changed = false)
+            eeShare >= 0.62f -> Decision(current.copy(reason = "EE/VU dominante; aguardando knob nativo seguro"), Pressure.EE_VU, eeShare, false)
+            gsShare >= 0.62f -> Decision(current.copy(reason = "GS/present dominante; resolução solicitada protegida"), Pressure.GS, gsShare, false)
+            else -> Decision(current, Pressure.MIXED, 0.55f, false)
         }
     }
 
-    private fun basePlan(mode: Mode, renderer: PS2Backend.Renderer, reason: String): Plan = when (mode) {
-        Mode.ECO -> Plan(
+    private fun basePlan(
+        mode: Mode,
+        requested: PS2Settings.Config,
+        renderer: PS2Backend.Renderer,
+        reason: String
+    ): Plan {
+        val common = Plan(
             mode = mode,
             renderer = renderer,
-            textureCacheMiB = 64,
-            jitCacheMiB = 16,
-            audioTargetMs = 76,
-            queueAheadFrames = 1,
-            asyncTextureUpload = true,
-            reason = reason
-        )
-        Mode.BALANCED -> Plan(
-            mode = mode,
-            renderer = renderer,
+            internalResolutionFactor = requested.internalResolution.factor,
+            widescreen = requested.widescreen,
+            presentationMode = requested.presentation.nativeValue,
+            forceBilinear = requested.forceBilinear,
+            frameLimit = requested.frameLimit,
+            spuBlockCount = requested.spuBlockCount,
             textureCacheMiB = 96,
             jitCacheMiB = 24,
             audioTargetMs = 64,
@@ -166,16 +190,27 @@ object PS2SmartPerf {
             asyncTextureUpload = true,
             reason = reason
         )
-        Mode.PERFORMANCE -> Plan(
-            mode = mode,
-            renderer = renderer,
-            textureCacheMiB = 128,
-            jitCacheMiB = 32,
-            audioTargetMs = 56,
-            queueAheadFrames = 2,
-            asyncTextureUpload = true,
-            reason = reason
-        )
+        return when (mode) {
+            Mode.ECO -> common.copy(
+                textureCacheMiB = 64,
+                jitCacheMiB = 16,
+                audioTargetMs = 76,
+                queueAheadFrames = 1,
+                spuBlockCount = max(common.spuBlockCount, 96)
+            )
+            Mode.BALANCED -> common.copy(
+                textureCacheMiB = 96,
+                jitCacheMiB = 24,
+                audioTargetMs = 64,
+                queueAheadFrames = 1
+            )
+            Mode.PERFORMANCE -> common.copy(
+                textureCacheMiB = 128,
+                jitCacheMiB = 32,
+                audioTargetMs = 56,
+                queueAheadFrames = 2
+            )
+        }
     }
 
     private fun positive(value: Float): Float = if (value > 0f) value else 0f
