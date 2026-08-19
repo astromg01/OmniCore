@@ -1,5 +1,0 @@
-run_id=32282383566
-commit=f8814e570c7ffcab4d52184f9fb6716bd8bfceb2
-status=failure
-version=0.11.4
-phase=ps2-alpha5-smartperf-v2
