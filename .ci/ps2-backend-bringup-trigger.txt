@@ -1,6 +1,6 @@
-OmniCore PS2 backend bring-up validation
+OmniCore PS2 registered workflow bridge trigger
 branch=agent/0.11.0-ps2-foundation
-phase=backend-bringup-2-dualabi-apk
+phase=boot-bridge-1-real-play-jni
 backend=Play!
 play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da
-revision=5
+revision=6-bootbridge1
