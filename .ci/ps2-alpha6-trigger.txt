@@ -3,4 +3,4 @@ version=0.11.5
 backend=pcsx2-armsx2
 armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
 focus=real-bios-arm64-universal-page-baseline
-attempt=6-complete-native-dependency-closure
+attempt=7-recursive-native-closure-system-libs
