@@ -29,6 +29,13 @@ class PS2Core : EmulatorCore {
     }
 
     companion object {
-        val SUPPORTED_EXTENSIONS = setOf("iso", "chd")
+        /**
+         * Disk formats accepted by the pinned Play! Android backend. BIN and
+         * CSO overlap other consoles, so LibraryImportEngine only routes them
+         * to PS2 when the user explicitly selected the PS2 library/filter.
+         * ELF remains excluded until OmniCore stages a filesystem path for the
+         * backend's loadElf API instead of guessing that content:// is valid.
+         */
+        val SUPPORTED_EXTENSIONS = setOf("iso", "chd", "bin", "cso", "isz")
     }
 }
