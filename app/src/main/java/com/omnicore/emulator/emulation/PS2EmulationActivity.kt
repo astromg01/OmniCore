@@ -3,12 +3,17 @@ package com.omnicore.emulator.emulation
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -21,6 +26,7 @@ import com.omnicore.emulator.core.ps2.PS2Backend
 import com.omnicore.emulator.core.ps2.PlayPS2Backend
 import com.omnicore.emulator.model.ConsoleSystem
 import com.omnicore.emulator.model.GameEntry
+import com.omnicore.emulator.performance.PS2GameTuning
 import com.omnicore.emulator.performance.PS2SmartPerf
 import com.omnicore.emulator.settings.PS2InputSettings
 import com.omnicore.emulator.settings.PS2Settings
@@ -39,6 +45,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var ps2Config: PS2Settings.Config
     private lateinit var inputConfig: PS2InputSettings.Config
     private lateinit var launchPlan: PS2SmartPerf.Plan
+    private lateinit var capabilities: PS2Backend.Capabilities
 
     @Volatile private var destroyed = false
     @Volatile private var booting = false
@@ -48,10 +55,37 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
     private var controlsVisible = true
     private var manualPaused = false
     private var bootThread: Thread? = null
+    private val perfHandler = Handler(Looper.getMainLooper())
+    private var tuningToastShown = false
+
+    private val perfSampler = object : Runnable {
+        override fun run() {
+            if (destroyed || !started) return
+            val telemetry = backend.telemetry()
+            val observation = PS2GameTuning.observe(
+                context = this@PS2EmulationActivity,
+                gameIdentity = gameIdentity(),
+                telemetry = telemetry,
+                activeRenderer = launchPlan.renderer,
+                autoRendererRequested = ps2Config.renderer == PS2Settings.RendererMode.AUTO,
+                caps = capabilities
+            )
+            if (observation.queuedRendererChange && !tuningToastShown) {
+                tuningToastShown = true
+                Toast.makeText(
+                    this@PS2EmulationActivity,
+                    "PS2: slow-motion medido. ${observation.state.forcedRenderer} será testado no próximo boot deste jogo.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            perfHandler.postDelayed(this, PERF_SAMPLE_MS)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        enableSustainedPerformanceIfAvailable()
         enterImmersiveMode()
 
         currentGame = gameFromIntent() ?: run {
@@ -62,8 +96,15 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         ps2Config = PS2Settings.resolve(this)
         inputConfig = PS2InputSettings.resolve(this)
         backend = PlayPS2Backend(this)
-        val capabilities = backend.probe()
+        capabilities = backend.probe()
         launchPlan = PS2SmartPerf.initial(this, capabilities, ps2Config)
+        launchPlan = PS2GameTuning.apply(
+            this,
+            gameIdentity(),
+            launchPlan,
+            ps2Config.renderer == PS2Settings.RendererMode.AUTO,
+            capabilities
+        )
 
         buildUi()
         if (!capabilities.available) {
@@ -129,7 +170,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
             setBackgroundColor(Color.argb(205, 10, 12, 24))
             textSize = 12f
             gravity = Gravity.CENTER
-            maxLines = 5
+            maxLines = 6
             setPadding(dp(14), dp(8), dp(14), dp(8))
             text = "PS2 • preparando ${currentGame.title}…"
         }
@@ -169,16 +210,19 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
+        configureDisplayPacing(holder.surface)
         backend.attachSurface(holder.surface)
         tryBoot()
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        configureDisplayPacing(holder.surface)
         backend.attachSurface(holder.surface)
         tryBoot()
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        perfHandler.removeCallbacks(perfSampler)
         controls.releaseAll()
         backend.releaseAllInput()
         if (started) backend.pause()
@@ -190,7 +234,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         val surface = surfaceView.holder.surface
         if (!surface.isValid) return
 
-        val capabilities = backend.probe()
+        capabilities = backend.probe()
         if (!capabilities.available) {
             statusView.visibility = View.VISIBLE
             statusView.text = "PS2 BACKEND INDISPONÍVEL\n${capabilities.notes}"
@@ -198,6 +242,13 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         }
 
         launchPlan = PS2SmartPerf.initial(this, capabilities, ps2Config)
+        launchPlan = PS2GameTuning.apply(
+            this,
+            gameIdentity(),
+            launchPlan,
+            ps2Config.renderer == PS2Settings.RendererMode.AUTO,
+            capabilities
+        )
         booting = true
         statusView.visibility = View.VISIBLE
         statusView.text = buildString {
@@ -214,7 +265,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
             val result = backend.boot(
                 PS2Backend.BootRequest(
                     imagePath = currentGame.uri,
-                    gameKey = currentGame.id,
+                    gameKey = gameIdentity(),
                     config = launchPlan.asRuntimeConfig()
                 )
             )
@@ -224,7 +275,10 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                 when (result) {
                     is PS2Backend.BootResult.Started -> {
                         started = true
+                        tuningToastShown = false
                         statusView.text = "PS2 BOOT OK • ${result.renderer} • ${launchPlan.internalResolutionFactor}×"
+                        perfHandler.removeCallbacks(perfSampler)
+                        perfHandler.postDelayed(perfSampler, PERF_SAMPLE_MS)
                         statusView.postDelayed({
                             if (!destroyed && started) statusView.visibility = View.GONE
                         }, 1700L)
@@ -268,6 +322,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
             menu.add(0, MENU_CONTROLS, 40, if (controlsVisible) "Ocultar controles" else "Mostrar controles")
             menu.add(0, MENU_PERF, 50, "Desempenho agora")
             menu.add(0, MENU_STATUS, 51, "Mostrar status")
+            menu.add(0, MENU_RESET_TUNING, 52, "Resetar ajuste deste jogo")
             menu.add(0, MENU_EXIT, 99, "Sair do jogo")
 
             setOnMenuItemClickListener { item ->
@@ -335,8 +390,14 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                         true
                     }
                     item.itemId == MENU_STATUS -> {
-                        statusView.text = "PS2 • ${launchPlan.mode} • ${launchPlan.renderer} • ${launchPlan.internalResolutionFactor}×\n${launchPlan.reason}"
+                        val tuning = PS2GameTuning.read(this@PS2EmulationActivity, gameIdentity())
+                        statusView.text = "PS2 • ${launchPlan.mode} • ${launchPlan.renderer} • ${launchPlan.internalResolutionFactor}×\n${launchPlan.reason}\n${tuning.note}"
                         statusView.visibility = View.VISIBLE
+                        true
+                    }
+                    item.itemId == MENU_RESET_TUNING -> {
+                        PS2GameTuning.clear(this@PS2EmulationActivity, gameIdentity())
+                        Toast.makeText(this@PS2EmulationActivity, "Ajuste medido deste jogo foi resetado.", Toast.LENGTH_SHORT).show()
                         true
                     }
                     item.itemId == MENU_EXIT -> {
@@ -353,11 +414,14 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
     private fun showPerformanceStatus() {
         val telemetry = backend.telemetry()
         val decision = PS2SmartPerf.adapt(launchPlan, telemetry)
+        val tuning = PS2GameTuning.read(this, gameIdentity())
         val thermal = telemetry.thermalStatus
         val memoryPct = (telemetry.memoryPressure * 100).toInt().coerceIn(0, 100)
+        val fps = if (telemetry.measuredFps > 0f) String.format("%.1f", telemetry.measuredFps) else "--"
+        val draws = if (telemetry.drawCallsPerFrame > 0f) String.format("%.0f", telemetry.drawCallsPerFrame) else "--"
         Toast.makeText(
             this,
-            "PS2 ${launchPlan.mode} • ${launchPlan.renderer} • ${launchPlan.internalResolutionFactor}× • térmico $thermal • memória $memoryPct% • ${decision.pressure}",
+            "PS2 ${launchPlan.renderer} • $fps FPS • $draws draws/frame • térmico $thermal • memória $memoryPct% • ${decision.pressure} • ${tuning.note}",
             Toast.LENGTH_LONG
         ).show()
     }
@@ -436,6 +500,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
             source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
 
     override fun onPause() {
+        perfHandler.removeCallbacks(perfSampler)
         if (::controls.isInitialized) controls.releaseAll()
         if (::backend.isInitialized) {
             backend.releaseAllInput()
@@ -448,18 +513,42 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         super.onResume()
         enterImmersiveMode()
         if (::backend.isInitialized) {
-            if (started && !manualPaused && !controls.isEditMode()) backend.resume()
-            else if (::surfaceView.isInitialized) tryBoot()
+            if (started && !manualPaused && !controls.isEditMode()) {
+                backend.resume()
+                perfHandler.removeCallbacks(perfSampler)
+                perfHandler.postDelayed(perfSampler, PERF_SAMPLE_MS)
+            } else if (::surfaceView.isInitialized) tryBoot()
         }
     }
 
     override fun onDestroy() {
         destroyed = true
+        perfHandler.removeCallbacksAndMessages(null)
         if (::classicBoot.isInitialized) classicBoot.cancel()
         if (::controls.isInitialized) controls.releaseAll()
         if (::backend.isInitialized) backend.stop()
         bootThread = null
         super.onDestroy()
+    }
+
+    private fun configureDisplayPacing(surface: Surface) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && surface.isValid) {
+            runCatching {
+                surface.setFrameRate(
+                    60f,
+                    Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
+                    Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS
+                )
+            }
+        }
+    }
+
+    private fun enableSustainedPerformanceIfAvailable() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
+            packageManager.hasSystemFeature(PackageManager.FEATURE_SUSTAINED_PERFORMANCE_MODE)
+        ) {
+            runCatching { window.setSustainedPerformanceMode(true) }
+        }
     }
 
     private fun enterImmersiveMode() {
@@ -472,6 +561,8 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                 View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE
     }
+
+    private fun gameIdentity(): String = "${currentGame.fileName.lowercase()}|${currentGame.uri}"
 
     private fun gameFromIntent(): GameEntry? {
         val id = intent.getStringExtra(EXTRA_GAME_ID).orEmpty()
@@ -500,6 +591,8 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         private const val EXTRA_FILE_NAME = "ps2_file_name"
         private const val EXTRA_SIZE_BYTES = "ps2_size_bytes"
 
+        private const val PERF_SAMPLE_MS = 1800L
+
         private const val MENU_PAUSE = 1
         private const val MENU_SAVE_BASE = 100
         private const val MENU_LOAD_BASE = 200
@@ -511,6 +604,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         private const val MENU_CONTROLS = 400
         private const val MENU_PERF = 500
         private const val MENU_STATUS = 501
+        private const val MENU_RESET_TUNING = 502
         private const val MENU_EXIT = 999
 
         fun intent(context: Context, game: GameEntry): Intent =
