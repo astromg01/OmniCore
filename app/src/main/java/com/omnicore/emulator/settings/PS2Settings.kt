@@ -6,7 +6,7 @@ import com.omnicore.emulator.core.ps2.PS2Backend
 /** PlayStation 2 settings namespace. Nothing here mutates PS1 or N64 preferences. */
 object PS2Settings {
     enum class Preset(val storage: String, val label: String, val subtitle: String) {
-        AUTO("auto", "Inteligente", "Prioriza funcionamento estável e usa o renderer mais adequado disponível"),
+        AUTO("auto", "Inteligente", "Mede o desempenho real e só mantém ajustes reversíveis que comprovem ganho na sessão"),
         PERFORMANCE("performance", "Desempenho", "Menor overhead e resposta de áudio mais curta"),
         BALANCED("balanced", "Equilibrado", "Compatibilidade e latência moderadas"),
         QUALITY("quality", "Qualidade", "Aumenta resolução somente por escolha explícita"),
@@ -32,7 +32,7 @@ object PS2Settings {
     }
 
     enum class BootStyle(val storage: String, val label: String) {
-        CLASSIC("classic", "Visual OmniCore"),
+        CLASSIC("classic", "Intro OmniCore"),
         DIRECT("direct", "Direta")
     }
 
@@ -122,9 +122,9 @@ object PS2Settings {
     }
 
     /**
-     * Play!'s Android backend supports both OpenGL ES and Vulkan. For the AUTO
-     * path we prefer Vulkan whenever the device and packaged backend expose it.
-     * Explicit GLES remains available as the compatibility fallback.
+     * AUTO chooses the best capability-safe renderer only for the initial boot.
+     * SmartPerf V2 never flips renderers from telemetry or persists a renderer
+     * experiment to the next launch.
      */
     fun rendererFor(config: Config, caps: PS2Backend.Capabilities): PS2Backend.Renderer = when (config.renderer) {
         RendererMode.VULKAN -> if (caps.vulkan) PS2Backend.Renderer.VULKAN else PS2Backend.Renderer.GLES3
