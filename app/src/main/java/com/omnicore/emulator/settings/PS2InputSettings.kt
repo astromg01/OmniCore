@@ -44,15 +44,19 @@ object PS2InputSettings {
     fun resolve(context: Context): Config {
         val prefs = prefs(context)
         return Config(
-            analogDeadzone = prefs.getFloat(KEY_DEADZONE, 0.09f).coerceIn(0.03f, 0.30f),
-            analogSensitivity = prefs.getFloat(KEY_SENSITIVITY, 1.0f).coerceIn(0.70f, 1.30f),
+            // Device-tested Alpha 6 baseline: retain slow steering/camera input
+            // without making the centre noisy.
+            analogDeadzone = prefs.getFloat(KEY_DEADZONE, 0.06f).coerceIn(0.03f, 0.30f),
+            analogSensitivity = prefs.getFloat(KEY_SENSITIVITY, 1.05f).coerceIn(0.70f, 1.30f),
             precisionAnalog = prefs.getBoolean(KEY_PRECISION_ANALOG, true),
             haptics = prefs.getBoolean(KEY_HAPTICS, false),
             overlayPreset = OverlayPreset.entries.firstOrNull {
                 it.storage == prefs.getString(KEY_OVERLAY, OverlayPreset.CLEAN.storage)
             } ?: OverlayPreset.CLEAN,
-            touchOpacity = prefs.getFloat(KEY_OPACITY, 0.74f).coerceIn(0.22f, 1f),
-            touchScale = prefs.getFloat(KEY_SCALE, 0.98f).coerceIn(0.70f, 1.30f),
+            // Clear mode stays translucent, but is easier to acquire with the
+            // thumb than the first PCSX2 device baseline.
+            touchOpacity = prefs.getFloat(KEY_OPACITY, 0.82f).coerceIn(0.22f, 1f),
+            touchScale = prefs.getFloat(KEY_SCALE, 1.03f).coerceIn(0.70f, 1.30f),
             dynamicOpacity = prefs.getBoolean(KEY_DYNAMIC_OPACITY, true),
             showDpad = prefs.getBoolean(KEY_SHOW_DPAD, true),
             showRightStick = prefs.getBoolean(KEY_SHOW_RIGHT_STICK, true),
