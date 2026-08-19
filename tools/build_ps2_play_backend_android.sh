@@ -8,13 +8,18 @@ OUT_ROOT="${2:-build/ps2-play}"
 PIN="04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
 PLAY_ABIS="${PLAY_ABIS:-arm64-v8a armeabi-v7a}"
 PLAY_BUILD_JOBS="${PLAY_BUILD_JOBS:-2}"
+BRINGUP2=false
+if grep -q '^phase=backend-bringup-2-dualabi-apk$' .ci/ps2-backend-bringup-trigger.txt 2>/dev/null; then
+  BRINGUP2=true
+  PLAY_ABIS="arm64-v8a armeabi-v7a"
+  PLAY_BUILD_JOBS=2
+fi
 
 verify_upstream_pins() {
   if [[ "$(git -C "$PLAY_SRC" rev-parse HEAD)" != "$PIN" ]]; then
     echo "Unexpected Play! source revision" >&2
     return 1
   fi
-
   local status
   status="$(git -C "$PLAY_SRC" submodule status --recursive)"
   printf '%s\n' "$status"
@@ -60,10 +65,28 @@ for ABI in $PLAY_ABIS; do
   test -s "$JNI_DIR/libPlay.so"
 done
 
-# Some upstream CMake dependencies intentionally rename/generated files while
-# configuring (notably libchdr's bundled zlib zconf.h). A dirty worktree after
-# a build is therefore not evidence that OmniCore patched Play!. What matters
-# for reproducibility is that the root checkout and every recursive submodule
-# remain at the exact commits recorded by the pinned Play! revision.
 verify_upstream_pins
+
+if $BRINGUP2; then
+  echo "=== OmniCore Bring-up 2 packaging gate ==="
+  READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+  for ABI in arm64-v8a armeabi-v7a; do
+    LIB="app/src/main/jniLibs/$ABI/libPlay.so"
+    "$READELF" -lW "$LIB" | awk '$1 == "LOAD" { count++; if ($NF != "0x4000" && $NF != "0x10000") bad=1 } END { if (count == 0 || bad) exit 1 }'
+    if "$READELF" -dW "$LIB" | grep -q 'libc++_shared.so'; then
+      echo "Unexpected shared C++ runtime dependency for $ABI" >&2
+      exit 1
+    fi
+  done
+  gradle :app:assembleDebug --stacktrace --no-daemon
+  APK="app/build/outputs/apk/debug/app-debug.apk"
+  test -s "$APK"
+  for ABI in arm64-v8a armeabi-v7a; do
+    unzip -l "$APK" | grep -q "lib/$ABI/libPlay.so"
+    unzip -l "$APK" | grep -q "lib/$ABI/libomnicore_ps2_runtime.so"
+  done
+  "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK"
+  echo "OMNICORE_PS2_BRINGUP2_OK dual-abi apk 16kb"
+fi
+
 printf 'Play! Android backend built for: %s\n' "$PLAY_ABIS"
