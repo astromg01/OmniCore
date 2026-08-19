@@ -44,15 +44,15 @@ object PS2InputSettings {
     fun resolve(context: Context): Config {
         val prefs = prefs(context)
         return Config(
-            analogDeadzone = prefs.getFloat(KEY_DEADZONE, 0.10f).coerceIn(0.03f, 0.30f),
+            analogDeadzone = prefs.getFloat(KEY_DEADZONE, 0.09f).coerceIn(0.03f, 0.30f),
             analogSensitivity = prefs.getFloat(KEY_SENSITIVITY, 1.0f).coerceIn(0.70f, 1.30f),
             precisionAnalog = prefs.getBoolean(KEY_PRECISION_ANALOG, true),
             haptics = prefs.getBoolean(KEY_HAPTICS, false),
             overlayPreset = OverlayPreset.entries.firstOrNull {
                 it.storage == prefs.getString(KEY_OVERLAY, OverlayPreset.CLEAN.storage)
             } ?: OverlayPreset.CLEAN,
-            touchOpacity = prefs.getFloat(KEY_OPACITY, 0.62f).coerceIn(0.22f, 1f),
-            touchScale = prefs.getFloat(KEY_SCALE, 0.94f).coerceIn(0.70f, 1.30f),
+            touchOpacity = prefs.getFloat(KEY_OPACITY, 0.74f).coerceIn(0.22f, 1f),
+            touchScale = prefs.getFloat(KEY_SCALE, 0.98f).coerceIn(0.70f, 1.30f),
             dynamicOpacity = prefs.getBoolean(KEY_DYNAMIC_OPACITY, true),
             showDpad = prefs.getBoolean(KEY_SHOW_DPAD, true),
             showRightStick = prefs.getBoolean(KEY_SHOW_RIGHT_STICK, true),
