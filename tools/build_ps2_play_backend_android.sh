@@ -32,17 +32,18 @@ verify_upstream_pins() {
 verify_upstream_pins
 
 # Play!'s Android application copies GameConfig.xml into assets before every
-# build. OmniCore embeds only the native backend, so we must reproduce that
-# packaging contract explicitly or the upstream per-game compatibility,
-# FP/VU corrections and IdleLoopBlock optimizations are silently lost.
+# build. OmniCore embeds only the native backend, so we reproduce that packaging
+# contract explicitly or upstream per-game FP/VU/patch/IdleLoopBlock fixes are lost.
 PATCH_DB="$PLAY_SRC/GameConfig.xml"
 test -s "$PATCH_DB"
 mkdir -p app/src/main/assets
 install -m 0644 "$PATCH_DB" app/src/main/assets/GameConfig.xml
-grep -Fq '<Config>' app/src/main/assets/GameConfig.xml
+grep -Fq '<GameConfigs>' app/src/main/assets/GameConfig.xml
 grep -Fq '<GameConfig ' app/src/main/assets/GameConfig.xml
 grep -Fq '<IdleLoopBlock' app/src/main/assets/GameConfig.xml
-printf 'Play! GameConfig compatibility database staged into OmniCore assets.\n'
+COUNT="$(grep -c '<GameConfig ' app/src/main/assets/GameConfig.xml)"
+test "$COUNT" -eq 47
+printf 'Play! GameConfig staged into OmniCore assets (%s profiles).\n' "$COUNT"
 
 for ABI in $PLAY_ABIS; do
   BUILD_DIR="$OUT_ROOT/$ABI"
