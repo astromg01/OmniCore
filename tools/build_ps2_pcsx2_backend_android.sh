@@ -180,8 +180,9 @@ fi
 grep -Fq 'public class SDLActivity extends Activity' "$SDL_JAVA_DST/SDLActivity.java"
 grep -Fq 'static public void setupJNI()' "$SDL_JAVA_DST/SDL.java"
 
-# Device-test diagnostics: keep the real loader exception visible in the game
-# overlay so any remaining JNI/Java ABI mismatch is immediately actionable.
+# Keep a useful real-device linker diagnostic, but do not rewrite newer
+# diagnostics added by subsequent Alpha 6 runtime work. This step must be
+# idempotent so later attempts can change the message without breaking imports.
 BACKEND="app/src/main/java/com/omnicore/emulator/core/ps2/Pcsx2PS2Backend.kt"
 python3 - "$BACKEND" <<'PY'
 from pathlib import Path
@@ -190,12 +191,13 @@ p = Path(sys.argv[1])
 text = p.read_text(encoding="utf-8")
 old = 'NativeApp.hasNoNativeBinary -> "Pinned PCSX2 emucore is not packaged for this page size."'
 new = 'NativeApp.hasNoNativeBinary -> "A6#9 ${NativeApp.nativeLoadDiagnostic()} ABI=${Build.SUPPORTED_ABIS.joinToString("/")}"'
-if old not in text and 'A6#9 ${NativeApp.nativeLoadDiagnostic()}' not in text:
+if old in text:
+    text = text.replace(old, new)
+elif 'NativeApp.nativeLoadDiagnostic()' not in text:
     raise SystemExit("PCSX2 backend loader diagnostic anchor not found")
-text = text.replace(old, new)
 p.write_text(text, encoding="utf-8")
 PY
-grep -Fq 'A6#9 ${NativeApp.nativeLoadDiagnostic()}' "$BACKEND"
+grep -Fq 'NativeApp.nativeLoadDiagnostic()' "$BACKEND"
 
 RESOURCE_SRC="$STAGE/assets/resources"
 RESOURCE_DST="app/src/main/assets/pcsx2/resources"
