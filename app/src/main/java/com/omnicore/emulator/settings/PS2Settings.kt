@@ -6,7 +6,7 @@ import com.omnicore.emulator.core.ps2.PS2Backend
 /** PlayStation 2 settings namespace. Nothing here mutates PS1 or N64 preferences. */
 object PS2Settings {
     enum class Preset(val storage: String, val label: String, val subtitle: String) {
-        AUTO("auto", "Inteligente", "Protege qualidade nativa e ajusta apenas knobs PS2 comprovados"),
+        AUTO("auto", "Inteligente", "Prioriza funcionamento estável e usa o renderer mais adequado disponível"),
         PERFORMANCE("performance", "Desempenho", "Menor overhead e resposta de áudio mais curta"),
         BALANCED("balanced", "Equilibrado", "Compatibilidade e latência moderadas"),
         QUALITY("quality", "Qualidade", "Aumenta resolução somente por escolha explícita"),
@@ -16,7 +16,7 @@ object PS2Settings {
     enum class RendererMode(val storage: String, val label: String) {
         AUTO("auto", "Automático"),
         GLES3("gles3", "OpenGL ES"),
-        VULKAN("vulkan", "Vulkan (experimental)")
+        VULKAN("vulkan", "Vulkan")
     }
 
     enum class InternalResolution(val storage: String, val label: String, val factor: Int) {
@@ -32,7 +32,7 @@ object PS2Settings {
     }
 
     enum class BootStyle(val storage: String, val label: String) {
-        CLASSIC("classic", "Clássica"),
+        CLASSIC("classic", "Clássica OmniCore"),
         DIRECT("direct", "Direta")
     }
 
@@ -98,7 +98,7 @@ object PS2Settings {
             } ?: fallback.presentation,
             forceBilinear = storage.getBoolean(KEY_BILINEAR, fallback.forceBilinear),
             frameLimit = storage.getBoolean(KEY_FRAME_LIMIT, true),
-            spuBlockCount = storage.getInt(KEY_SPU_BLOCKS, fallback.spuBlockCount).coerceIn(72, 100),
+            spuBlockCount = storage.getInt(KEY_SPU_BLOCKS, fallback.spuBlockCount).coerceIn(50, 400),
             bootStyle = readBootStyle(context)
         )
     }
@@ -106,7 +106,7 @@ object PS2Settings {
     fun saveCustom(context: Context, config: Config) {
         val safe = config.copy(
             preset = Preset.CUSTOM,
-            spuBlockCount = config.spuBlockCount.coerceIn(72, 100)
+            spuBlockCount = config.spuBlockCount.coerceIn(50, 400)
         )
         prefs(context).edit()
             .putString(KEY_PRESET, Preset.CUSTOM.storage)
@@ -121,27 +121,29 @@ object PS2Settings {
             .apply()
     }
 
+    /**
+     * Play!'s Android backend supports both OpenGL ES and Vulkan. For the AUTO
+     * path we prefer Vulkan whenever the device and packaged backend expose it,
+     * matching the backend's Android-oriented fast path. Explicit GLES remains
+     * available as the compatibility fallback.
+     */
     fun rendererFor(config: Config, caps: PS2Backend.Capabilities): PS2Backend.Renderer = when (config.renderer) {
         RendererMode.VULKAN -> if (caps.vulkan) PS2Backend.Renderer.VULKAN else PS2Backend.Renderer.GLES3
         RendererMode.GLES3 -> PS2Backend.Renderer.GLES3
-        RendererMode.AUTO -> if (caps.vulkan && config.preset == Preset.QUALITY) {
-            PS2Backend.Renderer.VULKAN
-        } else {
-            PS2Backend.Renderer.GLES3
-        }
+        RendererMode.AUTO -> if (caps.vulkan) PS2Backend.Renderer.VULKAN else PS2Backend.Renderer.GLES3
     }
 
     private fun presetConfig(preset: Preset): Config = when (preset) {
         Preset.PERFORMANCE -> Config(
-            preset, RendererMode.GLES3, InternalResolution.NATIVE,
+            preset, RendererMode.AUTO, InternalResolution.NATIVE,
             widescreen = false, presentation = Presentation.FIT,
-            forceBilinear = false, frameLimit = true, spuBlockCount = 80,
+            forceBilinear = false, frameLimit = true, spuBlockCount = 100,
             bootStyle = BootStyle.CLASSIC
         )
         Preset.BALANCED -> Config(
             preset, RendererMode.AUTO, InternalResolution.NATIVE,
             widescreen = false, presentation = Presentation.FIT,
-            forceBilinear = false, frameLimit = true, spuBlockCount = 92,
+            forceBilinear = false, frameLimit = true, spuBlockCount = 100,
             bootStyle = BootStyle.CLASSIC
         )
         Preset.QUALITY -> Config(
@@ -153,7 +155,7 @@ object PS2Settings {
         Preset.AUTO, Preset.CUSTOM -> Config(
             Preset.AUTO, RendererMode.AUTO, InternalResolution.NATIVE,
             widescreen = false, presentation = Presentation.FIT,
-            forceBilinear = false, frameLimit = true, spuBlockCount = 96,
+            forceBilinear = false, frameLimit = true, spuBlockCount = 100,
             bootStyle = BootStyle.CLASSIC
         )
     }
