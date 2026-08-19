@@ -55,14 +55,14 @@ interface PS2Backend {
     data class RuntimeConfig(
         val renderer: Renderer = Renderer.AUTO,
         val biosMode: BiosMode = BiosMode.AUTO,
-        /** Play! OpenGL framebuffer multiplier: 1, 2 or 4. */
+        /** Play! framebuffer multiplier: 1, 2 or 4. */
         val internalResolutionFactor: Int = 1,
         val widescreen: Boolean = false,
         /** Play! presentation mode: 0 fill, 1 fit, 2 original. */
         val presentationMode: Int = 1,
         val forceBilinear: Boolean = false,
         val limitFrameRate: Boolean = true,
-        val spuBlockCount: Int = 96,
+        val spuBlockCount: Int = 100,
         val qualityFloorScale: Float = 1.0f,
         val textureCacheMiB: Int = 96,
         val jitCacheMiB: Int = 24,
@@ -74,7 +74,7 @@ interface PS2Backend {
         init {
             require(internalResolutionFactor in setOf(1, 2, 4))
             require(presentationMode in 0..2)
-            require(spuBlockCount in 32..100)
+            require(spuBlockCount in 10..400)
             require(qualityFloorScale >= 1.0f) { "PS2 quality floor cannot be below native scale." }
             require(textureCacheMiB in 32..512)
             require(jitCacheMiB in 8..256)
@@ -102,6 +102,8 @@ interface PS2Backend {
      */
     data class Telemetry(
         val hostFrameMs: Float = -1f,
+        val measuredFps: Float = -1f,
+        val drawCallsPerFrame: Float = -1f,
         val eeMs: Float = -1f,
         val vuMs: Float = -1f,
         val gsMs: Float = -1f,
