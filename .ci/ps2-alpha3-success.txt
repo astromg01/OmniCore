@@ -1,0 +1,8 @@
+run_id=32228537061
+commit=b4ed482522321d6d46ee7b07f42d2f4938fbbfb9
+status=success
+version=0.11.2
+tag=v0.11.2-ps2-alpha3
+play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da
+abis=arm64-v8a,armeabi-v7a
+features=vulkan-auto,o3-backend,clear-touch,classic-intro,quality-floor
