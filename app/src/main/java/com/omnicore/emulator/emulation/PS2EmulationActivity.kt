@@ -32,6 +32,7 @@ import com.omnicore.emulator.settings.PS2InputSettings
 import com.omnicore.emulator.settings.PS2Settings
 import com.virtualapplications.play.InputManagerConstants
 import kotlin.math.abs
+import kotlin.math.hypot
 
 /** Isolated PlayStation 2 gameplay Activity. */
 class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
@@ -60,9 +61,8 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
 
     /**
      * Performance sampling stays off the UI thread and is measurement-only.
-     * Physical-device Alpha 5 testing proved that automatic renderer/limiter
-     * experiments can reduce performance or break a later boot, so this loop
-     * never mutates the Play! runtime.
+     * The PCSX2 baseline keeps automatic renderer/limiter/resolution changes
+     * disabled so telemetry can never destabilize a running game.
      */
     private val perfSampler = object : Runnable {
         override fun run() {
@@ -256,13 +256,14 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         booting = true
         statusView.visibility = View.VISIBLE
         statusView.text = buildString {
-            append("PS2 • Play! ")
+            append("PS2 • PCSX2 ")
             append(capabilities.backendVersion)
             append(" • ")
             append(launchPlan.renderer)
             append(" • ")
             append(launchPlan.internalResolutionFactor)
             append("×")
+            if (launchPlan.widescreen) append(" • 16:9")
         }
 
         bootThread = Thread({
@@ -279,7 +280,10 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                 when (result) {
                     is PS2Backend.BootResult.Started -> {
                         started = true
-                        statusView.text = "PS2 BOOT OK • ${result.renderer} • ${launchPlan.internalResolutionFactor}×"
+                        statusView.text = buildString {
+                            append("PS2 BOOT OK • ${result.renderer} • ${launchPlan.internalResolutionFactor}×")
+                            if (launchPlan.widescreen) append(" • 16:9")
+                        }
                         perfHandler.removeCallbacks(perfSampler)
                         perfHandler.postDelayed(perfSampler, PERF_SAMPLE_MS)
                         statusView.postDelayed({
@@ -460,33 +464,50 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
 
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
         if (event.action == MotionEvent.ACTION_MOVE && isGamepadSource(event.source)) {
-            backend.setAxis(InputManagerConstants.ANALOG_LEFT_X, centeredAxis(event, MotionEvent.AXIS_X))
-            backend.setAxis(InputManagerConstants.ANALOG_LEFT_Y, centeredAxis(event, MotionEvent.AXIS_Y))
+            val left = shapePhysicalStick(
+                centeredAxisRaw(event, MotionEvent.AXIS_X),
+                centeredAxisRaw(event, MotionEvent.AXIS_Y)
+            )
+            backend.setAxis(InputManagerConstants.ANALOG_LEFT_X, left.first)
+            backend.setAxis(InputManagerConstants.ANALOG_LEFT_Y, left.second)
 
-            val rightX = chooseAxis(event, MotionEvent.AXIS_Z, MotionEvent.AXIS_RX)
-            val rightY = chooseAxis(event, MotionEvent.AXIS_RZ, MotionEvent.AXIS_RY)
-            backend.setAxis(InputManagerConstants.ANALOG_RIGHT_X, rightX)
-            backend.setAxis(InputManagerConstants.ANALOG_RIGHT_Y, rightY)
+            val right = shapePhysicalStick(
+                chooseAxisRaw(event, MotionEvent.AXIS_Z, MotionEvent.AXIS_RX),
+                chooseAxisRaw(event, MotionEvent.AXIS_RZ, MotionEvent.AXIS_RY)
+            )
+            backend.setAxis(InputManagerConstants.ANALOG_RIGHT_X, right.first)
+            backend.setAxis(InputManagerConstants.ANALOG_RIGHT_Y, right.second)
 
             val lTrigger = rawPositiveAxis(event, MotionEvent.AXIS_LTRIGGER)
             val rTrigger = rawPositiveAxis(event, MotionEvent.AXIS_RTRIGGER)
-            if (lTrigger >= 0f) backend.setButton(InputManagerConstants.BUTTON_L2, lTrigger > 0.45f)
-            if (rTrigger >= 0f) backend.setButton(InputManagerConstants.BUTTON_R2, rTrigger > 0.45f)
+            if (lTrigger >= 0f) backend.setButton(InputManagerConstants.BUTTON_L2, lTrigger > 0.35f)
+            if (rTrigger >= 0f) backend.setButton(InputManagerConstants.BUTTON_R2, rTrigger > 0.35f)
             return true
         }
         return super.onGenericMotionEvent(event)
     }
 
-    private fun centeredAxis(event: MotionEvent, axis: Int): Float {
-        val device = event.device ?: return event.getAxisValue(axis).coerceIn(-1f, 1f)
-        val range = device.getMotionRange(axis, event.source) ?: return event.getAxisValue(axis).coerceIn(-1f, 1f)
-        val value = event.getAxisValue(axis)
-        return if (abs(value) <= range.flat) 0f else value.coerceIn(-1f, 1f)
+    private fun centeredAxisRaw(event: MotionEvent, axis: Int): Float {
+        val raw = event.getAxisValue(axis).coerceIn(-1f, 1f)
+        val range = event.device?.getMotionRange(axis, event.source) ?: return raw
+        return if (abs(raw) <= range.flat) 0f else raw
     }
 
-    private fun chooseAxis(event: MotionEvent, primary: Int, fallback: Int): Float {
+    private fun chooseAxisRaw(event: MotionEvent, primary: Int, fallback: Int): Float {
         val pRange = event.device?.getMotionRange(primary, event.source)
-        return if (pRange != null) centeredAxis(event, primary) else centeredAxis(event, fallback)
+        return if (pRange != null) centeredAxisRaw(event, primary) else centeredAxisRaw(event, fallback)
+    }
+
+    private fun shapePhysicalStick(x: Float, y: Float): Pair<Float, Float> {
+        val magnitude = hypot(x, y).coerceAtMost(1f)
+        val deadzone = inputConfig.analogDeadzone.coerceIn(0.03f, 0.30f)
+        if (magnitude <= deadzone) return 0f to 0f
+
+        var normalized = ((magnitude - deadzone) / (1f - deadzone)).coerceIn(0f, 1f)
+        if (inputConfig.precisionAnalog) normalized *= 0.72f + 0.28f * normalized
+        normalized = (normalized * inputConfig.analogSensitivity).coerceIn(0f, 1f)
+        val scale = if (magnitude > 0.0001f) normalized / magnitude else 0f
+        return (x * scale).coerceIn(-1f, 1f) to (y * scale).coerceIn(-1f, 1f)
     }
 
     /** Returns -1 when this device doesn't expose the axis. */
