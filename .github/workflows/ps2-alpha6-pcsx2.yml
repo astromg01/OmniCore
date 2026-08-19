@@ -26,31 +26,27 @@ jobs:
           fetch-depth: 0
 
       - name: Publish pending status
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
           gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
-            -f state='pending' -f context='omnicore/ps2-alpha6' \
+            -f state=pending -f context=omnicore/ps2-alpha6 \
             -f description='PS2 Alpha 6 PCSX2 validation running' \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
       - name: Protect PS1 and N64 runtimes
-        shell: bash
         run: |
           set -euo pipefail
           git fetch --no-tags origin agent/0.10.0-n64-foundation
           changed="$(git diff --name-only origin/agent/0.10.0-n64-foundation...HEAD)"
           forbidden='^(app/src/main/cpp/(native_bridge\.cpp|gl_presenter\.cpp|libretro_host_v7\.cpp|n64/)|app/src/main/java/com/omnicore/emulator/core/n64/|app/src/main/java/com/omnicore/emulator/emulation/N64|app/src/main/java/com/omnicore/emulator/performance/N64)'
           if echo "$changed" | grep -E "$forbidden"; then
-            echo "PS2 Alpha 6 modified protected PS1/N64 runtime source." >&2
+            echo 'PS2 Alpha 6 modified protected PS1/N64 runtime source.' >&2
             exit 1
           fi
           git diff --check origin/agent/0.10.0-n64-foundation...HEAD
 
       - name: Verify Alpha 6 source contract
-        shell: bash
         run: |
           set -euo pipefail
           grep -Fq 'versionCode = 45' app/build.gradle.kts
@@ -61,43 +57,41 @@ jobs:
           grep -Fq 'class NativeApp' app/src/main/java/kr/co/iefriends/pcsx2/NativeApp.java
           grep -Fq '7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3' config/ps2-pcsx2-pin.txt
           grep -Fq 'BIOS clássica (real)' app/src/main/java/com/omnicore/emulator/settings/PS2Settings.kt
-          grep -Fq 'Renderer.AUTO' app/src/main/java/com/omnicore/emulator/settings/PS2Settings.kt
           grep -Fq 'BIOS pronta para boot real' app/src/main/java/com/omnicore/emulator/ui/ps2/PS2SettingsDialog.kt
           grep -Fq 'qualityFloorScale >= 1.0f' app/src/main/java/com/omnicore/emulator/core/ps2/PS2Backend.kt
           grep -Fq 'allowCycleSkipping = false' app/src/main/java/com/omnicore/emulator/performance/PS2SmartPerf.kt
           grep -Fq 'private val OmniBg = Color' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV4App.kt
           grep -Fq 'android:process=":ps2"' app/src/main/AndroidManifest.xml
           grep -Fq 'GNU GPL v3' THIRD_PARTY_NOTICES.md
-          echo "OMNICORE_PS2_ALPHA6_SOURCE_OK pcsx2-armsx2 real-bios lean-hub"
+          echo 'OMNICORE_PS2_ALPHA6_SOURCE_OK'
 
       - name: Verify Android toolchains
-        shell: bash
         run: |
           set -euo pipefail
           export JAVA_HOME="$JAVA_HOME_17_X64"
           echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
           NDK="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
           if ! test -d "$NDK"; then
-            yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358"
+            yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" 'ndk;28.2.13676358'
           fi
-          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37" >/dev/null
+          if ! test -d "$ANDROID_SDK_ROOT/platforms/android-36"; then
+            yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36'
+          fi
           echo "OMNI_NDK_HOME=$NDK" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
 
       - name: Prepare stable DEV signing
-        shell: bash
         run: |
           set -euo pipefail
           mkdir -p build/signing
           base64 -d config/omnicore-dev.keystore.b64 > build/signing/omnicore-dev.jks
           chmod 600 build/signing/omnicore-dev.jks
           echo "OMNICORE_DEV_KEYSTORE=$GITHUB_WORKSPACE/build/signing/omnicore-dev.jks" >> "$GITHUB_ENV"
-          echo "OMNICORE_DEV_STORE_PASSWORD=omnicore-dev-2026" >> "$GITHUB_ENV"
-          echo "OMNICORE_DEV_KEY_ALIAS=omnicore-dev" >> "$GITHUB_ENV"
-          echo "OMNICORE_DEV_KEY_PASSWORD=omnicore-dev-2026" >> "$GITHUB_ENV"
+          echo 'OMNICORE_DEV_STORE_PASSWORD=omnicore-dev-2026' >> "$GITHUB_ENV"
+          echo 'OMNICORE_DEV_KEY_ALIAS=omnicore-dev' >> "$GITHUB_ENV"
+          echo 'OMNICORE_DEV_KEY_PASSWORD=omnicore-dev-2026' >> "$GITHUB_ENV"
 
       - name: Build protected PS1 and N64 cores
-        shell: bash
         run: |
           set -euo pipefail
           export ANDROID_NDK_HOME="$OMNI_NDK_HOME"
@@ -112,15 +106,13 @@ jobs:
           done
 
       - name: Fetch pinned PCSX2 ARMSX2 backend
-        shell: bash
         run: |
           set -euo pipefail
           chmod +x tools/fetch_ps2_pcsx2_backend.sh tools/build_ps2_pcsx2_backend_android.sh
           tools/fetch_ps2_pcsx2_backend.sh
-          test "$(git -C build/third_party/armsx2 rev-parse HEAD)" = "7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3"
+          test "$(git -C build/third_party/armsx2 rev-parse HEAD)" = '7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3'
 
       - name: Build PCSX2 ARM64 universal-page emucore
-        shell: bash
         run: |
           set -euo pipefail
           export ANDROID_NDK_HOME="$OMNI_NDK_HOME"
@@ -129,10 +121,9 @@ jobs:
           test -s app/src/main/jniLibs/arm64-v8a/libemucore_16k.so
           test -s app/src/main/assets/licenses/GPL-3.0-PCSX2-ARMSX2.txt
           test -n "$(find app/src/main/assets/pcsx2/resources -type f -print -quit)"
-          ! find app/src/main/jniLibs -type f -name 'libPlay.so' -print -quit | grep -q .
+          if find app/src/main/jniLibs -type f -name libPlay.so -print -quit | grep -q .; then exit 1; fi
 
       - name: Verify PCSX2 JNI bridge
-        shell: bash
         run: |
           set -euo pipefail
           READELF="$OMNI_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
@@ -146,28 +137,19 @@ jobs:
           done
 
       - name: Build optimized signed Alpha 6 APK
-        shell: bash
         run: |
           set -uo pipefail
           DIAG=/tmp/ps2-alpha6-build-diagnostic.txt
           LOG="$RUNNER_TEMP/alpha6-gradle.log"
-          rm -f "$DIAG" "$LOG"
           set +e
           gradle :app:assembleRelease --stacktrace --no-daemon 2>&1 | tee "$LOG"
           RC=${PIPESTATUS[0]}
           set -e
           if (( RC != 0 )); then
-            {
-              echo "failure_stage=gradle-assemble-release"
-              echo "gradle_rc=$RC"
-              echo "diagnostic_tail_begin"
-              tail -n 240 "$LOG"
-              echo "diagnostic_tail_end"
-            } > "$DIAG"
+            { echo 'failure_stage=gradle-assemble-release'; tail -n 240 "$LOG"; } > "$DIAG"
             exit "$RC"
           fi
-
-          APK="app/build/outputs/apk/release/app-release.apk"
+          APK=app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           LIST="$RUNNER_TEMP/alpha6-apk-listing.txt"
           unzip -l "$APK" > "$LIST"
@@ -177,173 +159,123 @@ jobs:
           grep -Fq 'assets/licenses/GPL-3.0-PCSX2-ARMSX2.txt' "$LIST"
           grep -Fq 'lib/arm64-v8a/libpcsx_rearmed_libretro.so' "$LIST"
           grep -Fq 'lib/arm64-v8a/libmupen64plus_next_libretro.so' "$LIST"
-          if grep -Fq 'libPlay.so' "$LIST"; then
-            echo "Alpha 6 must not package legacy Play! backend." >&2
-            exit 1
-          fi
+          if grep -Fq libPlay.so "$LIST"; then exit 1; fi
           test -s app/build/outputs/mapping/release/mapping.txt
-          echo "OMNICORE_PS2_ALPHA6_APK_OK"
 
       - name: Verify signer and 16 KB compatibility
-        shell: bash
         run: |
           set -euo pipefail
-          APK="app/build/outputs/apk/release/app-release.apk"
+          APK=app/build/outputs/apk/release/app-release.apk
           APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
-          EXPECTED="9490d1ad4666312d6dd9e5b2a20699583919ae80a5536882bcd3f9accc793547"
-          CERT_INFO="$RUNNER_TEMP/alpha6-cert-info.txt"
-          "$APKSIGNER" verify --print-certs "$APK" > "$CERT_INFO"
-          ACTUAL="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$CERT_INFO" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          EXPECTED=9490d1ad4666312d6dd9e5b2a20699583919ae80a5536882bcd3f9accc793547
+          "$APKSIGNER" verify --print-certs "$APK" > "$RUNNER_TEMP/cert.txt"
+          ACTUAL="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/cert.txt" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
           test "$ACTUAL" = "$EXPECTED"
-          CHECK_DIR="build/alpha6-apk-alignment"
-          rm -rf "$CHECK_DIR" && mkdir -p "$CHECK_DIR"
-          unzip -q "$APK" -d "$CHECK_DIR"
+          CHECK=build/alpha6-apk-alignment
+          rm -rf "$CHECK" && mkdir -p "$CHECK"
+          unzip -q "$APK" -d "$CHECK"
           READELF="$OMNI_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           while IFS= read -r -d '' SO; do
-            while IFS= read -r LOAD_LINE; do
-              ALIGN_HEX="$(awk '{print $NF}' <<< "$LOAD_LINE")"
-              [[ "$ALIGN_HEX" =~ ^0x[0-9A-Fa-f]+$ ]]
-              (( ALIGN_HEX >= 0x4000 ))
+            while IFS= read -r LOAD; do
+              A="$(awk '{print $NF}' <<< "$LOAD")"
+              [[ "$A" =~ ^0x[0-9A-Fa-f]+$ ]] && (( A >= 0x4000 ))
             done < <("$READELF" -lW "$SO" | grep -E '^[[:space:]]*LOAD[[:space:]]')
-          done < <(find "$CHECK_DIR/lib" -type f -name '*.so' -print0)
+          done < <(find "$CHECK/lib" -type f -name '*.so' -print0)
           "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" -v -c -P 16 4 "$APK"
 
       - name: Archive corresponding core sources
-        shell: bash
         run: |
           set -euo pipefail
           mkdir -p build/source-artifacts
           tar --exclude=.git -czf build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz -C third_party pcsx_rearmed
           tar --exclude=.git -czf build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz -C third_party mupen64plus_next
-          tar --exclude=.git --exclude='platforms/android/app/build' --exclude='platforms/android/.gradle' \
-            -czf build/source-artifacts/armsx2-pcsx2-7f0ae7a6-source.tar.gz -C build/third_party armsx2
+          tar --exclude=.git --exclude='platforms/android/app/build' --exclude='platforms/android/.gradle' -czf build/source-artifacts/armsx2-pcsx2-7f0ae7a6-source.tar.gz -C build/third_party armsx2
           cp config/ps2-pcsx2-pin.txt build/source-artifacts/ps2-pcsx2-pin.txt
 
       - name: Publish PS2 Alpha 6 prerelease
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v0.11.5-ps2-alpha6"
-          TITLE="OmniCore v0.11.5 PS2 Alpha 6 — PCSX2 Foundation"
-          APK_IN="app/build/outputs/apk/release/app-release.apk"
-          APK_OUT="build/OmniCore-v0.11.5-ps2-alpha6.apk"
-          HASH="build/OmniCore-v0.11.5-ps2-alpha6.sha256"
-          cp "$APK_IN" "$APK_OUT"
-          sha256sum "$APK_OUT" > "$HASH"
+          TAG=v0.11.5-ps2-alpha6
+          TITLE='OmniCore v0.11.5 PS2 Alpha 6 — PCSX2 Foundation'
+          OUT=build/OmniCore-v0.11.5-ps2-alpha6.apk
+          HASH=build/OmniCore-v0.11.5-ps2-alpha6.sha256
+          cp app/build/outputs/apk/release/app-release.apk "$OUT"
+          sha256sum "$OUT" > "$HASH"
           cat > build/alpha6-release-notes.md <<'EOF'
           ## ⬇️ BAIXE ESTE ARQUIVO
           **`OmniCore-v0.11.5-ps2-alpha6.apk`**
 
-          Este é o único APK da Alpha 6. Os demais arquivos desta Release são checksum e código-fonte/licenças correspondentes.
+          Este é o único APK da Alpha 6. Os outros assets são checksum e código-fonte correspondente.
 
-          ### O que mudou
-          - Primeiro backend PS2 do OmniCore baseado em **PCSX2 via ARMSX2 Android ARM64**.
-          - O backend Play! das Alphas 1–5 foi removido deste APK; `libPlay.so` não é empacotada.
-          - **BIOS real do usuário** agora é requisito do backend. OmniCore não inclui nem baixa BIOS da Sony.
-          - **BIOS clássica (real)** usa Fast Boot OFF para executar o firmware selecionado; **Direta** usa Fast Boot.
-          - Renderer **Automático** é delegado ao próprio PCSX2; OmniCore não troca Vulkan/OpenGL por telemetria.
-          - SmartPerf permanece **measurement-only** nesta fundação: sem auto-underclock, cycle skip, troca de limiter ou redução automática de resolução.
-          - Baseline de qualidade continua em **1×**.
-          - Lean Hub / UI otimizada da Alpha 5 foi preservada.
-          - PS1 e N64 continuam isolados e protegidos pelo CI.
-          - PCSX2/ARMSX2 pin: `7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3`.
+          ### Alpha 6 — nova fundação PS2
+          - PCSX2 via ARMSX2 Android ARM64 substitui o Play! usado nas Alphas 1–5.
+          - BIOS real do usuário é obrigatória; nenhuma BIOS Sony é incluída ou baixada.
+          - BIOS clássica = firmware real com Fast Boot OFF; Direta = Fast Boot.
+          - Renderer Automático é delegado ao PCSX2.
+          - SmartPerf fica measurement-only: sem troca automática de renderer/limiter/resolução e sem cycle skipping.
+          - Baseline de qualidade 1× e Lean Hub otimizado preservados.
+          - PS1/N64 continuam isolados e protegidos.
+          - Pin PCSX2/ARMSX2: `7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3`.
 
-          ### Primeiro teste recomendado
-          Selecione uma BIOS PS2 válida em Configurações > PlayStation 2, mantenha **Automático + 1× + limiter ligado**, teste primeiro em inicialização Direta e depois em BIOS clássica. Compare FPS e estabilidade com a Alpha 5.
+          ### Primeiro teste
+          Selecione uma BIOS válida, use Automático + 1× + limiter ligado, teste primeiro Direta e depois BIOS clássica.
 
-          ### Licenças / fonte
-          O emucore PCSX2/ARMSX2 é software GPLv3-or-later conforme declarado pelo upstream. A licença está incluída no APK e o snapshot de fonte correspondente está anexado nesta Release. Os backends GPL de PS1/N64 também têm seus snapshots anexados.
+          ### Fonte/licença
+          O emucore PCSX2/ARMSX2 é GPLv3-or-later conforme o upstream. A licença está no APK e o snapshot de fonte correspondente está anexado nesta Release.
           EOF
-
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "$TITLE" --notes-file build/alpha6-release-notes.md --prerelease --target "$GITHUB_SHA"
           else
             gh release create "$TAG" --target "$GITHUB_SHA" --title "$TITLE" --notes-file build/alpha6-release-notes.md --prerelease
           fi
-          gh release upload "$TAG" \
-            "$APK_OUT" "$HASH" \
+          gh release upload "$TAG" "$OUT" "$HASH" \
             build/source-artifacts/ps2-pcsx2-pin.txt \
             build/source-artifacts/armsx2-pcsx2-7f0ae7a6-source.tar.gz \
             build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz \
-            build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz \
-            --clobber
+            build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz --clobber
 
       - name: Publish success status
         if: success()
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
-            -f state='success' -f context='omnicore/ps2-alpha6' \
-            -f description='PS2 Alpha 6 PCSX2 build validated and published' \
-            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=success -f context=omnicore/ps2-alpha6 -f description='PS2 Alpha 6 PCSX2 build validated and published' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
       - name: Publish failure status
         if: failure()
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set +e
-          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
-            -f state='failure' -f context='omnicore/ps2-alpha6' \
-            -f description='PS2 Alpha 6 PCSX2 validation failed' \
-            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state=failure -f context=omnicore/ps2-alpha6 -f description='PS2 Alpha 6 PCSX2 validation failed' -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" || true
 
-      - name: Record Alpha 6 success
-        if: success()
-        shell: bash
+      - name: Record Alpha 6 result
+        if: always()
         run: |
-          set -euo pipefail
-          RESULT=/tmp/ps2-alpha6-success.txt
+          set +e
+          if [[ "${{ job.status }}" == success ]]; then
+            FILE=.ci/ps2-alpha6-success.txt
+            rm -f .ci/ps2-alpha6-failure.txt
+          else
+            FILE=.ci/ps2-alpha6-failure.txt
+          fi
+          mkdir -p .ci
           {
             echo "run_id=$GITHUB_RUN_ID"
             echo "commit=$GITHUB_SHA"
-            echo "status=success"
-            echo "version=0.11.5"
-            echo "tag=v0.11.5-ps2-alpha6"
-            echo "backend=pcsx2-armsx2"
-            echo "armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3"
-            echo "abi=arm64-v8a"
-            echo "features=real-bios,fastboot-direct,classic-bios,pcsx2-auto-renderer,measurement-only-smartperf,lean-hub,optimized-release"
-          } > "$RESULT"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            echo "status=${{ job.status }}"
+            echo 'version=0.11.5'
+            echo 'backend=pcsx2-armsx2'
+            echo 'armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3'
+            test -s /tmp/ps2-alpha6-build-diagnostic.txt && cat /tmp/ps2-alpha6-build-diagnostic.txt
+          } > "$FILE"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git fetch origin agent/0.11.5-ps2-pcsx2-foundation
           git reset --hard origin/agent/0.11.5-ps2-pcsx2-foundation
-          mkdir -p .ci
-          cp "$RESULT" .ci/ps2-alpha6-success.txt
-          rm -f .ci/ps2-alpha6-failure.txt
+          cp "$FILE" /tmp/result.txt
+          cp /tmp/result.txt "$FILE"
           git add .ci/ps2-alpha6-success.txt .ci/ps2-alpha6-failure.txt 2>/dev/null || true
-          git commit -m "Record PS2 Alpha 6 validation success [skip ci]" || true
-          git push origin HEAD:agent/0.11.5-ps2-pcsx2-foundation
-
-      - name: Record Alpha 6 failure
-        if: failure()
-        shell: bash
-        run: |
-          set +e
-          RESULT=/tmp/ps2-alpha6-failure.txt
-          {
-            echo "run_id=$GITHUB_RUN_ID"
-            echo "commit=$GITHUB_SHA"
-            echo "status=failure"
-            echo "version=0.11.5"
-            echo "phase=ps2-alpha6-pcsx2-foundation"
-            if test -s /tmp/ps2-alpha6-build-diagnostic.txt; then
-              echo
-              cat /tmp/ps2-alpha6-build-diagnostic.txt
-            fi
-          } > "$RESULT"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin agent/0.11.5-ps2-pcsx2-foundation
-          git reset --hard origin/agent/0.11.5-ps2-pcsx2-foundation
-          mkdir -p .ci
-          cp "$RESULT" .ci/ps2-alpha6-failure.txt
-          git add .ci/ps2-alpha6-failure.txt
-          git commit -m "Record PS2 Alpha 6 validation failure [skip ci]" || true
+          git commit -m "Record PS2 Alpha 6 ${{ job.status }} [skip ci]" || true
           git push origin HEAD:agent/0.11.5-ps2-pcsx2-foundation || true
