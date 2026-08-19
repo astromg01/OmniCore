@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  statuses: write
 
 concurrency:
   group: ps2-alpha1-release
@@ -23,13 +24,25 @@ jobs:
           ref: agent/0.11.0-ps2-foundation
           fetch-depth: 0
 
+      - name: Publish pending CI status
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state='pending' \
+            -f context='omnicore/ps2-alpha1' \
+            -f description='PS2 Alpha 1 validation running' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
       - name: Protect PS1 and N64 runtimes
         shell: bash
         run: |
           set -euo pipefail
           git fetch --no-tags origin agent/0.10.0-n64-foundation
           changed="$(git diff --name-only origin/agent/0.10.0-n64-foundation...HEAD)"
-          forbidden='^(app/src/main/cpp/(native_bridge\.cpp|gl_presenter\.cpp|libretro_host_v7\.cpp|n64/)|app/src/main/java/com/omnicore/emulator/core/n64/|app/src/main/java/com/omnicore/emulator/emulation/N64|app/src/main/java/com/omnicore/emulator/performance/N64)'
+          forbidden='^(app/src/main/cpp/(native_bridge\\.cpp|gl_presenter\\.cpp|libretro_host_v7\\.cpp|n64/)|app/src/main/java/com/omnicore/emulator/core/n64/|app/src/main/java/com/omnicore/emulator/emulation/N64|app/src/main/java/com/omnicore/emulator/performance/N64)'
           if echo "$changed" | grep -E "$forbidden"; then
             echo "PS2 Alpha 1 modified protected PS1/N64 runtime source." >&2
             exit 1
@@ -216,6 +229,32 @@ jobs:
           fi
           gh release upload "$TAG" "$OUT" "$HASH" build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz --clobber
 
+      - name: Publish success commit status
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state='success' \
+            -f context='omnicore/ps2-alpha1' \
+            -f description='PS2 Alpha 1 release validated' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Publish failure commit status
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state='failure' \
+            -f context='omnicore/ps2-alpha1' \
+            -f description='PS2 Alpha 1 validation failed' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
       - name: Record PS2 Alpha 1 success
         if: success()
         shell: bash
@@ -226,7 +265,7 @@ jobs:
           RESULT=/tmp/ps2-alpha1-success.txt
           {
             echo "run_id=$GITHUB_RUN_ID"
-            echo "commit=$(git rev-parse HEAD)"
+            echo "commit=$GITHUB_SHA"
             echo "status=success"
             echo "version=0.11.0"
             echo "tag=v0.11.0-ps2-alpha1"
@@ -243,7 +282,7 @@ jobs:
           rm -f .ci/ps2-alpha1-failure.txt
           git add .ci/ps2-alpha1-success.txt .ci/ps2-alpha1-failure.txt 2>/dev/null || true
           git commit -m "Record PS2 Alpha 1 validation success [skip ci]" || true
-          git push origin HEAD:agent/0.11.0-ps2-foundation
+          git push origin HEAD:agent/0.11.0-ps2-foundation || true
 
       - name: Record PS2 Alpha 1 failure
         if: failure()
