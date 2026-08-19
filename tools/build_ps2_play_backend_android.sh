@@ -31,6 +31,18 @@ verify_upstream_pins() {
 
 verify_upstream_pins
 
+# Play!'s Android application copies GameConfig.xml into assets before every
+# build. OmniCore embeds only the native backend, so we must reproduce that
+# packaging contract explicitly or the upstream per-game compatibility,
+# FP/VU corrections and IdleLoopBlock optimizations are silently lost.
+PATCH_DB="$PLAY_SRC/GameConfig.xml"
+test -s "$PATCH_DB"
+mkdir -p app/src/main/assets
+install -m 0644 "$PATCH_DB" app/src/main/assets/GameConfig.xml
+grep -Fq '<GameConfigs' app/src/main/assets/GameConfig.xml
+grep -Fq '<GameConfig ' app/src/main/assets/GameConfig.xml
+printf 'Play! GameConfig compatibility database staged into OmniCore assets.\n'
+
 for ABI in $PLAY_ABIS; do
   BUILD_DIR="$OUT_ROOT/$ABI"
   JNI_DIR="app/src/main/jniLibs/$ABI"
@@ -51,9 +63,9 @@ for ABI in $PLAY_ABIS; do
     -DBUILD_PSFPLAYER=OFF \
     -DBUILD_LIBRETRO_CORE=OFF \
     -DENABLE_AMAZON_S3=OFF \
-    -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG" \
-    -DCMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG -frtti -fexceptions" \
-    -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384"
+    -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG -flto=full" \
+    -DCMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG -frtti -fexceptions -flto=full" \
+    -DCMAKE_SHARED_LINKER_FLAGS="-flto=full -Wl,-z,max-page-size=16384"
 
   echo "=== Building Play! for $ABI with -j$PLAY_BUILD_JOBS ==="
   cmake --build "$BUILD_DIR" --target Play -- -j"$PLAY_BUILD_JOBS" -v
@@ -82,12 +94,13 @@ if $BRINGUP2; then
   gradle :app:assembleDebug --stacktrace --no-daemon
   APK="app/build/outputs/apk/debug/app-debug.apk"
   test -s "$APK"
+  unzip -l "$APK" | grep -q 'assets/GameConfig.xml'
   for ABI in arm64-v8a armeabi-v7a; do
     unzip -l "$APK" | grep -q "lib/$ABI/libPlay.so"
     unzip -l "$APK" | grep -q "lib/$ABI/libomnicore_ps2_runtime.so"
   done
   "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK"
-  echo "OMNICORE_PS2_BRINGUP2_OK dual-abi apk 16kb"
+  echo "OMNICORE_PS2_BRINGUP2_OK dual-abi apk 16kb gameconfig"
 fi
 
 printf 'Play! Android backend built for: %s\n' "$PLAY_ABIS"
