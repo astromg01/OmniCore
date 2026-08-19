@@ -19,8 +19,8 @@ on_error() {
     echo "binary_tag=$TAG"
     echo "binary_asset=$ASSET"
     if [[ -s "$LOG" ]]; then
-      echo '--- last 180 import lines ---'
-      tail -n 180 "$LOG"
+      echo '--- last 220 import lines ---'
+      tail -n 220 "$LOG"
     fi
   } > "$DIAG"
   exit "$rc"
@@ -41,9 +41,10 @@ STAGE="$WORK/stage"
 LIST="$WORK/upstream-apk-listing.txt"
 
 # The exact pinned revision has an official ARMSX2 nightly Android asset built by
-# upstream's own dual-core (4K + 16K) pipeline. Importing that already-validated
-# native payload avoids depending on the snapshot's non-blocking Android-from-
-# source reconciliation job while keeping source and binary on the same commit.
+# upstream's own dual-core (4K + 16K) pipeline. Upstream forms that universal APK
+# from a complete 4K APK and replaces only the emucore entries, so OmniCore must
+# preserve the complete ARM64 native runtime payload too. DT_NEEDED alone cannot
+# discover helpers loaded later with dlopen (ANGLE/runtime hooks).
 echo "Downloading official ARMSX2 nightly: $URL"
 curl --fail --location --retry 4 --retry-all-errors --connect-timeout 30 \
   --output "$APK" "$URL"
@@ -54,6 +55,8 @@ unzip -l "$APK" > "$LIST"
 
 grep -Fq 'lib/arm64-v8a/libemucore_4k.so' "$LIST"
 grep -Fq 'lib/arm64-v8a/libemucore_16k.so' "$LIST"
+grep -Fq 'lib/arm64-v8a/libEGL_angle.so' "$LIST"
+grep -Fq 'lib/arm64-v8a/libGLESv2_angle.so' "$LIST"
 grep -Fq 'assets/resources/' "$LIST"
 
 rm -rf "$STAGE"
@@ -77,79 +80,100 @@ READELF="${ANDROID_NDK_HOME:-${OMNI_NDK_HOME:-}}/toolchains/llvm/prebuilt/linux-
 test -x "$READELF"
 
 # Android/NDK platform libraries are supplied by the OS and must never be
-# vendored from the upstream APK. Keep libc++_shared.so deliberately OUT of this
-# list: unlike bionic/platform libraries it is an app-shipped NDK runtime, and
-# librashader needs the exact copy packaged by the official ARMSX2 build.
+# vendored. libc++_shared.so is intentionally NOT here: it belongs to the app
+# payload and must match the official ARMSX2 build.
 is_system_soname() {
   case "$1" in
-    libc.so|libdl.so|libm.so|liblog.so|libandroid.so|libz.so|libEGL.so|libGLESv1_CM.so|libGLESv2.so|libGLESv3.so|libvulkan.so|libOpenSLES.so|libaaudio.so|libamidi.so|libjnigraphics.so|libnativewindow.so|libmediandk.so|libcamera2ndk.so|libbinder_ndk.so|libneuralnetworks.so|libsync.so)
+    libc.so|libdl.so|libm.so|liblog.so|libandroid.so|libz.so|libstdc++.so|libEGL.so|libGLESv1_CM.so|libGLESv2.so|libGLESv3.so|libvulkan.so|libOpenSLES.so|libaaudio.so|libamidi.so|libjnigraphics.so|libnativewindow.so|libmediandk.so|libcamera2ndk.so|libbinder_ndk.so|libneuralnetworks.so|libsync.so)
       return 0 ;;
     *)
       return 1 ;;
   esac
 }
 
-# Import the complete DT_NEEDED closure, not just the emucore's first-level
-# dependencies. The pinned ARMSX2 nightly links emucore -> librashader ->
-# libc++_shared; copying only direct deps produces an APK that builds cleanly but
-# fails System.loadLibrary() on device.
-declare -A seen=()
-queue=("libemucore_4k.so" "libemucore_16k.so")
-closure_file="$WORK/native-dependency-closure.txt"
-: > "$closure_file"
+# OmniCore already receives this AndroidX native library from its Gradle
+# dependency graph. Copying the upstream copy into src/main/jniLibs would create
+# a duplicate packaging input; the final APK still contains the dependency copy.
+is_gradle_packaged_soname() {
+  case "$1" in
+    libandroidx.graphics.path.so) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
-while (( ${#queue[@]} > 0 )); do
-  lib="${queue[0]}"
-  queue=("${queue[@]:1}")
-  [[ -n "${seen[$lib]:-}" ]] && continue
+# These are OmniCore-owned runtimes built earlier in the workflow. A future
+# upstream asset must never silently overwrite one of them.
+is_omnicore_owned_soname() {
+  case "$1" in
+    libomnicore_runtime.so|libomnicore_n64_runtime.so|libomnicore_ps2_runtime.so|libpcsx_rearmed_libretro.so|libmupen64plus_next_libretro.so)
+      return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
-  src_lib="$STAGE/lib/arm64-v8a/$lib"
-  if [[ ! -s "$src_lib" ]]; then
-    echo "Required ARMSX2 native library missing from upstream APK: $lib" >&2
+upstream_native="$WORK/upstream-native-payload.txt"
+packaged_native="$WORK/packaged-armsx2-native-payload.txt"
+find "$STAGE/lib/arm64-v8a" -maxdepth 1 -type f -name '*.so' -printf '%f\n' | sort -u > "$upstream_native"
+test -s "$upstream_native"
+: > "$packaged_native"
+
+# Mirror the complete native payload from the official nightly. This is the key
+# difference from attempts 6/7, which copied only the recursive DT_NEEDED graph
+# and therefore omitted dynamically loaded helpers present in upstream's base APK.
+while IFS= read -r lib; do
+  [[ -z "$lib" ]] && continue
+  if is_omnicore_owned_soname "$lib"; then
+    echo "Refusing ARMSX2/OmniCore native library collision: $lib" >&2
     exit 1
   fi
+  if is_gradle_packaged_soname "$lib"; then
+    echo "Keeping Gradle-provided native dependency instead of duplicate upstream copy: $lib"
+    continue
+  fi
+  cp -f "$STAGE/lib/arm64-v8a/$lib" "$JNI_DIR/$lib"
+  echo "$lib" >> "$packaged_native"
+done < "$upstream_native"
+sort -u -o "$packaged_native" "$packaged_native"
 
-  cp -f "$src_lib" "$JNI_DIR/$lib"
-  seen[$lib]=1
-  echo "$lib" >> "$closure_file"
-
-  while IFS= read -r dep; do
-    [[ -z "$dep" ]] && continue
-    if is_system_soname "$dep"; then
-      continue
-    fi
-    if [[ -s "$STAGE/lib/arm64-v8a/$dep" ]]; then
-      [[ -n "${seen[$dep]:-}" ]] || queue+=("$dep")
-    else
-      echo "Unresolved non-system DT_NEEDED dependency: $lib -> $dep" >&2
-      exit 1
-    fi
-  done < <("$READELF" -d "$src_lib" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
+for required in libemucore_4k.so libemucore_16k.so libc++_shared.so liblibrashader_capi.so libEGL_angle.so libGLESv2_angle.so; do
+  test -s "$JNI_DIR/$required"
 done
 
-sort -u -o "$closure_file" "$closure_file"
-
-# Regression guard for the exact failure seen on the first Alpha 6 device test.
-# If librashader is in the closure, its shared C++ runtime must be there too.
-if [[ -s "$JNI_DIR/liblibrashader_capi.so" ]]; then
-  test -s "$JNI_DIR/libc++_shared.so"
-fi
-
-# Re-validate the copied closure itself. Any non-system dependency must resolve
-# inside the final jniLibs directory, so CI catches runtime linker failures before
-# Gradle packages the APK.
+# Keep recursive linker validation as a guard, but not as the payload-selection
+# mechanism. Dynamic dlopen helpers are now present even when they do not appear
+# in an emucore DT_NEEDED table.
 while IFS= read -r lib; do
+  [[ -z "$lib" ]] && continue
+  src_lib="$JNI_DIR/$lib"
   while IFS= read -r dep; do
     [[ -z "$dep" ]] && continue
-    if is_system_soname "$dep"; then
+    if is_system_soname "$dep" || is_gradle_packaged_soname "$dep"; then
       continue
     fi
     if [[ ! -s "$JNI_DIR/$dep" ]]; then
-      echo "Final JNI closure unresolved: $lib -> $dep" >&2
+      echo "Final ARMSX2 native payload unresolved: $lib -> $dep" >&2
       exit 1
     fi
-  done < <("$READELF" -d "$JNI_DIR/$lib" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
-done < "$closure_file"
+  done < <("$READELF" -d "$src_lib" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
+done < "$packaged_native"
+
+# Device-test diagnostics: the old UI collapsed every linker exception into a
+# misleading page-size message. Patch the build workspace so the Alpha 6 toast
+# reports the selected core, real page size, ABI list and exact linker exception.
+BACKEND="app/src/main/java/com/omnicore/emulator/core/ps2/Pcsx2PS2Backend.kt"
+python3 - "$BACKEND" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+text = p.read_text(encoding="utf-8")
+old = 'NativeApp.hasNoNativeBinary -> "Pinned PCSX2 emucore is not packaged for this page size."'
+new = 'NativeApp.hasNoNativeBinary -> "A6#8 ${NativeApp.nativeLoadDiagnostic()} ABI=${Build.SUPPORTED_ABIS.joinToString("/")}"'
+if old not in text and 'A6#8 ${NativeApp.nativeLoadDiagnostic()}' not in text:
+    raise SystemExit("PCSX2 backend loader diagnostic anchor not found")
+text = text.replace(old, new)
+p.write_text(text, encoding="utf-8")
+PY
+grep -Fq 'A6#8 ${NativeApp.nativeLoadDiagnostic()}' "$BACKEND"
 
 RESOURCE_SRC="$STAGE/assets/resources"
 RESOURCE_DST="app/src/main/assets/pcsx2/resources"
@@ -165,10 +189,13 @@ install -m 0644 "$SRC/COPYING.GPLv3" "$LICENSE_DIR/GPL-3.0-PCSX2-ARMSX2.txt"
 test -s "$LICENSE_DIR/GPL-3.0-PCSX2-ARMSX2.txt"
 
 rm -f "$DIAG"
-printf 'OMNICORE_PCSX2_IMPORT_OK pin=%s tag=%s native_libs=%s resources=%s sha256=%s\n' \
+printf 'OMNICORE_PCSX2_IMPORT_OK pin=%s tag=%s upstream_native=%s packaged_native=%s resources=%s sha256=%s\n' \
   "$PIN" "$TAG" \
-  "$(wc -l < "$closure_file" | tr -d ' ')" \
+  "$(wc -l < "$upstream_native" | tr -d ' ')" \
+  "$(wc -l < "$packaged_native" | tr -d ' ')" \
   "$(find "$RESOURCE_DST" -type f | wc -l)" \
   "$(cut -d' ' -f1 "$WORK/upstream-apk.sha256")"
-echo 'Resolved native dependency closure:'
-cat "$closure_file"
+echo 'Official ARMSX2 ARM64 native payload:'
+cat "$upstream_native"
+echo 'Copied ARMSX2 ARM64 native payload:'
+cat "$packaged_native"
