@@ -34,7 +34,10 @@ import com.omnicore.emulator.settings.PS2BiosManager
 import com.omnicore.emulator.settings.PS2InputSettings
 import com.omnicore.emulator.settings.PS2Settings
 
-/** PS2 settings UI. Does not load libPlay.so in the main OmniCore process. */
+/**
+ * Lightweight PS2 settings surface. The PCSX2 emucore itself is loaded only by
+ * the isolated :ps2 process when a game starts.
+ */
 @Composable
 fun PS2SettingsDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
@@ -46,15 +49,20 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
     var config by remember { mutableStateOf(PS2Settings.resolve(context)) }
     var input by remember { mutableStateOf(PS2InputSettings.resolve(context)) }
     var bios by remember { mutableStateOf(PS2BiosManager.read(context)) }
+
     val biosPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) bios = PS2BiosManager.save(context, uri)
     }
 
-    fun refreshCore() { config = PS2Settings.resolve(context) }
+    fun refreshCore() {
+        config = PS2Settings.resolve(context)
+    }
+
     fun saveCore(next: PS2Settings.Config) {
         PS2Settings.saveCustom(context, next)
         refreshCore()
     }
+
     fun saveInput(next: PS2InputSettings.Config) {
         PS2InputSettings.save(context, next)
         input = PS2InputSettings.resolve(context)
@@ -65,7 +73,7 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
         title = {
             Column {
                 Text("PlayStation 2", fontWeight = FontWeight.Black)
-                Text("Play! • runtime isolado :ps2", style = MaterialTheme.typography.labelMedium)
+                Text("PCSX2 / ARMSX2 • runtime isolado :ps2", style = MaterialTheme.typography.labelMedium)
             }
         },
         text = {
@@ -83,7 +91,7 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
-                        AssistChip(onClick = {}, label = { Text(if (hasVulkan) "VULKAN HW" else "GLES") })
+                        AssistChip(onClick = {}, label = { Text(if (hasVulkan) "VULKAN HW" else "OPENGL") })
                     }
                 }
 
@@ -94,13 +102,16 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                         items(PS2Settings.Preset.entries.filter { it != PS2Settings.Preset.CUSTOM }) { preset ->
                             FilterChip(
                                 selected = config.preset == preset,
-                                onClick = { PS2Settings.savePreset(context, preset); refreshCore() },
+                                onClick = {
+                                    PS2Settings.savePreset(context, preset)
+                                    refreshCore()
+                                },
                                 label = { Text(preset.label) }
                             )
                         }
                     }
                     Text(
-                        "SmartPerf V2 mede FPS por janelas reais, não reduz a resolução e não ativa cycle skipping.",
+                        "Na Alpha 6 o SmartPerf é somente observador: ele mede FPS/pressão, mas não troca renderer, limiter ou resolução sozinho.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 5.dp)
                     )
@@ -109,7 +120,7 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                 item {
                     Text("Renderer", fontWeight = FontWeight.Bold)
                     Text(
-                        "Automático escolhe o renderer compatível apenas no início do jogo. O SmartPerf V2 não troca Vulkan/OpenGL durante a sessão e nunca grava outro renderer para o próximo boot.",
+                        "Automático delega a escolha ao próprio PCSX2. OmniCore não força Vulkan/OpenGL por telemetria e não grava mudanças para o próximo boot.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -136,39 +147,15 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                         }
                     }
                     Text(
-                        "1× é o quality floor do modo Inteligente. 2×/4× só entram por escolha explícita e nunca são derrubados silenciosamente pelo SmartPerf.",
+                        "1× continua sendo o baseline. 2×/4× só entram por escolha explícita e não são reduzidos automaticamente para esconder gargalo.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
 
                 item {
-                    Text("Imagem", fontWeight = FontWeight.Bold)
-                    PS2Toggle(
-                        title = "Widescreen do renderer",
-                        subtitle = "Pede saída widescreen ao GS. Compatibilidade continua dependente do jogo.",
-                        checked = config.widescreen
-                    ) { saveCore(config.copy(widescreen = it)) }
-                    Text("Apresentação", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(PS2Settings.Presentation.entries) { mode ->
-                            FilterChip(
-                                selected = config.presentation == mode,
-                                onClick = { saveCore(config.copy(presentation = mode)) },
-                                label = { Text(mode.label) }
-                            )
-                        }
-                    }
-                    PS2Toggle(
-                        title = "Filtro bilinear forçado",
-                        subtitle = "Opção real do renderer OpenGL do backend; pode suavizar texturas.",
-                        checked = config.forceBilinear
-                    ) { saveCore(config.copy(forceBilinear = it)) }
-                }
-
-                item {
                     Text("BIOS PS2 do usuário", fontWeight = FontWeight.Bold)
                     Text(
-                        "Importar aqui valida e guarda a referência ao seu próprio dump. O Play! atual usa HLE BIOS e não possui uma rota Android para executar essa BIOS externa; portanto isto ainda não habilita o boot clássico real do PS2.",
+                        "O PCSX2 exige uma BIOS real fornecida por você. OmniCore valida ROMDIR/RESET/ROMVER, guarda somente sua referência e copia o dump para o armazenamento privado do processo PS2 na hora do boot.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Row(
@@ -194,7 +181,7 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                         val sizeMiB = if (info.sizeBytes > 0) info.sizeBytes / (1024f * 1024f) else -1f
                         Text(
                             buildString {
-                                append(if (info.plausible) "✓ " else "⚠ ")
+                                append(if (info.plausible) "✓ BIOS pronta para boot real • " else "⚠ BIOS rejeitada • ")
                                 append(info.displayName)
                                 if (sizeMiB > 0) append(" • ${String.format("%.1f", sizeMiB)} MiB")
                                 append("\n")
@@ -209,14 +196,18 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                 item {
                     Text("Inicialização", fontWeight = FontWeight.Bold)
                     Text(
-                        "Direta abre o jogo sem pre-roll. Intro OmniCore é somente a animação visual original do app — não é BIOS Sony. Boot clássico autêntico ficará indisponível até existir um backend que execute a BIOS fornecida pelo usuário.",
+                        "BIOS clássica executa o firmware real selecionado antes do disco (Fast Boot OFF). Direta pula a sequência da BIOS e entra no jogo pelo Fast Boot do PCSX2.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(PS2Settings.BootStyle.entries) { mode ->
                             FilterChip(
                                 selected = config.bootStyle == mode,
-                                onClick = { PS2Settings.saveBootStyle(context, mode); refreshCore() },
+                                enabled = mode != PS2Settings.BootStyle.CLASSIC || bios?.plausible == true,
+                                onClick = {
+                                    PS2Settings.saveBootStyle(context, mode)
+                                    refreshCore()
+                                },
                                 label = { Text(mode.label) }
                             )
                         }
@@ -224,25 +215,14 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                 }
 
                 item {
-                    Text("Pacing e áudio", fontWeight = FontWeight.Bold)
+                    Text("Pacing", fontWeight = FontWeight.Bold)
                     PS2Toggle(
                         title = "Limitar FPS ao ritmo do PS2",
-                        subtitle = "Baseline do Play!. No preset Inteligente, o SmartPerf V2 pode desligá-lo por poucas janelas para medir ganho e restaura se não ajudar; o teste não é salvo.",
+                        subtitle = "Controle manual do limiter do PCSX2. O modo Inteligente não liga/desliga este ajuste automaticamente.",
                         checked = config.frameLimit
                     ) { saveCore(config.copy(frameLimit = it)) }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        AssistChip(
-                            onClick = { saveCore(config.copy(spuBlockCount = (config.spuBlockCount - 4).coerceAtLeast(72))) },
-                            label = { Text("Áudio −") }
-                        )
-                        Text("SPU ${config.spuBlockCount}")
-                        AssistChip(
-                            onClick = { saveCore(config.copy(spuBlockCount = (config.spuBlockCount + 4).coerceAtMost(100))) },
-                            label = { Text("Áudio +") }
-                        )
-                    }
                     Text(
-                        "A Alpha 5 também pede pacing de 60 Hz ao Surface quando o Android oferece a API e usa modo de desempenho sustentado quando o aparelho anuncia suporte.",
+                        "Primeiro baseline PCSX2: afinidade explícita e ADPF ficam desligados até termos medição física no aparelho.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -334,7 +314,7 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
 
                 item {
                     Text(
-                        "Esses ajustes pertencem somente ao PS2. O Play! é carregado apenas no processo :ps2; abrir esta tela não toca no runtime PS1/N64.",
+                        "Esses ajustes pertencem somente ao PS2. O emucore PCSX2 é carregado apenas no processo :ps2; abrir esta tela não toca nos runtimes PS1/N64.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 4.dp)
                     )
