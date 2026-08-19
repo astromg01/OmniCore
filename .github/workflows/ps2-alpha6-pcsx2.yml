@@ -270,11 +270,11 @@ jobs:
             echo 'armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3'
             test -s /tmp/ps2-alpha6-build-diagnostic.txt && cat /tmp/ps2-alpha6-build-diagnostic.txt
           } > "$FILE"
+          cp "$FILE" /tmp/result.txt
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git fetch origin agent/0.11.5-ps2-pcsx2-foundation
           git reset --hard origin/agent/0.11.5-ps2-pcsx2-foundation
-          cp "$FILE" /tmp/result.txt
           cp /tmp/result.txt "$FILE"
           git add .ci/ps2-alpha6-success.txt .ci/ps2-alpha6-failure.txt 2>/dev/null || true
           git commit -m "Record PS2 Alpha 6 ${{ job.status }} [skip ci]" || true
