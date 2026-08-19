@@ -6,9 +6,9 @@ import com.omnicore.emulator.core.ps2.PS2Backend
 /** PlayStation 2 settings namespace. Nothing here mutates PS1 or N64 preferences. */
 object PS2Settings {
     enum class Preset(val storage: String, val label: String, val subtitle: String) {
-        AUTO("auto", "Inteligente", "PCSX2 decide o renderer; OmniCore observa sem alterar o runtime sozinho"),
-        PERFORMANCE("performance", "Desempenho", "Base nativa 1× com caminho PCSX2 de menor overhead"),
-        BALANCED("balanced", "Equilibrado", "Compatibilidade e latência moderadas"),
+        AUTO("auto", "Inteligente", "PCSX2 decide o renderer; OmniCore adapta pressão de CPU sem trocar renderer"),
+        PERFORMANCE("performance", "Desempenho", "Base nativa 1× com governor adaptativo de CPU/EE"),
+        BALANCED("balanced", "Equilibrado", "Compatibilidade com suavização adaptativa de gargalos"),
         QUALITY("quality", "Qualidade", "Aumenta resolução somente por escolha explícita"),
         CUSTOM("custom", "Custom", "Ajustes manuais do runtime PS2")
     }
@@ -80,7 +80,17 @@ object PS2Settings {
     fun resolve(context: Context): Config {
         val preset = readPreset(context)
         if (preset != Preset.CUSTOM) {
-            return presetConfig(preset).copy(bootStyle = readBootStyle(context))
+            val storage = prefs(context)
+            val base = presetConfig(preset)
+            return base.copy(
+                // Alpha 6 device testing exposed that the old presets hard-coded
+                // this to false, so the PCSX2 widescreen wiring never ran even
+                // though the backend itself was correct. Keep widescreen on by
+                // default for normal presets, while respecting an explicit saved
+                // preference if the user has one.
+                widescreen = storage.getBoolean(KEY_WIDESCREEN, true),
+                bootStyle = readBootStyle(context)
+            )
         }
         val storage = prefs(context)
         val fallback = presetConfig(Preset.AUTO)
@@ -92,7 +102,7 @@ object PS2Settings {
             internalResolution = InternalResolution.entries.firstOrNull {
                 it.storage == storage.getString(KEY_RESOLUTION, fallback.internalResolution.storage)
             } ?: fallback.internalResolution,
-            widescreen = storage.getBoolean(KEY_WIDESCREEN, fallback.widescreen),
+            widescreen = storage.getBoolean(KEY_WIDESCREEN, true),
             presentation = Presentation.entries.firstOrNull {
                 it.storage == storage.getString(KEY_PRESENTATION, fallback.presentation.storage)
             } ?: fallback.presentation,
@@ -135,25 +145,25 @@ object PS2Settings {
     private fun presetConfig(preset: Preset): Config = when (preset) {
         Preset.PERFORMANCE -> Config(
             preset, RendererMode.AUTO, InternalResolution.NATIVE,
-            widescreen = false, presentation = Presentation.FIT,
+            widescreen = true, presentation = Presentation.FIT,
             forceBilinear = false, frameLimit = true, spuBlockCount = 100,
             bootStyle = BootStyle.DIRECT
         )
         Preset.BALANCED -> Config(
             preset, RendererMode.AUTO, InternalResolution.NATIVE,
-            widescreen = false, presentation = Presentation.FIT,
+            widescreen = true, presentation = Presentation.FIT,
             forceBilinear = false, frameLimit = true, spuBlockCount = 100,
             bootStyle = BootStyle.DIRECT
         )
         Preset.QUALITY -> Config(
             preset, RendererMode.AUTO, InternalResolution.X2,
-            widescreen = false, presentation = Presentation.FIT,
+            widescreen = true, presentation = Presentation.FIT,
             forceBilinear = true, frameLimit = true, spuBlockCount = 100,
             bootStyle = BootStyle.DIRECT
         )
         Preset.AUTO, Preset.CUSTOM -> Config(
             Preset.AUTO, RendererMode.AUTO, InternalResolution.NATIVE,
-            widescreen = false, presentation = Presentation.FIT,
+            widescreen = true, presentation = Presentation.FIT,
             forceBilinear = false, frameLimit = true, spuBlockCount = 100,
             bootStyle = BootStyle.DIRECT
         )
