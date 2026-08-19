@@ -6,78 +6,132 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
+import android.view.InputDevice
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.PopupMenu
 import android.widget.TextView
+import android.widget.Toast
 import com.omnicore.emulator.core.ps2.PS2Backend
 import com.omnicore.emulator.core.ps2.PlayPS2Backend
 import com.omnicore.emulator.model.ConsoleSystem
 import com.omnicore.emulator.model.GameEntry
 import com.omnicore.emulator.performance.PS2SmartPerf
+import com.omnicore.emulator.settings.PS2InputSettings
+import com.omnicore.emulator.settings.PS2Settings
+import com.virtualapplications.play.InputManagerConstants
+import kotlin.math.abs
 
-/**
- * Isolated PS2 Boot Bridge Activity.
- *
- * Boot Bridge 1 proves the real Play! lifecycle: VM creation, Android Surface,
- * content URI boot, pause/resume and process isolation. Touch/input and advanced
- * renderer preferences remain separate gates instead of being mixed into boot.
- */
+/** Isolated PlayStation 2 gameplay Activity. */
 class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
+    private lateinit var root: FrameLayout
     private lateinit var surfaceView: SurfaceView
+    private lateinit var controls: PS2GamepadOverlayView
     private lateinit var statusView: TextView
+    private lateinit var classicBoot: PS2ClassicBootView
     private lateinit var backend: PlayPS2Backend
     private lateinit var currentGame: GameEntry
+    private lateinit var ps2Config: PS2Settings.Config
+    private lateinit var inputConfig: PS2InputSettings.Config
+    private lateinit var launchPlan: PS2SmartPerf.Plan
 
-    @Volatile
-    private var destroyed = false
+    @Volatile private var destroyed = false
+    @Volatile private var booting = false
+    @Volatile private var started = false
 
-    @Volatile
-    private var booting = false
-
-    @Volatile
-    private var started = false
-
+    private var classicReady = false
+    private var controlsVisible = true
+    private var manualPaused = false
     private var bootThread: Thread? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility =
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                View.SYSTEM_UI_FLAG_FULLSCREEN or
-                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        enterImmersiveMode()
 
         currentGame = gameFromIntent() ?: run {
+            Toast.makeText(this, "Imagem PlayStation 2 inválida.", Toast.LENGTH_LONG).show()
             finish()
             return
         }
+        ps2Config = PS2Settings.resolve(this)
+        inputConfig = PS2InputSettings.resolve(this)
         backend = PlayPS2Backend(this)
+        val capabilities = backend.probe()
+        launchPlan = PS2SmartPerf.initial(this, capabilities, ps2Config)
 
-        val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        surfaceView = SurfaceView(this).also { view ->
-            view.holder.addCallback(this)
-            root.addView(
-                view,
-                FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
-                )
-            )
+        buildUi()
+        if (!capabilities.available) {
+            classicReady = true
+            classicBoot.visibility = View.GONE
+            statusView.visibility = View.VISIBLE
+            statusView.text = "PS2 BACKEND INDISPONÍVEL\n${capabilities.notes}"
+            return
         }
+
+        if (ps2Config.bootStyle == PS2Settings.BootStyle.CLASSIC) {
+            controls.visibility = View.GONE
+            statusView.visibility = View.GONE
+            classicBoot.start {
+                if (destroyed) return@start
+                classicReady = true
+                classicBoot.visibility = View.GONE
+                controls.visibility = if (controlsVisible) View.VISIBLE else View.GONE
+                statusView.visibility = View.VISIBLE
+                statusView.text = "PS2 • preparando ${currentGame.title}…"
+                tryBoot()
+            }
+        } else {
+            classicReady = true
+            classicBoot.visibility = View.GONE
+            controls.visibility = View.VISIBLE
+            statusView.visibility = View.VISIBLE
+            tryBoot()
+        }
+    }
+
+    private fun buildUi() {
+        root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        setContentView(root)
+
+        surfaceView = SurfaceView(this).apply {
+            holder.addCallback(this@PS2EmulationActivity)
+        }
+        root.addView(
+            surfaceView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        controls = PS2GamepadOverlayView(
+            context = this,
+            config = inputConfig,
+            onButton = { id, pressed -> backend.setButton(id, pressed) },
+            onAxis = { id, value -> backend.setAxis(id, value) }
+        )
+        root.addView(
+            controls,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
         statusView = TextView(this).apply {
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.argb(205, 10, 12, 24))
-            textSize = 13f
+            textSize = 12f
             gravity = Gravity.CENTER
-            setPadding(dp(18), dp(10), dp(18), dp(10))
-            text = "PS2 Boot Bridge • preparando ${currentGame.title}…"
+            maxLines = 5
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            text = "PS2 • preparando ${currentGame.title}…"
         }
         root.addView(
             statusView,
@@ -85,14 +139,33 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            ).apply { topMargin = dp(18) }
+            ).apply { topMargin = dp(10) }
         )
-        setContentView(root)
 
-        val capabilities = backend.probe()
-        if (!capabilities.available) {
-            statusView.text = "PS2 BACKEND INDISPONÍVEL\n${capabilities.notes}"
+        val menuButton = TextView(this).apply {
+            text = "⋮"
+            setTextColor(Color.argb(235, 245, 245, 255))
+            textSize = 26f
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.argb(68, 20, 22, 36))
+            setOnClickListener { showQuickMenu(this) }
         }
+        root.addView(
+            menuButton,
+            FrameLayout.LayoutParams(dp(42), dp(42), Gravity.TOP or Gravity.END).apply {
+                topMargin = dp(8)
+                rightMargin = dp(8)
+            }
+        )
+
+        classicBoot = PS2ClassicBootView(this)
+        root.addView(
+            classicBoot,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -106,34 +179,35 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        controls.releaseAll()
+        backend.releaseAllInput()
         if (started) backend.pause()
         backend.attachSurface(null)
     }
 
     private fun tryBoot() {
-        if (destroyed || started || booting) return
+        if (!classicReady || destroyed || started || booting) return
         val surface = surfaceView.holder.surface
         if (!surface.isValid) return
 
         val capabilities = backend.probe()
         if (!capabilities.available) {
+            statusView.visibility = View.VISIBLE
             statusView.text = "PS2 BACKEND INDISPONÍVEL\n${capabilities.notes}"
             return
         }
 
-        val plan = PS2SmartPerf.initial(this, capabilities)
+        launchPlan = PS2SmartPerf.initial(this, capabilities, ps2Config)
         booting = true
         statusView.visibility = View.VISIBLE
         statusView.text = buildString {
-            append("PS2 Boot Bridge • Play! ")
+            append("PS2 • Play! ")
             append(capabilities.backendVersion)
-            append("\nAbrindo ")
-            append(currentGame.title)
             append(" • ")
-            append(plan.renderer)
-            append(" • qualidade ≥ ")
-            append(plan.qualityFloorScale)
-            append('x')
+            append(launchPlan.renderer)
+            append(" • ")
+            append(launchPlan.internalResolutionFactor)
+            append("×")
         }
 
         bootThread = Thread({
@@ -141,7 +215,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                 PS2Backend.BootRequest(
                     imagePath = currentGame.uri,
                     gameKey = currentGame.id,
-                    config = plan.asRuntimeConfig()
+                    config = launchPlan.asRuntimeConfig()
                 )
             )
             runOnUiThread {
@@ -150,10 +224,10 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                 when (result) {
                     is PS2Backend.BootResult.Started -> {
                         started = true
-                        statusView.text = "PS2 BOOT OK • ${result.backend} • ${result.renderer}"
+                        statusView.text = "PS2 BOOT OK • ${result.renderer} • ${launchPlan.internalResolutionFactor}×"
                         statusView.postDelayed({
                             if (!destroyed && started) statusView.visibility = View.GONE
-                        }, 1800L)
+                        }, 1700L)
                     }
                     is PS2Backend.BootResult.Rejected -> {
                         statusView.visibility = View.VISIBLE
@@ -171,23 +245,232 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         }
     }
 
+    private fun showQuickMenu(anchor: View) {
+        PopupMenu(this, anchor).apply {
+            val editing = controls.isEditMode()
+            menu.add(0, MENU_PAUSE, 0, if (manualPaused) "Continuar jogo" else "Pausar jogo")
+
+            val saveMenu = menu.addSubMenu("Salvar estado")
+            val loadMenu = menu.addSubMenu("Carregar estado")
+            for (slot in 1..5) {
+                saveMenu.add(0, MENU_SAVE_BASE + slot, slot, "Slot $slot")
+                loadMenu.add(0, MENU_LOAD_BASE + slot, slot, "Slot $slot")
+            }
+
+            if (editing) {
+                menu.add(0, MENU_EDIT_DONE, 30, "Concluir edição")
+                menu.add(0, MENU_EDIT_BIGGER, 31, "Aumentar selecionado")
+                menu.add(0, MENU_EDIT_SMALLER, 32, "Diminuir selecionado")
+                menu.add(0, MENU_EDIT_RESET, 33, "Restaurar layout")
+            } else {
+                menu.add(0, MENU_EDIT_START, 30, "Editar controles touch")
+            }
+            menu.add(0, MENU_CONTROLS, 40, if (controlsVisible) "Ocultar controles" else "Mostrar controles")
+            menu.add(0, MENU_PERF, 50, "Desempenho agora")
+            menu.add(0, MENU_STATUS, 51, "Mostrar status")
+            menu.add(0, MENU_EXIT, 99, "Sair do jogo")
+
+            setOnMenuItemClickListener { item ->
+                when {
+                    item.itemId in (MENU_SAVE_BASE + 1)..(MENU_SAVE_BASE + 5) -> {
+                        val slot = item.itemId - MENU_SAVE_BASE - 1
+                        val ok = backend.saveState(slot)
+                        Toast.makeText(this@PS2EmulationActivity, if (ok) "Estado PS2 salvo • Slot ${slot + 1}" else "Não foi possível salvar agora.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    item.itemId in (MENU_LOAD_BASE + 1)..(MENU_LOAD_BASE + 5) -> {
+                        val slot = item.itemId - MENU_LOAD_BASE - 1
+                        controls.releaseAll()
+                        val ok = backend.loadState(slot)
+                        Toast.makeText(this@PS2EmulationActivity, if (ok) "Estado PS2 carregado • Slot ${slot + 1}" else "Não foi possível carregar esse slot.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    item.itemId == MENU_PAUSE -> {
+                        manualPaused = !manualPaused
+                        controls.releaseAll()
+                        backend.releaseAllInput()
+                        if (started) {
+                            if (manualPaused) backend.pause() else backend.resume()
+                        }
+                        true
+                    }
+                    item.itemId == MENU_EDIT_START -> {
+                        controlsVisible = true
+                        controls.visibility = View.VISIBLE
+                        controls.setEditMode(true)
+                        if (started) backend.pause()
+                        Toast.makeText(this@PS2EmulationActivity, "Arraste os controles. Use ⋮ para tamanho e concluir.", Toast.LENGTH_LONG).show()
+                        true
+                    }
+                    item.itemId == MENU_EDIT_DONE -> {
+                        controls.setEditMode(false)
+                        if (started && !manualPaused) backend.resume()
+                        Toast.makeText(this@PS2EmulationActivity, "Layout PS2 salvo.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    item.itemId == MENU_EDIT_BIGGER -> {
+                        if (!controls.adjustSelectedScale(+0.08f)) Toast.makeText(this@PS2EmulationActivity, "Selecione um controle primeiro.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    item.itemId == MENU_EDIT_SMALLER -> {
+                        if (!controls.adjustSelectedScale(-0.08f)) Toast.makeText(this@PS2EmulationActivity, "Selecione um controle primeiro.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    item.itemId == MENU_EDIT_RESET -> {
+                        controls.resetEditedLayout()
+                        Toast.makeText(this@PS2EmulationActivity, "Layout PS2 restaurado.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    item.itemId == MENU_CONTROLS -> {
+                        controlsVisible = !controlsVisible
+                        controls.setEditMode(false)
+                        controls.releaseAll()
+                        backend.releaseAllInput()
+                        controls.visibility = if (controlsVisible) View.VISIBLE else View.GONE
+                        if (started && !manualPaused) backend.resume()
+                        true
+                    }
+                    item.itemId == MENU_PERF -> {
+                        showPerformanceStatus()
+                        true
+                    }
+                    item.itemId == MENU_STATUS -> {
+                        statusView.text = "PS2 • ${launchPlan.mode} • ${launchPlan.renderer} • ${launchPlan.internalResolutionFactor}×\n${launchPlan.reason}"
+                        statusView.visibility = View.VISIBLE
+                        true
+                    }
+                    item.itemId == MENU_EXIT -> {
+                        finish()
+                        true
+                    }
+                    else -> false
+                }
+            }
+            show()
+        }
+    }
+
+    private fun showPerformanceStatus() {
+        val telemetry = backend.telemetry()
+        val decision = PS2SmartPerf.adapt(launchPlan, telemetry)
+        val thermal = telemetry.thermalStatus
+        val memoryPct = (telemetry.memoryPressure * 100).toInt().coerceIn(0, 100)
+        Toast.makeText(
+            this,
+            "PS2 ${launchPlan.mode} • ${launchPlan.renderer} • ${launchPlan.internalResolutionFactor}× • térmico $thermal • memória $memoryPct% • ${decision.pressure}",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (isGamepadSource(event.source)) {
+            val id = when (event.keyCode) {
+                KeyEvent.KEYCODE_BUTTON_A -> InputManagerConstants.BUTTON_CROSS
+                KeyEvent.KEYCODE_BUTTON_B -> InputManagerConstants.BUTTON_CIRCLE
+                KeyEvent.KEYCODE_BUTTON_X -> InputManagerConstants.BUTTON_SQUARE
+                KeyEvent.KEYCODE_BUTTON_Y -> InputManagerConstants.BUTTON_TRIANGLE
+                KeyEvent.KEYCODE_BUTTON_L1 -> InputManagerConstants.BUTTON_L1
+                KeyEvent.KEYCODE_BUTTON_L2 -> InputManagerConstants.BUTTON_L2
+                KeyEvent.KEYCODE_BUTTON_THUMBL -> InputManagerConstants.BUTTON_L3
+                KeyEvent.KEYCODE_BUTTON_R1 -> InputManagerConstants.BUTTON_R1
+                KeyEvent.KEYCODE_BUTTON_R2 -> InputManagerConstants.BUTTON_R2
+                KeyEvent.KEYCODE_BUTTON_THUMBR -> InputManagerConstants.BUTTON_R3
+                KeyEvent.KEYCODE_BUTTON_SELECT, KeyEvent.KEYCODE_BUTTON_Z -> InputManagerConstants.BUTTON_SELECT
+                KeyEvent.KEYCODE_BUTTON_START -> InputManagerConstants.BUTTON_START
+                KeyEvent.KEYCODE_DPAD_UP -> InputManagerConstants.BUTTON_UP
+                KeyEvent.KEYCODE_DPAD_DOWN -> InputManagerConstants.BUTTON_DOWN
+                KeyEvent.KEYCODE_DPAD_LEFT -> InputManagerConstants.BUTTON_LEFT
+                KeyEvent.KEYCODE_DPAD_RIGHT -> InputManagerConstants.BUTTON_RIGHT
+                else -> -1
+            }
+            if (id >= 0) {
+                backend.setButton(id, event.action == KeyEvent.ACTION_DOWN)
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_MOVE && isGamepadSource(event.source)) {
+            backend.setAxis(InputManagerConstants.ANALOG_LEFT_X, centeredAxis(event, MotionEvent.AXIS_X))
+            backend.setAxis(InputManagerConstants.ANALOG_LEFT_Y, centeredAxis(event, MotionEvent.AXIS_Y))
+
+            val rightX = chooseAxis(event, MotionEvent.AXIS_Z, MotionEvent.AXIS_RX)
+            val rightY = chooseAxis(event, MotionEvent.AXIS_RZ, MotionEvent.AXIS_RY)
+            backend.setAxis(InputManagerConstants.ANALOG_RIGHT_X, rightX)
+            backend.setAxis(InputManagerConstants.ANALOG_RIGHT_Y, rightY)
+
+            val lTrigger = rawPositiveAxis(event, MotionEvent.AXIS_LTRIGGER)
+            val rTrigger = rawPositiveAxis(event, MotionEvent.AXIS_RTRIGGER)
+            if (lTrigger >= 0f) backend.setButton(InputManagerConstants.BUTTON_L2, lTrigger > 0.45f)
+            if (rTrigger >= 0f) backend.setButton(InputManagerConstants.BUTTON_R2, rTrigger > 0.45f)
+            return true
+        }
+        return super.onGenericMotionEvent(event)
+    }
+
+    private fun centeredAxis(event: MotionEvent, axis: Int): Float {
+        val device = event.device ?: return event.getAxisValue(axis).coerceIn(-1f, 1f)
+        val range = device.getMotionRange(axis, event.source) ?: return event.getAxisValue(axis).coerceIn(-1f, 1f)
+        val value = event.getAxisValue(axis)
+        return if (abs(value) <= range.flat) 0f else value.coerceIn(-1f, 1f)
+    }
+
+    private fun chooseAxis(event: MotionEvent, primary: Int, fallback: Int): Float {
+        val pRange = event.device?.getMotionRange(primary, event.source)
+        return if (pRange != null) centeredAxis(event, primary) else centeredAxis(event, fallback)
+    }
+
+    /** Returns -1 when this device doesn't expose the axis. */
+    private fun rawPositiveAxis(event: MotionEvent, axis: Int): Float {
+        val range = event.device?.getMotionRange(axis, event.source) ?: return -1f
+        val raw = event.getAxisValue(axis)
+        if (raw <= range.flat) return 0f
+        val span = (range.max - range.flat).coerceAtLeast(0.001f)
+        return ((raw - range.flat) / span).coerceIn(0f, 1f)
+    }
+
+    private fun isGamepadSource(source: Int): Boolean =
+        source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+            source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
+
     override fun onPause() {
-        if (started) backend.pause()
+        if (::controls.isInitialized) controls.releaseAll()
+        if (::backend.isInitialized) {
+            backend.releaseAllInput()
+            if (started) backend.pause()
+        }
         super.onPause()
     }
 
     override fun onResume() {
         super.onResume()
+        enterImmersiveMode()
         if (::backend.isInitialized) {
-            if (started) backend.resume() else if (::surfaceView.isInitialized) tryBoot()
+            if (started && !manualPaused && !controls.isEditMode()) backend.resume()
+            else if (::surfaceView.isInitialized) tryBoot()
         }
     }
 
     override fun onDestroy() {
         destroyed = true
+        if (::classicBoot.isInitialized) classicBoot.cancel()
+        if (::controls.isInitialized) controls.releaseAll()
         if (::backend.isInitialized) backend.stop()
         bootThread = null
         super.onDestroy()
+    }
+
+    private fun enterImmersiveMode() {
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                View.SYSTEM_UI_FLAG_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
     }
 
     private fun gameFromIntent(): GameEntry? {
@@ -216,6 +499,19 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         private const val EXTRA_GAME_URI = "ps2_game_uri"
         private const val EXTRA_FILE_NAME = "ps2_file_name"
         private const val EXTRA_SIZE_BYTES = "ps2_size_bytes"
+
+        private const val MENU_PAUSE = 1
+        private const val MENU_SAVE_BASE = 100
+        private const val MENU_LOAD_BASE = 200
+        private const val MENU_EDIT_START = 300
+        private const val MENU_EDIT_DONE = 301
+        private const val MENU_EDIT_BIGGER = 302
+        private const val MENU_EDIT_SMALLER = 303
+        private const val MENU_EDIT_RESET = 304
+        private const val MENU_CONTROLS = 400
+        private const val MENU_PERF = 500
+        private const val MENU_STATUS = 501
+        private const val MENU_EXIT = 999
 
         fun intent(context: Context, game: GameEntry): Intent =
             Intent(context, PS2EmulationActivity::class.java).apply {
