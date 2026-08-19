@@ -1,6 +1,7 @@
-OmniCore PS2 Boot Bridge 1 validation trigger
-phase=boot-bridge-1-real-play-jni
+OmniCore PS2 Boot Test 1 validation trigger
+phase=ps2-boot-test1
 play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da
+media_detection=iso9660-system-cnf-boot2
 bridge=vm+surface+content-uri+pause-resume
 renderer_gate=gles3-default
-revision=2-retrigger
+revision=3
