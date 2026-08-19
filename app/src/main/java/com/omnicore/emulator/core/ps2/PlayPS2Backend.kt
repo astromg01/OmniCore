@@ -5,11 +5,13 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
+import android.os.SystemClock
 import android.view.Surface
 import com.virtualapplications.play.InputManager
 import com.virtualapplications.play.InputManagerConstants
 import com.virtualapplications.play.NativeInterop
 import com.virtualapplications.play.SettingsManager
+import com.virtualapplications.play.StatsManager
 
 /**
  * OmniCore adapter for the pinned Play! Android backend.
@@ -25,6 +27,7 @@ class PlayPS2Backend(context: Context) : PS2Backend {
     @Volatile private var initialized = false
     @Volatile private var running = false
     @Volatile private var activeRenderer = PS2Backend.Renderer.AUTO
+    @Volatile private var statsStartedAtMs = 0L
 
     override val id: String = "play-pinned-04bde0df"
 
@@ -34,7 +37,8 @@ class PlayPS2Backend(context: Context) : PS2Backend {
             NativeInterop.isVirtualMachineCreated()
             true
         }.getOrDefault(false)
-        val available = nativeProbe?.playBackend == true && nativeProbe.playBootApi && jniLoadable
+        val compatibilityDb = hasCompatibilityDatabase()
+        val available = nativeProbe?.playBackend == true && nativeProbe.playBootApi && jniLoadable && compatibilityDb
         val vulkanDevice = if (Build.VERSION.SDK_INT >= 24) {
             appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL)
         } else false
@@ -49,10 +53,11 @@ class PlayPS2Backend(context: Context) : PS2Backend {
             saveStates = available,
             backendVersion = nativeProbe?.playRevision?.take(12).orEmpty().ifBlank { "unavailable" },
             notes = when {
-                available -> "Play! VM/input/settings JNI ready; renderer selected per PS2 session."
                 nativeProbe?.playBackend != true -> "libPlay.so is not packaged or could not be loaded."
-                nativeProbe?.playBootApi != true -> "Required Play! boot symbols are missing."
-                else -> "Play! JNI_OnLoad/ABI shim validation failed."
+                nativeProbe.playBootApi.not() -> "Required Play! boot symbols are missing."
+                !jniLoadable -> "Play! JNI_OnLoad/ABI shim validation failed."
+                !compatibilityDb -> "Play! GameConfig.xml compatibility database is missing from APK assets."
+                else -> "Play! VM/input/settings JNI + GameConfig compatibility database ready."
             }
         )
     }
@@ -83,6 +88,8 @@ class PlayPS2Backend(context: Context) : PS2Backend {
             NativeInterop.setupGsHandler(surface)
             NativeInterop.notifyPreferencesChanged()
             NativeInterop.bootDiskImage(request.imagePath)
+            runCatching { StatsManager.clearStats() }
+            statsStartedAtMs = SystemClock.elapsedRealtime()
             NativeInterop.resumeVirtualMachine()
             running = true
             PS2Backend.BootResult.Started(id, activeRenderer)
@@ -113,6 +120,7 @@ class PlayPS2Backend(context: Context) : PS2Backend {
         releaseAllInput()
         if (initialized && running) runCatching { NativeInterop.pauseVirtualMachine() }
         running = false
+        statsStartedAtMs = 0L
         attachedSurface = null
     }
 
@@ -131,10 +139,26 @@ class PlayPS2Backend(context: Context) : PS2Backend {
                     ?: PowerManager.THERMAL_STATUS_NONE
             }.getOrDefault(PowerManager.THERMAL_STATUS_NONE)
         } else PowerManager.THERMAL_STATUS_NONE
+
+        val frames = if (running) runCatching { StatsManager.getFrames() }.getOrDefault(0) else 0
+        val drawCalls = if (running) runCatching { StatsManager.getDrawCalls() }.getOrDefault(0) else 0
+        val elapsedMs = if (statsStartedAtMs > 0L) {
+            (SystemClock.elapsedRealtime() - statsStartedAtMs).coerceAtLeast(0L)
+        } else 0L
+        val fps = if (frames > 0 && elapsedMs >= 250L) {
+            frames * 1000f / elapsedMs.toFloat()
+        } else -1f
+        val frameMs = if (fps > 0f) 1000f / fps else -1f
+        val drawCallsPerFrame = if (frames > 0) drawCalls.toFloat() / frames.toFloat() else -1f
+
         return PS2Backend.Telemetry(
+            hostFrameMs = frameMs,
+            measuredFps = fps,
+            drawCallsPerFrame = drawCallsPerFrame,
             thermalStatus = thermal,
             memoryPressure = memoryPressure,
-            renderer = if (running) activeRenderer else PS2Backend.Renderer.AUTO
+            renderer = if (running) activeRenderer else PS2Backend.Renderer.AUTO,
+            sampleFrames = frames
         )
     }
 
@@ -188,6 +212,12 @@ class PlayPS2Backend(context: Context) : PS2Backend {
         initialized = true
     }
 
+    private fun hasCompatibilityDatabase(): Boolean = runCatching {
+        appContext.assets.open(COMPATIBILITY_DB_ASSET).use { stream ->
+            stream.read() >= 0
+        }
+    }.getOrDefault(false)
+
     private fun applyRuntimeConfig(
         config: PS2Backend.RuntimeConfig,
         caps: PS2Backend.Capabilities
@@ -203,12 +233,13 @@ class PlayPS2Backend(context: Context) : PS2Backend {
         SettingsManager.setPreferenceInteger(PREF_PRESENTATION_MODE, config.presentationMode)
         SettingsManager.setPreferenceBoolean(PREF_FORCE_BILINEAR, config.forceBilinear)
         SettingsManager.setPreferenceBoolean(PREF_LIMIT_FRAMERATE, config.limitFrameRate)
-        SettingsManager.setPreferenceInteger(PREF_SPU_BLOCK_COUNT, config.spuBlockCount.coerceIn(32, 100))
+        SettingsManager.setPreferenceInteger(PREF_SPU_BLOCK_COUNT, config.spuBlockCount.coerceIn(10, 400))
         SettingsManager.save()
         return renderer
     }
 
     companion object {
+        private const val COMPATIBILITY_DB_ASSET = "GameConfig.xml"
         private const val PREF_VIDEO_GS_HANDLER = "video.gshandler"
         private const val PREF_OPENGL_RESOLUTION = "renderer.opengl.resfactor"
         private const val PREF_WIDESCREEN = "renderer.widescreen"
