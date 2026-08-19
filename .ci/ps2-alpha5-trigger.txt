@@ -1,5 +1,5 @@
 phase=ps2-alpha5-runtime-compatibility
 version=0.11.4
-focus=measured-renderer-tuning-bios-prep-frame-pacing
-reason=physical-device-slow-motion-and-compatibility-feedback
-retry=5-fix-sustained-performance-api
+focus=black-screen-safety-gameplay-stutter-hub-scroll
+reason=physical-device-alpha5-feedback-galaxy-a06
+retry=6-alpha5-device-hotfix
