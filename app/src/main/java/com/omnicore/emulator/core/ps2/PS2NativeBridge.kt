@@ -1,6 +1,6 @@
 package com.omnicore.emulator.core.ps2
 
-/** Native PS2 foundation/bring-up probe. Gameplay boot stays behind PS2Backend. */
+/** Native PS2 foundation/boot-bridge probe. Gameplay lifecycle stays behind PS2Backend. */
 object PS2NativeBridge {
     init {
         System.loadLibrary("omnicore_ps2_runtime")
@@ -14,6 +14,7 @@ object PS2NativeBridge {
         val vulkanLoader: Boolean,
         val gles3Build: Boolean,
         val playBackend: Boolean,
+        val playBootApi: Boolean,
         val foundationVersion: String,
         val playRevision: String
     )
@@ -37,6 +38,7 @@ object PS2NativeBridge {
             vulkanLoader = values["vulkan"] == "1",
             gles3Build = values["gles3"] == "1",
             playBackend = values["play"] == "1",
+            playBootApi = values["playboot"] == "1",
             foundationVersion = values["version"].orEmpty().ifBlank { "unknown" },
             playRevision = values["playrev"].orEmpty().ifBlank { "unknown" }
         )
