@@ -5,16 +5,7 @@ import com.omnicore.emulator.core.ps2.PS2Backend
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * Measurement-only per-game PS2 session monitor.
- *
- * Alpha 5 tried two forms of automatic runtime mutation: persistent renderer
- * fallback and a session-only frame-limiter probe. Physical-device testing on
- * a low-end Android device showed both are unsafe as generic policies: renderer
- * fallback could black-screen a later boot and limiter probing could reduce
- * observed performance dramatically. SmartPerf therefore stays passive until
- * the backend exposes a proven bottleneck-specific knob.
- */
+/** Per-game PS2 telemetry monitor. Runtime pressure handling lives in the PCSX2 backend governor. */
 object PS2GameTuning {
     enum class Phase { MEASURING, LOCKED }
 
@@ -34,7 +25,6 @@ object PS2GameTuning {
     data class Observation(
         val state: State,
         val queuedRendererChange: Boolean,
-        /** Always null while SmartPerf is measurement-only. */
         val frameLimitOverride: Boolean?
     )
 
@@ -59,7 +49,6 @@ object PS2GameTuning {
         autoRendererRequested: Boolean,
         caps: PS2Backend.Capabilities
     ): PS2SmartPerf.Plan {
-        // Remove any unsafe persisted renderer left by early Alpha 5 builds.
         clearLegacyRenderer(context, gameIdentity)
         return plan
     }
@@ -99,14 +88,12 @@ object PS2GameTuning {
             probeFps = -1f,
             frameLimiterEnabled = frameLimitRequested,
             note = when {
-                !adaptiveRequested ->
-                    "SmartPerf passivo: configuração manual preservada"
                 sustainedSlow ->
-                    "slow-motion sustentado em ${formatFps(telemetry.measuredFps)} FPS; nenhum ajuste automático aplicado"
+                    "pressão sustentada em ${formatFps(telemetry.measuredFps)} FPS • governor adaptativo ativo"
                 session.fpsCount < BASELINE_SAMPLES ->
-                    "medindo baseline ${session.fpsCount}/$BASELINE_SAMPLES • ${activeRenderer.name}"
+                    "medindo baseline ${session.fpsCount}/$BASELINE_SAMPLES • governor ativo • ${activeRenderer.name}"
                 else ->
-                    "baseline ${formatFps(baseline)} FPS • monitoramento passivo • ${activeRenderer.name}"
+                    "baseline ${formatFps(baseline)} FPS • governor adaptativo ativo • ${activeRenderer.name}"
             }
         )
         session.state = next
@@ -135,9 +122,7 @@ object PS2GameTuning {
         val stateKey = key(gameIdentity)
         val prefs = context.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
         val rendererKey = "${stateKey}_renderer"
-        if (prefs.contains(rendererKey)) {
-            prefs.edit().remove(rendererKey).apply()
-        }
+        if (prefs.contains(rendererKey)) prefs.edit().remove(rendererKey).apply()
     }
 
     private fun emptyState() = State(
@@ -150,7 +135,7 @@ object PS2GameTuning {
         baselineFps = -1f,
         probeFps = -1f,
         frameLimiterEnabled = true,
-        note = "SmartPerf aguardando telemetria"
+        note = "SmartPerf aguardando telemetria • governor preparado"
     )
 
     private fun key(identity: String): String {
