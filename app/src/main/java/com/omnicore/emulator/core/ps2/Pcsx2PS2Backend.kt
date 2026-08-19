@@ -3,9 +3,11 @@ package com.omnicore.emulator.core.ps2
 import android.app.ActivityManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.hardware.display.DisplayManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
+import android.view.Display
 import android.view.Surface
 import com.omnicore.emulator.settings.PS2BiosManager
 import com.omnicore.emulator.settings.PS2Settings
@@ -249,9 +251,15 @@ class Pcsx2PS2Backend(context: Context) : PS2Backend {
         if (initialized) return
         NativeApp.bindContext(appContext)
         NativeApp.initialize(dataRoot.absolutePath, biosDir.absolutePath, Build.VERSION.SDK_INT)
-        // First device baseline: let Android schedule PCSX2 itself and do not force ADPF.
+
+        // Keep explicit affinity disabled so Android can place the PCSX2 threads,
+        // but use ADPF on modern Android when battery saver is not constraining us.
+        // This gives the scheduler real emulator frame-deadline hints without
+        // hard-pinning EE/GS work to cores that may be wrong for a given SoC.
         NativeApp.setAffinityMode(0)
-        NativeApp.setAdpfEnabled(false)
+        val power = appContext.getSystemService(PowerManager::class.java)
+        val enableAdpf = Build.VERSION.SDK_INT >= 33 && power?.isPowerSaveMode != true
+        NativeApp.setAdpfEnabled(enableAdpf)
         initialized = true
     }
 
@@ -273,7 +281,49 @@ class Pcsx2PS2Backend(context: Context) : PS2Backend {
         NativeApp.renderUpscalemultiplier(config.internalResolutionFactor.toFloat())
 
         val classic = PS2Settings.resolve(appContext).bootStyle == PS2Settings.BootStyle.CLASSIC
+
+        // Boot path: Direct uses PCSX2 fast boot and its boot-only fast-forward;
+        // Classic hands control to the user's real BIOS with both disabled.
         NativeApp.setSetting("EmuCore", "EnableFastBoot", "bool", (!classic).toString())
+        NativeApp.setSetting("EmuCore", "EnableFastBootFastForward", "bool", (!classic).toString())
+
+        // Widescreen is now wired to PCSX2 instead of being a UI-only OmniCore
+        // preference. Enable the game's bundled widescreen patches and present at
+        // 16:9 when requested; otherwise retain the core's automatic 4:3/3:2 path.
+        NativeApp.setSetting("EmuCore", "EnableWideScreenPatches", "bool", config.widescreen.toString())
+        NativeApp.setSetting(
+            "EmuCore/GS",
+            "AspectRatio",
+            "string",
+            if (config.widescreen) "16:9" else "Auto 4:3/3:2"
+        )
+
+        // Feed the old SmartPerf plan into settings that PCSX2 actually consumes.
+        // No cycle skipping or EE underclock is introduced: emulation correctness
+        // remains the floor and only safe queue/audio scheduling knobs are mapped.
+        NativeApp.setSetting("EmuCore/GS", "FrameLimitEnable", "bool", config.limitFrameRate.toString())
+        NativeApp.setSetting(
+            "EmuCore/GS",
+            "VsyncQueueSize",
+            "int",
+            config.queueAheadFrames.coerceIn(1, 3).toString()
+        )
+        NativeApp.setSetting("EmuCore/CPU/Recompiler", "EnableFastmem", "bool", "true")
+        NativeApp.setSetting("EmuCore/Speedhacks", "vuThread", "bool", (Runtime.getRuntime().availableProcessors() >= 6).toString())
+        NativeApp.setSetting("EmuCore/Speedhacks", "EECycleRate", "int", "0")
+        NativeApp.setSetting("EmuCore/Speedhacks", "EECycleSkip", "int", "0")
+
+        // ARMSX2's Android backend is Oboe. Give the mixer a real latency budget
+        // from SmartPerf instead of leaving the previous Play!-era audio fields
+        // disconnected; a small fixed output cushion reduces underrun crackle.
+        val audioLatency = config.audioTargetMs.coerceIn(48, 120)
+        NativeApp.setSetting("SPU2/Output", "Backend", "string", "Oboe")
+        NativeApp.setSetting("SPU2/Output", "Latency", "int", audioLatency.toString())
+        NativeApp.setSetting("SPU2/Output", "OutputLatency", "int", "24")
+        NativeApp.setSetting("SPU2/Output", "OutputLatencyMinimal", "bool", "false")
+        NativeApp.setSetting("SPU2/Output", "SynchMode", "int", "0")
+
+        // One atomic-ish apply before VM launch avoids repeated JIT/GS rebuilds.
         NativeApp.commitSettings()
     }
 
@@ -283,13 +333,18 @@ class Pcsx2PS2Backend(context: Context) : PS2Backend {
 
     private fun publishSurface(surface: Surface) {
         val metrics = appContext.resources.displayMetrics
+        val displayManager = appContext.getSystemService(DisplayManager::class.java)
+        val refreshRate = runCatching {
+            displayManager?.getDisplay(Display.DEFAULT_DISPLAY)?.refreshRate ?: 60f
+        }.getOrDefault(60f).coerceIn(30f, 240f)
+
         runCatching { NativeApp.onNativeSurfaceCreated() }
+        NativeApp.setDisplayRefreshRate(refreshRate)
         NativeApp.onNativeSurfaceChanged(
             surface,
             metrics.widthPixels.coerceAtLeast(1),
             metrics.heightPixels.coerceAtLeast(1)
         )
-        runCatching { NativeApp.setDisplayRefreshRate(60f) }
     }
 
     private fun prepareFilesystem(bios: PS2BiosManager.BiosInfo) {
@@ -400,7 +455,9 @@ class Pcsx2PS2Backend(context: Context) : PS2Backend {
         const val ARMSX2_PIN = "7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3"
         const val ARMSX2_PIN_SHORT = "7f0ae7a6"
         private const val BOOT_WAIT_MS = 12_000L
-        private const val ANALOG_DEADZONE = 0.025f
+        // Touch/physical shaping already owns the user-visible deadzone. Keep
+        // only a tiny numerical guard here so low-amplitude precision survives.
+        private const val ANALOG_DEADZONE = 0.001f
 
         // OmniCore's existing PS2 input ABI (kept numerically stable for the touch overlay).
         private const val AXIS_LEFT_X = 0
