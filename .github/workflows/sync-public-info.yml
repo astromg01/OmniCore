@@ -1,0 +1,64 @@
+name: Sync Public Release Information
+
+on:
+  release:
+    types: [published, released]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: omnicore-public-info-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout public branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Read release metadata
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="$(jq -r '.release.tag_name' "$GITHUB_EVENT_PATH")"
+          NAME="$(jq -r '.release.name // empty' "$GITHUB_EVENT_PATH")"
+          URL="$(jq -r '.release.html_url' "$GITHUB_EVENT_PATH")"
+          APK="$(jq -r '[.release.assets[]? | select(.name | endswith(".apk")) | .browser_download_url][0] // empty' "$GITHUB_EVENT_PATH")"
+          {
+            echo "tag=$TAG"
+            echo "name=$NAME"
+            echo "url=$URL"
+            echo "apk=$APK"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Synchronize README information
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/sync_public_info.py \
+            --tag '${{ steps.release.outputs.tag }}' \
+            --release-url '${{ steps.release.outputs.url }}' \
+            --apk-url '${{ steps.release.outputs.apk }}' \
+            --release-name '${{ steps.release.outputs.name }}'
+          git diff --check
+
+      - name: Publish synchronized information
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- README.md config/public-status.json; then
+            echo "Public information already synchronized."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md config/public-status.json
+          git commit -m "Sync public information for ${{ steps.release.outputs.tag }} [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
