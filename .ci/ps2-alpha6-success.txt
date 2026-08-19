@@ -1,0 +1,6 @@
+run_id=32298329115
+commit=19d72c70deda1f49fd484e318df99916a79f4a54
+status=success
+version=0.11.5
+backend=pcsx2-armsx2
+armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
