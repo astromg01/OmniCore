@@ -17,6 +17,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".ui.ps2.PS2SettingsActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".emulation.PS2EmulationActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize"
             android:exported="false"
