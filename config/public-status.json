@@ -1,0 +1,31 @@
+{
+  "channels": {
+    "stable_dev": {
+      "label": "Stable DEV",
+      "version": "0.9.4",
+      "status": "PS1 gameplay, video, audio and controls device validated",
+      "tag": "v0.9.4-dev"
+    },
+    "n64": {
+      "label": "N64 maintenance",
+      "version": "0.10.23 Alpha 24",
+      "status": "Gameplay baseline protected; startup-only audio polish remains non-blocking",
+      "tag": "v0.10.23-n64-alpha24"
+    },
+    "ps2": {
+      "label": "PS2 device-test",
+      "version": "0.11.0 Alpha 1",
+      "status": "First isolated Play! backend build with VM + Surface + content-URI boot path validated in CI",
+      "tag": "v0.11.0-ps2-alpha1"
+    }
+  },
+  "latest": {
+    "system": "ps2",
+    "title": "PS2 Alpha 1",
+    "version": "0.11.0 Alpha 1",
+    "tag": "v0.11.0-ps2-alpha1",
+    "release_url": "https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.11.0-ps2-alpha1",
+    "apk_url": "https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.11.0-ps2-alpha1/OmniCore-v0.11.0-ps2-alpha1-debug.apk",
+    "summary": "First public device-test build for the isolated PlayStation 2 runtime using the pinned Play! backend behind OmniCore's PS2Backend adapter."
+  }
+}
