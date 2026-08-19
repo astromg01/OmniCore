@@ -149,17 +149,63 @@ jobs:
       - name: Build signed Alpha 5 APK
         shell: bash
         run: |
-          set -euo pipefail
-          gradle :app:assembleDebug --stacktrace --no-daemon
+          set -uo pipefail
+          DIAG=/tmp/ps2-alpha5-build-diagnostic.txt
+          LOG="$RUNNER_TEMP/alpha5-gradle.log"
+          rm -f "$DIAG" "$LOG"
+          set +e
+          gradle :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee "$LOG"
+          GRADLE_RC=${PIPESTATUS[0]}
+          set -e
+          if (( GRADLE_RC != 0 )); then
+            {
+              echo "failure_stage=gradle-assemble"
+              echo "gradle_rc=$GRADLE_RC"
+              echo "diagnostic_tail_begin"
+              tail -n 180 "$LOG"
+              echo "diagnostic_tail_end"
+            } > "$DIAG"
+            exit "$GRADLE_RC"
+          fi
+
           APK="app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
+          if ! test -s "$APK"; then
+            {
+              echo "failure_stage=apk-output-missing"
+              echo "expected_apk=$APK"
+              echo "available_outputs_begin"
+              find app/build/outputs -maxdepth 5 -type f -print 2>/dev/null || true
+              echo "available_outputs_end"
+            } > "$DIAG"
+            exit 1
+          fi
+
           APK_LISTING="$RUNNER_TEMP/alpha5-apk-listing.txt"
-          unzip -l "$APK" > "$APK_LISTING"
-          grep -Fq 'assets/GameConfig.xml' "$APK_LISTING"
+          if ! unzip -l "$APK" > "$APK_LISTING"; then
+            {
+              echo "failure_stage=apk-listing"
+              echo "apk=$APK"
+            } > "$DIAG"
+            exit 1
+          fi
+
+          require_apk_entry() {
+            local entry="$1"
+            if ! grep -Fq "$entry" "$APK_LISTING"; then
+              {
+                echo "failure_stage=apk-content"
+                echo "missing_entry=$entry"
+              } > "$DIAG"
+              exit 1
+            fi
+          }
+
+          require_apk_entry 'assets/GameConfig.xml'
           for ABI in arm64-v8a armeabi-v7a; do
-            grep -Fq "lib/$ABI/libPlay.so" "$APK_LISTING"
-            grep -Fq "lib/$ABI/libomnicore_ps2_runtime.so" "$APK_LISTING"
+            require_apk_entry "lib/$ABI/libPlay.so"
+            require_apk_entry "lib/$ABI/libomnicore_ps2_runtime.so"
           done
+          echo "OMNICORE_PS2_ALPHA5_APK_OK"
 
       - name: Verify signer and 16 KB compatibility
         shell: bash
@@ -276,6 +322,10 @@ jobs:
             echo "status=failure"
             echo "version=0.11.4"
             echo "phase=ps2-alpha5-runtime-compatibility"
+            if test -s /tmp/ps2-alpha5-build-diagnostic.txt; then
+              echo
+              cat /tmp/ps2-alpha5-build-diagnostic.txt
+            fi
           } > "$RESULT"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
