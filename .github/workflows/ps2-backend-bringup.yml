@@ -61,30 +61,52 @@ jobs:
           tools/fetch_ps2_play_backend.sh 2>&1 | tee /tmp/ps2-bringup.log
           test "$(git -C build/third_party/play rev-parse HEAD)" = "04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
 
-      - name: Build Play ARM64 diagnostic backend
+      - name: Build Play dual ABI backend
         shell: bash
         run: |
           set -o pipefail
           export ANDROID_NDK_HOME="$PLAY_NDK_HOME"
-          export PLAY_ABIS="arm64-v8a"
-          export PLAY_BUILD_JOBS="1"
+          export PLAY_ABIS="arm64-v8a armeabi-v7a"
+          export PLAY_BUILD_JOBS="2"
           tools/build_ps2_play_backend_android.sh 2>&1 | tee -a /tmp/ps2-bringup.log
-          test -s "app/src/main/jniLibs/arm64-v8a/libPlay.so"
+          test -s app/src/main/jniLibs/arm64-v8a/libPlay.so
+          test -s app/src/main/jniLibs/armeabi-v7a/libPlay.so
 
-      - name: Verify Play ARM64 ELF 16 KB alignment
+      - name: Verify Play ELF alignment and dependencies
         shell: bash
         run: |
           set -euo pipefail
           READELF="$PLAY_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-          LIB="app/src/main/jniLibs/arm64-v8a/libPlay.so"
-          "$READELF" -lW "$LIB" | tee -a /tmp/ps2-bringup.log
-          "$READELF" -lW "$LIB" | awk '$1 == "LOAD" { count++; if ($NF != "0x4000" && $NF != "0x10000") bad=1 } END { if (count == 0 || bad) exit 1 }'
+          for ABI in arm64-v8a armeabi-v7a; do
+            LIB="app/src/main/jniLibs/$ABI/libPlay.so"
+            "$READELF" -lW "$LIB" | tee -a /tmp/ps2-bringup.log
+            "$READELF" -lW "$LIB" | awk '$1 == "LOAD" { count++; if ($NF != "0x4000" && $NF != "0x10000") bad=1 } END { if (count == 0 || bad) exit 1 }'
+            "$READELF" -dW "$LIB" | tee -a /tmp/ps2-bringup.log
+            if "$READELF" -dW "$LIB" | grep -q 'libc++_shared.so'; then
+              echo "Unexpected shared C++ runtime dependency for $ABI" >&2
+              exit 1
+            fi
+          done
 
-      - name: Compile OmniCore PS2 adapter
+      - name: Build OmniCore PS2 container APK
         shell: bash
         run: |
           set -o pipefail
-          gradle :app:externalNativeBuildDebug :app:compileDebugKotlin --stacktrace --no-daemon 2>&1 | tee -a /tmp/ps2-bringup.log
+          gradle :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee -a /tmp/ps2-bringup.log
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          unzip -l "$APK" | tee -a /tmp/ps2-bringup.log
+          for ABI in arm64-v8a armeabi-v7a; do
+            unzip -l "$APK" | grep -q "lib/$ABI/libPlay.so"
+            unzip -l "$APK" | grep -q "lib/$ABI/libomnicore_ps2_runtime.so"
+          done
+
+      - name: Verify APK 16 KB packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK" | tee -a /tmp/ps2-bringup.log
 
       - name: Record bring-up failure
         if: failure()
@@ -96,11 +118,11 @@ jobs:
             echo "run_id=$GITHUB_RUN_ID"
             echo "commit=$GITHUB_SHA"
             echo "status=failure"
-            echo "phase=backend-bringup-1-r2-arm64"
+            echo "phase=backend-bringup-2-dualabi-apk"
             echo "play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
             echo
             echo "--- build tail ---"
-            if test -f /tmp/ps2-bringup.log; then tail -n 220 /tmp/ps2-bringup.log; fi
+            if test -f /tmp/ps2-bringup.log; then tail -n 260 /tmp/ps2-bringup.log; fi
           } > "$RESULT"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -109,7 +131,7 @@ jobs:
           cp "$RESULT" .ci/ps2-backend-bringup-failure.txt
           rm -f .ci/ps2-backend-bringup-success.txt
           git add .ci/ps2-backend-bringup-failure.txt .ci/ps2-backend-bringup-success.txt 2>/dev/null || true
-          git commit -m "Record PS2 backend bring-up R2 failure [skip ci]" || true
+          git commit -m "Record PS2 bring-up 2 failure [skip ci]" || true
           git push origin HEAD:agent/0.11.0-ps2-foundation
 
       - name: Record bring-up success
@@ -122,10 +144,12 @@ jobs:
             echo "run_id=$GITHUB_RUN_ID"
             echo "commit=$GITHUB_SHA"
             echo "status=success"
-            echo "phase=backend-bringup-1-r2-arm64"
+            echo "phase=backend-bringup-2-dualabi-apk"
             echo "play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
             echo "backend=libPlay.so"
-            echo "abis=arm64-v8a"
+            echo "abis=arm64-v8a,armeabi-v7a"
+            echo "container_apk=app-debug.apk"
+            echo "ps2_runtime=libomnicore_ps2_runtime.so"
           } > "$RESULT"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -134,9 +158,9 @@ jobs:
           cp "$RESULT" .ci/ps2-backend-bringup-success.txt
           rm -f .ci/ps2-backend-bringup-failure.txt
           git add .ci/ps2-backend-bringup-success.txt .ci/ps2-backend-bringup-failure.txt 2>/dev/null || true
-          git commit -m "Record PS2 backend bring-up R2 success [skip ci]" || true
+          git commit -m "Record PS2 bring-up 2 success [skip ci]" || true
           git push origin HEAD:agent/0.11.0-ps2-foundation
 
       - name: Bring-up summary
         if: success()
-        run: echo "Pinned Play! ARM64 backend compiled behind OmniCore PS2 isolation. ARMv7 and packaging are the next gate."
+        run: echo "Play! dual-ABI backend and OmniCore PS2 runtime are packaged in a 16 KB-aligned APK. Boot Bridge is the next gate."
