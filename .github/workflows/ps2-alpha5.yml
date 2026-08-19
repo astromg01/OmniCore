@@ -32,7 +32,7 @@ jobs:
           set -euo pipefail
           gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state='pending' -f context='omnicore/ps2-alpha5' \
-            -f description='PS2 Alpha 5 runtime compatibility validation running' \
+            -f description='PS2 Alpha 5 SmartPerf V2 validation running' \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
       - name: Protect PS1 and N64 runtimes
@@ -54,18 +54,24 @@ jobs:
           set -euo pipefail
           grep -Fq 'versionCode = 44' app/build.gradle.kts
           grep -Fq 'versionName = "0.11.4"' app/build.gradle.kts
+          grep -Fq 'isMinifyEnabled = true' app/build.gradle.kts
           grep -Fq 'PS2GameTuning.observe' app/src/main/java/com/omnicore/emulator/emulation/PS2EmulationActivity.kt
-          grep -Fq 'setFrameRate' app/src/main/java/com/omnicore/emulator/emulation/PS2EmulationActivity.kt
-          grep -Fq 'setSustainedPerformanceMode' app/src/main/java/com/omnicore/emulator/emulation/PS2EmulationActivity.kt
+          grep -Fq 'HandlerThread("OmniCore-PS2-Perf"' app/src/main/java/com/omnicore/emulator/emulation/PS2EmulationActivity.kt
+          grep -Fq 'frameLimitOverride' app/src/main/java/com/omnicore/emulator/performance/PS2GameTuning.kt
+          grep -Fq 'LIMITER_PROBE' app/src/main/java/com/omnicore/emulator/performance/PS2GameTuning.kt
           grep -Fq 'SLOW_FPS = 24f' app/src/main/java/com/omnicore/emulator/performance/PS2GameTuning.kt
           grep -Fq 'REQUIRED_SLOW_SAMPLES = 5' app/src/main/java/com/omnicore/emulator/performance/PS2GameTuning.kt
+          grep -Fq 'setFrameLimit(enabled: Boolean)' app/src/main/java/com/omnicore/emulator/core/ps2/PlayPS2Backend.kt
+          grep -Fq 'MIN_TELEMETRY_WINDOW_MS' app/src/main/java/com/omnicore/emulator/core/ps2/PlayPS2Backend.kt
           grep -Fq 'MIN_PLAUSIBLE_SIZE' app/src/main/java/com/omnicore/emulator/settings/PS2BiosManager.kt
           grep -Fq 'ActivityResultContracts.OpenDocument' app/src/main/java/com/omnicore/emulator/ui/ps2/PS2SettingsDialog.kt
           grep -Fq 'Play! atual usa HLE BIOS' app/src/main/java/com/omnicore/emulator/ui/ps2/PS2SettingsDialog.kt
+          grep -Fq 'Intro OmniCore' app/src/main/java/com/omnicore/emulator/settings/PS2Settings.kt
           grep -Fq 'qualityFloorScale >= 1.0f' app/src/main/java/com/omnicore/emulator/core/ps2/PS2Backend.kt
           grep -Fq 'allowCycleSkipping = false' app/src/main/java/com/omnicore/emulator/performance/PS2SmartPerf.kt
+          grep -Fq 'private val OmniBg = Color' app/src/main/java/com/omnicore/emulator/ui/OmniCoreV4App.kt
           grep -Fq 'android:process=":ps2"' app/src/main/AndroidManifest.xml
-          echo "OMNICORE_PS2_ALPHA5_SOURCE_OK measured-tuning bios-prep pacing quality-floor"
+          echo "OMNICORE_PS2_ALPHA5_SOURCE_OK smartperf-v2 lean-hub optimized-release bios-truth"
 
       - name: Verify Android toolchains
         shell: bash
@@ -146,7 +152,7 @@ jobs:
             grep -Fq 'Java_com_virtualapplications_play_NativeInterop_bootDiskImage' <<< "$TABLE"
           done
 
-      - name: Build signed Alpha 5 APK
+      - name: Build optimized signed Alpha 5 APK
         shell: bash
         run: |
           set -uo pipefail
@@ -154,21 +160,21 @@ jobs:
           LOG="$RUNNER_TEMP/alpha5-gradle.log"
           rm -f "$DIAG" "$LOG"
           set +e
-          gradle :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee "$LOG"
+          gradle :app:assembleRelease --stacktrace --no-daemon 2>&1 | tee "$LOG"
           GRADLE_RC=${PIPESTATUS[0]}
           set -e
           if (( GRADLE_RC != 0 )); then
             {
-              echo "failure_stage=gradle-assemble"
+              echo "failure_stage=gradle-assemble-release"
               echo "gradle_rc=$GRADLE_RC"
               echo "diagnostic_tail_begin"
-              tail -n 180 "$LOG"
+              tail -n 220 "$LOG"
               echo "diagnostic_tail_end"
             } > "$DIAG"
             exit "$GRADLE_RC"
           fi
 
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          APK="app/build/outputs/apk/release/app-release.apk"
           if ! test -s "$APK"; then
             {
               echo "failure_stage=apk-output-missing"
@@ -205,13 +211,14 @@ jobs:
             require_apk_entry "lib/$ABI/libPlay.so"
             require_apk_entry "lib/$ABI/libomnicore_ps2_runtime.so"
           done
-          echo "OMNICORE_PS2_ALPHA5_APK_OK"
+          test -s app/build/outputs/mapping/release/mapping.txt
+          echo "OMNICORE_PS2_ALPHA5_OPTIMIZED_APK_OK"
 
       - name: Verify signer and 16 KB compatibility
         shell: bash
         run: |
           set -euo pipefail
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          APK="app/build/outputs/apk/release/app-release.apk"
           APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
           EXPECTED="9490d1ad4666312d6dd9e5b2a20699583919ae80a5536882bcd3f9accc793547"
           CERT_INFO="$RUNNER_TEMP/alpha5-cert-info.txt"
@@ -247,11 +254,13 @@ jobs:
           set -euo pipefail
           TAG="v0.11.4-ps2-alpha5"
           TITLE="OmniCore v0.11.4 PS2 Alpha 5"
-          NOTES="Fifth PS2 device-test alpha focused on the remaining strong slow-motion/stutter feedback. Keeps the Play! GameConfig compatibility database and full-LTO backend from Alpha 4, then starts using Play!'s real frame/draw-call counters for conservative per-game renderer tuning: sustained severe slowdown in AUTO can queue Vulkan/GLES fallback for the next boot without changing resolution or enabling cycle skipping. Adds Android Surface frame-rate pacing and sustained-performance mode where the OS/device supports them. Adds a user-owned PS2 BIOS picker/storage/validation layer in OmniCore settings; the current Play! backend still uses HLE BIOS and cannot execute an external BIOS, so authentic Sony BIOS startup is not faked or bundled. This BIOS reference is groundwork for a future BIOS-capable PS2 backend. PS1/N64 remain isolated. No games, Sony BIOS, firmware, startup media or proprietary console assets are included."
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          OUT="build/OmniCore-v0.11.4-ps2-alpha5-debug.apk"
-          HASH="build/OmniCore-v0.11.4-ps2-alpha5-debug.sha256"
+          NOTES="Alpha 5 corrective device-test build based on physical Android feedback. SmartPerf V2 removes telemetry-driven renderer switching and any next-boot renderer persistence. FPS is now measured in short windows and the only automatic experiment is a reversible, session-only test of Play!'s native frame limiter; the original setting is restored when the probe does not show a measurable gain or when thermal/memory pressure is unsafe. Performance sampling runs off the UI thread. The OmniCore hub now uses opaque single-pass surfaces with reduced gradients/overdraw, and this APK is built as a non-debuggable optimized release with R8/resource shrinking while keeping the stable DEV signer for in-place device testing. The imported PS2 BIOS remains user-owned preparation only: the pinned Play! Android backend uses HLE BIOS and cannot execute an external BIOS, so 'Intro OmniCore' is explicitly identified as an original visual intro rather than authentic Sony BIOS startup. Quality floor remains 1.0x and cycle skipping stays disabled. PS1/N64 runtime source remains protected and isolated. No games, Sony BIOS, firmware, startup media or proprietary console assets are included."
+          APK="app/build/outputs/apk/release/app-release.apk"
+          OUT="build/OmniCore-v0.11.4-ps2-alpha5-optimized.apk"
+          LEGACY_OUT="build/OmniCore-v0.11.4-ps2-alpha5-debug.apk"
+          HASH="build/OmniCore-v0.11.4-ps2-alpha5-optimized.sha256"
           cp "$APK" "$OUT"
+          cp "$APK" "$LEGACY_OUT"
           sha256sum "$OUT" > "$HASH"
           TARGET="$(git rev-parse HEAD)"
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -259,7 +268,7 @@ jobs:
           else
             gh release create "$TAG" --target "$TARGET" --title "$TITLE" --notes "$NOTES" --prerelease
           fi
-          gh release upload "$TAG" "$OUT" "$HASH" build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz --clobber
+          gh release upload "$TAG" "$OUT" "$LEGACY_OUT" "$HASH" build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz --clobber
 
       - name: Publish success status
         if: success()
@@ -269,7 +278,7 @@ jobs:
         run: |
           gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state='success' -f context='omnicore/ps2-alpha5' \
-            -f description='PS2 Alpha 5 runtime compatibility validated' \
+            -f description='PS2 Alpha 5 SmartPerf V2 optimized build validated' \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
       - name: Publish failure status
@@ -281,7 +290,7 @@ jobs:
           set +e
           gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state='failure' -f context='omnicore/ps2-alpha5' \
-            -f description='PS2 Alpha 5 validation failed' \
+            -f description='PS2 Alpha 5 SmartPerf V2 validation failed' \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
       - name: Record Alpha 5 success
@@ -298,7 +307,7 @@ jobs:
             echo "tag=v0.11.4-ps2-alpha5"
             echo "play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
             echo "abis=arm64-v8a,armeabi-v7a"
-            echo "features=measured-game-tuning,surface-pacing,sustained-performance,bios-prep,gameconfig-db,full-lto,quality-floor"
+            echo "features=smartperf-v2,windowed-fps,session-limiter-probe,off-main-telemetry,lean-hub,optimized-release,bios-truth,gameconfig-db,full-lto,quality-floor"
           } > "$RESULT"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -321,7 +330,7 @@ jobs:
             echo "commit=$GITHUB_SHA"
             echo "status=failure"
             echo "version=0.11.4"
-            echo "phase=ps2-alpha5-runtime-compatibility"
+            echo "phase=ps2-alpha5-smartperf-v2"
             if test -s /tmp/ps2-alpha5-build-diagnostic.txt; then
               echo
               cat /tmp/ps2-alpha5-build-diagnostic.txt
