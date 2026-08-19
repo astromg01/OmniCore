@@ -1,5 +1,5 @@
-phase=ps2-alpha5-runtime-compatibility
+phase=ps2-alpha5-smartperf-v2
 version=0.11.4
-focus=black-screen-safety-gameplay-stutter-hub-scroll
-reason=physical-device-alpha5-feedback-galaxy-a06
-retry=6-alpha5-device-hotfix
+focus=windowed-fps-session-limiter-probe-optimized-release-lean-hub-bios-truth
+reason=physical-device-alpha5-20fps-ui-stutter-bios-feedback
+retry=7-smartperf-v2-optimized
