@@ -3,14 +3,15 @@ package com.omnicore.emulator.settings
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import java.io.ByteArrayOutputStream
 
 /**
- * Stores only a user-selected BIOS document reference.
+ * Stores and validates a user-selected PS2 BIOS document reference.
  *
- * OmniCore never bundles, downloads or redistributes a Sony BIOS. The current
- * Play! backend cannot execute an external BIOS, but keeping this capability at
- * the OmniCore layer lets a future BIOS-capable PS2 backend use the same user
- * selection without changing the library or UI contract.
+ * OmniCore never bundles, downloads or redistributes a Sony BIOS. Validation is
+ * deliberately structural: size plus the PS2 ROMDIR/ROMVER layout used by PCSX2.
+ * The current Play! backend still cannot execute an external BIOS, but the same
+ * validated user selection can be handed to a future BIOS-capable backend.
  */
 object PS2BiosManager {
     data class BiosInfo(
@@ -19,6 +20,12 @@ object PS2BiosManager {
         val sizeBytes: Long,
         val plausible: Boolean,
         val reason: String
+    )
+
+    private data class RomVersion(
+        val raw: String,
+        val version: String,
+        val region: String
     )
 
     private const val PREFS = "ps2_bios"
@@ -42,13 +49,14 @@ object PS2BiosManager {
             )
         }
         val meta = queryMetadata(context, uri)
+        val validated = validate(context, uri, meta.first, meta.second)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_URI, uri.toString())
             .putString(KEY_NAME, meta.first)
-            .putLong(KEY_SIZE, meta.second)
+            .putLong(KEY_SIZE, validated.sizeBytes)
             .apply()
-        return validate(context, uri, meta.first, meta.second)
+        return validated
     }
 
     fun clear(context: Context) {
@@ -67,25 +75,147 @@ object PS2BiosManager {
     fun validate(context: Context, uri: Uri, displayName: String? = null, sizeHint: Long = -1L): BiosInfo {
         val metadata = if (displayName == null || sizeHint < 0) queryMetadata(context, uri) else displayName to sizeHint
         val name = metadata.first
-        val size = metadata.second
-        val canRead = runCatching {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                val header = ByteArray(16)
-                input.read(header) > 0
-            } ?: false
-        }.getOrDefault(false)
+        val declaredSize = metadata.second
 
-        // Common PS2 BIOS dumps are 4 MiB; some valid dumps include extra ROM
-        // regions and are larger. Validation deliberately checks plausibility,
-        // not copyrighted contents or region-specific signatures.
-        val plausibleSize = size in MIN_PLAUSIBLE_SIZE..MAX_PLAUSIBLE_SIZE
-        val plausible = canRead && plausibleSize
-        val reason = when {
-            !canRead -> "arquivo não pode ser lido"
-            !plausibleSize -> "tamanho fora da faixa esperada para um dump de BIOS PS2"
-            else -> "dump de BIOS armazenado para backend PS2 compatível"
+        val bytes = runCatching { readLimited(context, uri) }.getOrNull()
+        if (bytes == null) {
+            return BiosInfo(uri.toString(), name, declaredSize, false, "arquivo não pode ser lido")
         }
-        return BiosInfo(uri.toString(), name, size, plausible, reason)
+
+        val actualSize = bytes.size.toLong()
+        val size = if (declaredSize >= 0L) declaredSize else actualSize
+        val plausibleSize = size in MIN_PLAUSIBLE_SIZE..MAX_PLAUSIBLE_SIZE &&
+            actualSize in MIN_PLAUSIBLE_SIZE..MAX_PLAUSIBLE_SIZE
+
+        if (!plausibleSize) {
+            return BiosInfo(
+                uri.toString(),
+                name,
+                size,
+                false,
+                "tamanho fora da faixa 4–8 MiB esperada para BIOS PS2"
+            )
+        }
+
+        val romVersion = findRomVersion(bytes)
+        if (romVersion == null) {
+            return BiosInfo(
+                uri.toString(),
+                name,
+                size,
+                false,
+                "ROMDIR/ROMVER de BIOS PS2 não encontrado"
+            )
+        }
+
+        return BiosInfo(
+            uri = uri.toString(),
+            displayName = name,
+            sizeBytes = size,
+            plausible = true,
+            reason = "BIOS PS2 válida • ${romVersion.region} • v${romVersion.version} • ROMVER ${romVersion.raw}"
+        )
+    }
+
+    /**
+     * Mirrors the public PCSX2 BIOS discovery strategy at a small scale:
+     * find the RESET ROMDIR entry within the first 512 KiB, walk 16-byte entries,
+     * accumulate aligned ROM file offsets, and resolve ROMVER.
+     */
+    private fun findRomVersion(data: ByteArray): RomVersion? {
+        val scanEnd = minOf(ROMDIR_SCAN_LIMIT, data.size - ROMDIR_ENTRY_SIZE)
+        var romDirOffset = -1
+        var offset = 0
+        while (offset <= scanEnd) {
+            if (entryName(data, offset) == "RESET") {
+                romDirOffset = offset
+                break
+            }
+            offset += ROMDIR_ENTRY_SIZE
+        }
+        if (romDirOffset < 0) return null
+
+        var directoryOffset = romDirOffset
+        var fileOffset = 0L
+        var entries = 0
+        while (directoryOffset + ROMDIR_ENTRY_SIZE <= data.size && entries < MAX_ROMDIR_ENTRIES) {
+            val name = entryName(data, directoryOffset)
+            if (name.isEmpty()) break
+
+            val fileSize = readU32Le(data, directoryOffset + 12)
+            if (name == "ROMVER") {
+                if (fileOffset < 0 || fileOffset + ROMVER_LENGTH > data.size.toLong()) return null
+                val start = fileOffset.toInt()
+                val raw = data.copyOfRange(start, start + ROMVER_LENGTH)
+                    .toString(Charsets.US_ASCII)
+                    .trimEnd('\u0000', ' ')
+                return parseRomVersion(raw)
+            }
+
+            fileOffset = align16(fileOffset + fileSize)
+            if (fileOffset > data.size.toLong()) return null
+            directoryOffset += ROMDIR_ENTRY_SIZE
+            entries++
+        }
+        return null
+    }
+
+    private fun parseRomVersion(raw: String): RomVersion? {
+        if (raw.length < ROMVER_LENGTH) return null
+        val versionDigits = raw.substring(0, 4)
+        if (!versionDigits.all { it.isDigit() }) return null
+        val version = "${versionDigits.substring(0, 2).toInt()}.${versionDigits.substring(2, 4)}"
+        val region = when (raw[4]) {
+            'J' -> "Japan"
+            'A' -> "USA"
+            'E' -> "Europe"
+            'H' -> "Asia"
+            'C' -> "China"
+            'T' -> if (raw.getOrNull(5) == 'Z') "COH-H" else "T10K"
+            'X' -> "Test"
+            'P' -> "Free"
+            else -> "Região ${raw[4]}"
+        }
+        return RomVersion(raw = raw, version = version, region = region)
+    }
+
+    private fun entryName(data: ByteArray, offset: Int): String {
+        if (offset < 0 || offset + 10 > data.size) return ""
+        var end = offset
+        val limit = offset + 10
+        while (end < limit && data[end].toInt() != 0) end++
+        if (end == limit) return ""
+        return data.copyOfRange(offset, end).toString(Charsets.US_ASCII)
+    }
+
+    private fun readU32Le(data: ByteArray, offset: Int): Long {
+        if (offset < 0 || offset + 4 > data.size) return Long.MAX_VALUE
+        return (data[offset].toLong() and 0xffL) or
+            ((data[offset + 1].toLong() and 0xffL) shl 8) or
+            ((data[offset + 2].toLong() and 0xffL) shl 16) or
+            ((data[offset + 3].toLong() and 0xffL) shl 24)
+    }
+
+    private fun align16(value: Long): Long = (value + 0x0fL) and 0xfffffff0L
+
+    private fun readLimited(context: Context, uri: Uri): ByteArray {
+        val output = ByteArrayOutputStream(MAX_PLAUSIBLE_SIZE.toInt())
+        val buffer = ByteArray(64 * 1024)
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            var total = 0L
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                total += read
+                if (total > MAX_PLAUSIBLE_SIZE) {
+                    // One extra byte is enough to prove that the image is oversized.
+                    output.write(buffer, 0, minOf(read, 1))
+                    break
+                }
+                output.write(buffer, 0, read)
+            }
+        } ?: error("BIOS stream unavailable")
+        return output.toByteArray()
     }
 
     private fun queryMetadata(context: Context, uri: Uri): Pair<String, Long> {
@@ -102,6 +232,10 @@ object PS2BiosManager {
         return name to size
     }
 
-    private const val MIN_PLAUSIBLE_SIZE = 2L * 1024L * 1024L
+    private const val MIN_PLAUSIBLE_SIZE = 4L * 1024L * 1024L
     private const val MAX_PLAUSIBLE_SIZE = 8L * 1024L * 1024L
+    private const val ROMDIR_SCAN_LIMIT = 512 * 1024
+    private const val ROMDIR_ENTRY_SIZE = 16
+    private const val ROMVER_LENGTH = 14
+    private const val MAX_ROMDIR_ENTRIES = 4096
 }
