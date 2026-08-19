@@ -1,6 +1,20 @@
-run_id=32312980854
-commit=e162722a42a83c1f293e5f2d10f5c2ce56722835
+run_id=32313091821
+commit=50174a42fb03267823dd9e94d179aa8bb63c18d7
 status=failure
 version=0.11.5
 backend=pcsx2-armsx2
 armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
+failure_stage=pcsx2-armsx2-official-nightly-import
+exit_code=1
+source_pin=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
+binary_tag=nightly-20260819
+binary_asset=ARMSX2-nightly-20260819-7f0ae7a6c6-Android-arm64.apk
+--- last 220 import lines ---
+Downloading official ARMSX2 nightly: https://github.com/ARMSX2/ARMSX2/releases/download/nightly-20260819/ARMSX2-nightly-20260819-7f0ae7a6c6-Android-arm64.apk
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+ 50 79.9M   50 40.2M    0     0  82.3M      0 --:--:-- --:--:-- --:--:-- 82.3M100 79.9M  100 79.9M    0     0   135M      0 --:--:-- --:--:-- --:--:--  397M
+deb7a553a1d5fe795b2f4ca7a5b8e70fc4bce9536fbf4a1a340e3ac0aee30126  build/ps2-pcsx2/ARMSX2-nightly-20260819-7f0ae7a6c6-Android-arm64.apk
+Keeping Gradle-provided native dependency instead of duplicate upstream copy: libandroidx.graphics.path.so
+PCSX2 backend loader diagnostic anchor not found
