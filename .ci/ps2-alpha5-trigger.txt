@@ -1,5 +1,5 @@
-phase=ps2-alpha5-smartperf-v2
+phase=ps2-alpha5-passive-tuning
 version=0.11.4
-focus=windowed-fps-session-limiter-probe-optimized-release-lean-hub-bios-truth
-reason=physical-device-alpha5-20fps-ui-stutter-bios-feedback
-retry=8-smartperf-v2-optimized
+focus=measurement-only-smartperf-no-auto-sustained-performance-pcsx2-romdir-bios
+reason=physical-device-alpha5-9fps-regression-and-bios-feedback
+retry=9-passive-tuning-bios-validation
