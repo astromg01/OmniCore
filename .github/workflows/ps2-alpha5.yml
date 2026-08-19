@@ -153,10 +153,12 @@ jobs:
           gradle :app:assembleDebug --stacktrace --no-daemon
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
-          unzip -l "$APK" | grep -q 'assets/GameConfig.xml'
+          APK_LISTING="$RUNNER_TEMP/alpha5-apk-listing.txt"
+          unzip -l "$APK" > "$APK_LISTING"
+          grep -Fq 'assets/GameConfig.xml' "$APK_LISTING"
           for ABI in arm64-v8a armeabi-v7a; do
-            unzip -l "$APK" | grep -q "lib/$ABI/libPlay.so"
-            unzip -l "$APK" | grep -q "lib/$ABI/libomnicore_ps2_runtime.so"
+            grep -Fq "lib/$ABI/libPlay.so" "$APK_LISTING"
+            grep -Fq "lib/$ABI/libomnicore_ps2_runtime.so" "$APK_LISTING"
           done
 
       - name: Verify signer and 16 KB compatibility
@@ -166,7 +168,9 @@ jobs:
           APK="app/build/outputs/apk/debug/app-debug.apk"
           APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
           EXPECTED="9490d1ad4666312d6dd9e5b2a20699583919ae80a5536882bcd3f9accc793547"
-          ACTUAL="$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n1 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          CERT_INFO="$RUNNER_TEMP/alpha5-cert-info.txt"
+          "$APKSIGNER" verify --print-certs "$APK" > "$CERT_INFO"
+          ACTUAL="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$CERT_INFO" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
           test "$ACTUAL" = "$EXPECTED"
           CHECK_DIR="build/apk-alignment-check"
           rm -rf "$CHECK_DIR" && mkdir -p "$CHECK_DIR"
