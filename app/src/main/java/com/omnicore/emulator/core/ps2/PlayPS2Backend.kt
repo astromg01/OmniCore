@@ -39,7 +39,7 @@ class PlayPS2Backend(context: Context) : PS2Backend {
 
         return PS2Backend.Capabilities(
             available = available,
-            arm64Jit = available && nativeProbe?.architecture == "arm64-v8a" && nativeProbe.pointerBits == 64,
+            arm64Jit = available && nativeProbe?.architecture == "arm64-v8a" && nativeProbe?.pointerBits == 64,
             // Boot Bridge 1 deliberately uses Play!'s default OpenGL path.
             // Vulkan is exposed only after the preference/config bridge is proven.
             vulkan = false,
@@ -51,7 +51,7 @@ class PlayPS2Backend(context: Context) : PS2Backend {
             notes = when {
                 available -> "Play! JNI lifecycle and boot symbols are ready; Boot Bridge 1 uses GLES/OpenGL."
                 nativeProbe?.playBackend != true -> "libPlay.so is not packaged or could not be loaded."
-                nativeProbe.playBootApi.not() -> "Required Play! boot symbols are missing."
+                nativeProbe?.playBootApi != true -> "Required Play! boot symbols are missing."
                 else -> "Play! JNI_OnLoad/ABI shim validation failed."
             }
         )
