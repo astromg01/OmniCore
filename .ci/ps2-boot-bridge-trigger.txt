@@ -8,4 +8,4 @@ quality_floor=native-1x-no-auto-downscale
 cycle_skip=never-auto
 release_tag=v0.11.1-ps2-alpha2
 ci_status_protocol=commit-status-v1
-revision=1
+revision=2
