@@ -100,7 +100,7 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                         }
                     }
                     Text(
-                        "SmartPerf nunca reduz automaticamente a resolução escolhida e não ativa cycle skipping.",
+                        "SmartPerf V2 mede FPS por janelas reais, não reduz a resolução e não ativa cycle skipping.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 5.dp)
                     )
@@ -109,7 +109,7 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                 item {
                     Text("Renderer", fontWeight = FontWeight.Bold)
                     Text(
-                        "Automático usa medições por jogo: se houver slow-motion sustentado, o OmniCore agenda o outro renderer para o próximo boot sem alterar resolução ou cycle skip.",
+                        "Automático escolhe o renderer compatível apenas no início do jogo. O SmartPerf V2 não troca Vulkan/OpenGL durante a sessão e nunca grava outro renderer para o próximo boot.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -168,7 +168,7 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                 item {
                     Text("BIOS PS2 do usuário", fontWeight = FontWeight.Bold)
                     Text(
-                        "O OmniCore pode guardar a referência ao seu próprio dump de BIOS. A Alpha 5 valida e preserva o arquivo, mas o Play! atual usa HLE BIOS e não consegue executá-lo; a BIOS ficará pronta para o backend PS2 compatível com BIOS.",
+                        "Importar aqui valida e guarda a referência ao seu próprio dump. O Play! atual usa HLE BIOS e não possui uma rota Android para executar essa BIOS externa; portanto isto ainda não habilita o boot clássico real do PS2.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Row(
@@ -209,7 +209,7 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                 item {
                     Text("Inicialização", fontWeight = FontWeight.Bold)
                     Text(
-                        "Direta inicia o jogo sem pre-roll. Visual OmniCore é apenas uma animação própria e opcional; a inicialização clássica autêntica da BIOS será liberada somente quando o backend realmente executar a BIOS fornecida pelo usuário.",
+                        "Direta abre o jogo sem pre-roll. Intro OmniCore é somente a animação visual original do app — não é BIOS Sony. Boot clássico autêntico ficará indisponível até existir um backend que execute a BIOS fornecida pelo usuário.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -227,7 +227,7 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                     Text("Pacing e áudio", fontWeight = FontWeight.Bold)
                     PS2Toggle(
                         title = "Limitar FPS ao ritmo do PS2",
-                        subtitle = "Mantém o frame limiter nativo do backend ativo.",
+                        subtitle = "Baseline do Play!. No preset Inteligente, o SmartPerf V2 pode desligá-lo por poucas janelas para medir ganho e restaura se não ajudar; o teste não é salvo.",
                         checked = config.frameLimit
                     ) { saveCore(config.copy(frameLimit = it)) }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
