@@ -5,7 +5,7 @@
 [![Android](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)](https://developer.android.com/)
 [![Stable DEV](https://img.shields.io/badge/stable%20DEV-0.9.4-57D8FF)](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.9.4-dev)
 [![N64 Alpha](https://img.shields.io/badge/N64%20alpha-0.10.23%20Alpha%2024-9879FF)](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.10.23-n64-alpha24)
-[![PS2 Alpha](https://img.shields.io/badge/PS2%20alpha-0.11.0%20Alpha%201-FF6A5F)](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.11.0-ps2-alpha1)
+[![PS2 Alpha](https://img.shields.io/badge/PS2%20alpha-0.11.4%20Alpha%205-FF6A5F)](https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.11.4-ps2-alpha5)
 [![Native](https://img.shields.io/badge/native-16%20KB%20ready-3DDC84)](app/src/main/cpp/)
 [![Copyright](https://img.shields.io/badge/copyright-%C2%A9%202026%20%40mauricio--gamedev-6C63FF)](COPYRIGHT.md)
 
@@ -18,51 +18,61 @@ OmniCore is a **multi-system Android emulation hub**. Each console owns its runt
 |---|---:|---|
 | Stable DEV | **0.9.4** | PS1 gameplay, video, audio and controls device validated |
 | N64 maintenance | **0.10.23 Alpha 24** | Gameplay baseline protected; startup-only audio polish remains non-blocking |
-| PS2 device-test | **0.11.0 Alpha 1** | First isolated Play! backend build with VM + Surface + content-URI boot path validated in CI |
+| PS2 device-test | **0.11.4 Alpha 5** | Corrective build published and CI validated; physical-device retest in progress |
 
-### Latest milestone — PS2 Alpha 1
+### Latest milestone — PS2 Alpha 5 corrective build
 
-**OmniCore 0.11.0 PS2 Alpha 1** is the first public device-test build for the new PlayStation 2 runtime.
+**OmniCore 0.11.4 PS2 Alpha 5** is the current PlayStation 2 device-test build. The latest corrective pass keeps the Alpha 5 version/tag while addressing physical-device feedback without moving to Alpha 6.
 
 The PS2 track currently provides:
 
 - isolated Android process: `com.omnicore.emulator:ps2`;
 - pinned Play! backend revision `04bde0df87ee7c0e2f0151b51bb2cc22c88541da`;
-- dedicated `PS2Backend` adapter so the OmniCore frontend is not tied directly to one backend implementation;
-- real Play! VM creation and lifecycle bridge;
-- Android `Surface` handoff to the PS2 renderer;
-- content-URI disk boot path;
-- pause/resume lifecycle integration;
-- ISO9660 PS2 routing using `SYSTEM.CNF` + `BOOT2` instead of extension-only guessing;
-- ARM64 + ARMv7 packaging;
-- stable OmniCore DEV signer;
-- native/APK 16 KB page-size compatibility validation.
+- dedicated `PS2Backend` boundary between OmniCore and Play!;
+- real Play! VM lifecycle, Android `Surface` rendering and content-URI disk boot;
+- Play! `GameConfig.xml` compatibility database pinned and packaged;
+- ARM64 + ARMv7 Play! builds with full LTO;
+- real frame/draw-call telemetry JNI;
+- Android frame-rate pacing and sustained-performance support where available;
+- PS2 touch/controller layer, save-state UX and per-system settings isolation;
+- user-owned PS2 BIOS picker/storage validation groundwork while the current Play! runtime still uses HLE BIOS;
+- stable OmniCore DEV signer and native/APK 16 KB page-size compatibility validation.
 
-The PS2 runtime is still **experimental**. Touch controls, renderer selection, game profiles, save-state UX and deeper SmartPerf tuning are the next active layers.
+### Alpha 5 corrective pass
+
+The latest Alpha 5 rebuild specifically addresses three physical-device issues reported during testing:
+
+- **renderer fallback black screen:** the previous measured tuning could persist an alternate Vulkan/GLES renderer after sustained low FPS and force it on the next launch. Automatic persistent renderer switching is now disabled, and stale per-game forced renderer state is cleared instead of being reused;
+- **PS2 runtime stutter pressure:** memory/thermal telemetry remains available, but expensive device-pressure sampling is cached instead of being refreshed on every short sampler interval, reducing work on the gameplay path;
+- **hub/UI scrolling stutter:** the always-running animated starfield behind the main Compose hub was replaced by a lightweight static starfield, reducing continuous drawing/overdraw while keeping the same visual identity.
+
+This corrective build **does not lower the selected PS2 internal resolution, enable cycle skipping or trade away the 1.0× quality floor** to hide performance problems.
 
 ### SmartPerf policy for PS2
 
-Optimization is part of the PS2 architecture, not a late-stage add-on. The PS2 track is designed around measurable and reversible decisions using EE/VU/GS/audio/frame-delivery telemetry, thermal awareness and game/device profiles.
+Optimization is part of the PS2 architecture, not a late-stage add-on. SmartPerf uses measured information only when the backend exposes it, and unknown timing fields remain unknown instead of being guessed.
 
-The current quality policy keeps a **1.0× minimum quality floor** and does not silently enable dynamic resolution or cycle skipping simply to inflate performance numbers.
+Alpha 5 keeps the **1.0× minimum quality floor**, keeps cycle skipping disabled, and no longer changes the per-game renderer automatically on a later boot. Renderer changes remain explicit/user-controlled until a safer compatibility-aware policy is proven on hardware.
 
 ### Downloads
 
-**PS2 Alpha 1 release**
-https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.11.0-ps2-alpha1
+**PS2 Alpha 5 release**  
+https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.11.4-ps2-alpha5
 
-**Direct PS2 Alpha 1 APK**
-https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.11.0-ps2-alpha1/OmniCore-v0.11.0-ps2-alpha1-debug.apk
+**Direct PS2 Alpha 5 APK**  
+https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.11.4-ps2-alpha5/OmniCore-v0.11.4-ps2-alpha5-debug.apk
 
-**N64 Alpha 24 release**
+**N64 Alpha 24 release**  
 https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.10.23-n64-alpha24
 
-**Stable PS1 DEV**
+**Stable PS1 DEV**  
 https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.9.4-dev
 
 ### Latest validation
 
-GitHub Actions run **32209664248** completed successfully for PS2 Alpha 1 and validated the protected PS1/N64 rebuilds, pinned Play! dual-ABI build, required PS2 JNI boot symbols, signed OmniCore 0.11.0 APK, stable DEV certificate, 16 KB compatibility and prerelease publication.
+GitHub Actions run **32278321118** completed successfully for the corrected PS2 Alpha 5. It passed protected PS1/N64 rebuilds, Alpha 5 source contract validation, Android toolchains, stable DEV signing preparation, pinned Play! + GameConfig fetch, dual-ABI full-LTO build, telemetry JNI validation, signed APK assembly, signer verification, native/APK 16 KB compatibility, GPL source archival and prerelease publication.
+
+Physical-device validation of the corrective build is **in progress**; runtime behavior is not marked solved until the new APK is retested on hardware.
 <!-- OMNICORE_PUBLIC_STATUS_END -->
 
 ## Runtime isolation
@@ -101,7 +111,7 @@ The N64 maintenance channel preserves:
 |---|---|---|
 | PlayStation 1 | PCSX-ReARMed / libretro | **Functional / device validated** |
 | Nintendo 64 | Mupen64Plus-Next / libretro | **Alpha 24 / maintenance** |
-| PlayStation 2 | Play! behind OmniCore `PS2Backend` | **Alpha 1 / active device testing** |
+| PlayStation 2 | Play! behind OmniCore `PS2Backend` | **0.11.4 Alpha 5 / active device testing** |
 | PSP | PPSSPP | Planned |
 | Wii / GameCube | Dolphin | Planned |
 | Nintendo Switch | Experimental backend evaluation | Long-term |
@@ -141,11 +151,11 @@ Third-party components remain governed by their own licenses. PCSX-ReARMed, Mupe
 
 ## Immediate development priorities
 
-1. Physical-device boot testing of PS2 Alpha 1 with legally supplied PS2 images.
-2. Validate first-frame rendering, audio startup and lifecycle stability on Android hardware.
-3. Add PS2 touch/controller input without coupling it to the backend implementation.
-4. Expand PS2 SmartPerf using real EE/VU/GS/audio telemetry and device/game profiles.
-5. Keep N64 in maintenance mode unless physical-device evidence requires a targeted correction.
+1. Complete physical-device retest of the corrected PS2 Alpha 5 build.
+2. Verify repeated game launch after sustained slow-motion no longer produces a black screen.
+3. Measure remaining PS2 stutter/slow-motion without lowering the requested internal resolution.
+4. Verify hub tab/scroll fluidity after removing continuous background animation.
+5. Keep PS1/N64 protected while applying only evidence-driven PS2 corrections.
 
 ---
 
