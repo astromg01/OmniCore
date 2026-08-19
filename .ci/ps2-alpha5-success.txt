@@ -1,0 +1,8 @@
+run_id=32268956391
+commit=344fd5f2e025ee9ce00f11acb8b485284e0eb019
+status=success
+version=0.11.4
+tag=v0.11.4-ps2-alpha5
+play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da
+abis=arm64-v8a,armeabi-v7a
+features=measured-game-tuning,surface-pacing,sustained-performance,bios-prep,gameconfig-db,full-lto,quality-floor
