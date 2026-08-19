@@ -157,9 +157,31 @@ while IFS= read -r lib; do
   done < <("$READELF" -d "$src_lib" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
 done < "$packaged_native"
 
-# Device-test diagnostics: the old UI collapsed every linker exception into a
-# misleading page-size message. Patch the build workspace so the Alpha 6 toast
-# reports the selected core, real page size, ABI list and exact linker exception.
+# SDL's native Android glue resolves org.libsdl.app.* classes from JNI while
+# libemucore is being loaded. Attempt #8 proved that importing only the native
+# payload is insufficient: the device hit ClassNotFoundException for SDLActivity
+# before PCSX2 could initialize. Import the complete, pinned SDL Java bridge from
+# the exact same ARMSX2 revision so Java/native ABI stays matched.
+SDL_JAVA_SRC="$SRC/platforms/android/app/src/main/java/org/libsdl/app"
+SDL_JAVA_DST="app/src/main/java/org/libsdl/app"
+test -s "$SDL_JAVA_SRC/SDLActivity.java"
+test -s "$SDL_JAVA_SRC/SDL.java"
+test -s "$SDL_JAVA_SRC/SDLAudioManager.java"
+test -s "$SDL_JAVA_SRC/SDLControllerManager.java"
+rm -rf "$SDL_JAVA_DST"
+mkdir -p "$SDL_JAVA_DST"
+cp -a "$SDL_JAVA_SRC/." "$SDL_JAVA_DST/"
+SDL_JAVA_COUNT="$(find "$SDL_JAVA_DST" -maxdepth 1 -type f -name '*.java' | wc -l | tr -d ' ')"
+if (( SDL_JAVA_COUNT < 8 )); then
+  echo "Pinned SDL Android Java bridge looks incomplete ($SDL_JAVA_COUNT files)" >&2
+  exit 1
+fi
+
+grep -Fq 'public class SDLActivity extends Activity' "$SDL_JAVA_DST/SDLActivity.java"
+grep -Fq 'static public void setupJNI()' "$SDL_JAVA_DST/SDL.java"
+
+# Device-test diagnostics: keep the real loader exception visible in the game
+# overlay so any remaining JNI/Java ABI mismatch is immediately actionable.
 BACKEND="app/src/main/java/com/omnicore/emulator/core/ps2/Pcsx2PS2Backend.kt"
 python3 - "$BACKEND" <<'PY'
 from pathlib import Path
@@ -167,13 +189,13 @@ import sys
 p = Path(sys.argv[1])
 text = p.read_text(encoding="utf-8")
 old = 'NativeApp.hasNoNativeBinary -> "Pinned PCSX2 emucore is not packaged for this page size."'
-new = 'NativeApp.hasNoNativeBinary -> "A6#8 ${NativeApp.nativeLoadDiagnostic()} ABI=${Build.SUPPORTED_ABIS.joinToString("/")}"'
-if old not in text and 'A6#8 ${NativeApp.nativeLoadDiagnostic()}' not in text:
+new = 'NativeApp.hasNoNativeBinary -> "A6#9 ${NativeApp.nativeLoadDiagnostic()} ABI=${Build.SUPPORTED_ABIS.joinToString("/")}"'
+if old not in text and 'A6#9 ${NativeApp.nativeLoadDiagnostic()}' not in text:
     raise SystemExit("PCSX2 backend loader diagnostic anchor not found")
 text = text.replace(old, new)
 p.write_text(text, encoding="utf-8")
 PY
-grep -Fq 'A6#8 ${NativeApp.nativeLoadDiagnostic()}' "$BACKEND"
+grep -Fq 'A6#9 ${NativeApp.nativeLoadDiagnostic()}' "$BACKEND"
 
 RESOURCE_SRC="$STAGE/assets/resources"
 RESOURCE_DST="app/src/main/assets/pcsx2/resources"
@@ -189,13 +211,15 @@ install -m 0644 "$SRC/COPYING.GPLv3" "$LICENSE_DIR/GPL-3.0-PCSX2-ARMSX2.txt"
 test -s "$LICENSE_DIR/GPL-3.0-PCSX2-ARMSX2.txt"
 
 rm -f "$DIAG"
-printf 'OMNICORE_PCSX2_IMPORT_OK pin=%s tag=%s upstream_native=%s packaged_native=%s resources=%s sha256=%s\n' \
+printf 'OMNICORE_PCSX2_IMPORT_OK pin=%s tag=%s upstream_native=%s packaged_native=%s sdl_java=%s resources=%s sha256=%s\n' \
   "$PIN" "$TAG" \
   "$(wc -l < "$upstream_native" | tr -d ' ')" \
   "$(wc -l < "$packaged_native" | tr -d ' ')" \
+  "$SDL_JAVA_COUNT" \
   "$(find "$RESOURCE_DST" -type f | wc -l)" \
   "$(cut -d' ' -f1 "$WORK/upstream-apk.sha256")"
 echo 'Official ARMSX2 ARM64 native payload:'
 cat "$upstream_native"
 echo 'Copied ARMSX2 ARM64 native payload:'
 cat "$packaged_native"
+echo "Copied pinned SDL Android Java bridge: $SDL_JAVA_COUNT files"
