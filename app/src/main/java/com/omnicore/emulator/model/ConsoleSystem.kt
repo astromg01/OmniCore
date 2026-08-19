@@ -13,7 +13,12 @@ enum class ConsoleSystem(
         setOf("cue", "bin", "chd", "ccd", "iso", "pbp", "img", "mdf", "cbn", "exe"),
         "1994"
     ),
-    PLAYSTATION_2("PlayStation 2", "PS2", setOf("iso", "chd"), "2000"),
+    PLAYSTATION_2(
+        "PlayStation 2",
+        "PS2",
+        setOf("iso", "chd", "bin", "cso", "isz"),
+        "2000"
+    ),
     PSP("PlayStation Portable", "PSP", setOf("iso", "cso", "pbp"), "2004"),
     WII("Nintendo Wii", "Wii", setOf("rvz", "wbfs", "iso", "gcz"), "2006"),
     SWITCH("Nintendo Switch", "Switch", setOf("nsp", "xci", "nro"), "2017")
