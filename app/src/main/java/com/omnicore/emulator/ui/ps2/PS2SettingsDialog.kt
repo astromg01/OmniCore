@@ -2,6 +2,8 @@ package com.omnicore.emulator.ui.ps2
 
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,6 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.omnicore.emulator.performance.PS2SmartPerf
+import com.omnicore.emulator.settings.PS2BiosManager
 import com.omnicore.emulator.settings.PS2InputSettings
 import com.omnicore.emulator.settings.PS2Settings
 
@@ -42,6 +45,10 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
     }
     var config by remember { mutableStateOf(PS2Settings.resolve(context)) }
     var input by remember { mutableStateOf(PS2InputSettings.resolve(context)) }
+    var bios by remember { mutableStateOf(PS2BiosManager.read(context)) }
+    val biosPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) bios = PS2BiosManager.save(context, uri)
+    }
 
     fun refreshCore() { config = PS2Settings.resolve(context) }
     fun saveCore(next: PS2Settings.Config) {
@@ -102,7 +109,7 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                 item {
                     Text("Renderer", fontWeight = FontWeight.Bold)
                     Text(
-                        "Automático mantém o caminho comprovado; Vulkan fica disponível como opção experimental quando o aparelho anuncia suporte.",
+                        "Automático usa medições por jogo: se houver slow-motion sustentado, o OmniCore agenda o outro renderer para o próximo boot sem alterar resolução ou cycle skip.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -159,9 +166,50 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                 }
 
                 item {
+                    Text("BIOS PS2 do usuário", fontWeight = FontWeight.Bold)
+                    Text(
+                        "O OmniCore pode guardar a referência ao seu próprio dump de BIOS. A Alpha 5 valida e preserva o arquivo, mas o Play! atual usa HLE BIOS e não consegue executá-lo; a BIOS ficará pronta para o backend PS2 compatível com BIOS.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AssistChip(
+                            onClick = { biosPicker.launch(arrayOf("application/octet-stream", "*/*")) },
+                            label = { Text(if (bios == null) "Selecionar BIOS" else "Trocar BIOS") }
+                        )
+                        if (bios != null) {
+                            AssistChip(
+                                onClick = {
+                                    PS2BiosManager.clear(context)
+                                    bios = null
+                                },
+                                label = { Text("Remover") }
+                            )
+                        }
+                    }
+                    bios?.let { info ->
+                        val sizeMiB = if (info.sizeBytes > 0) info.sizeBytes / (1024f * 1024f) else -1f
+                        Text(
+                            buildString {
+                                append(if (info.plausible) "✓ " else "⚠ ")
+                                append(info.displayName)
+                                if (sizeMiB > 0) append(" • ${String.format("%.1f", sizeMiB)} MiB")
+                                append("\n")
+                                append(info.reason)
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 5.dp)
+                        )
+                    }
+                }
+
+                item {
                     Text("Inicialização", fontWeight = FontWeight.Bold)
                     Text(
-                        "Clássica usa uma animação original do OmniCore antes do boot. Ela não copia BIOS, logo ou áudio proprietário da Sony.",
+                        "Direta inicia o jogo sem pre-roll. Visual OmniCore é apenas uma animação própria e opcional; a inicialização clássica autêntica da BIOS será liberada somente quando o backend realmente executar a BIOS fornecida pelo usuário.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -194,7 +242,7 @@ fun PS2SettingsDialog(onDismiss: () -> Unit) {
                         )
                     }
                     Text(
-                        "O modo Inteligente pode aumentar a reserva de áudio sob pressão medida, mas não troca qualidade visual por isso.",
+                        "A Alpha 5 também pede pacing de 60 Hz ao Surface quando o Android oferece a API e usa modo de desempenho sustentado quando o aparelho anuncia suporte.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
