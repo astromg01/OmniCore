@@ -3,4 +3,4 @@ version=0.11.5
 backend=pcsx2-armsx2
 armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
 focus=device-tested-runtime-smoothing
-attempt=12-runtime-smoothing-widescreen
+attempt=13-idempotent-loader-diagnostics-runtime-smoothing
