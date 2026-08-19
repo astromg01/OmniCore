@@ -8,7 +8,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
-import android.os.PowerManager
 import android.os.Process
 import android.view.Gravity
 import android.view.InputDevice
@@ -60,15 +59,16 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var perfHandler: Handler
 
     /**
-     * Performance sampling deliberately runs off the UI thread. Alpha 5 used the
-     * main looper every 1.8 s, which could add visible hub/gameplay frame-time
-     * spikes on lower-end devices even when the native query itself was short.
+     * Performance sampling stays off the UI thread and is measurement-only.
+     * Physical-device Alpha 5 testing proved that automatic renderer/limiter
+     * experiments can reduce performance or break a later boot, so this loop
+     * never mutates the Play! runtime.
      */
     private val perfSampler = object : Runnable {
         override fun run() {
             if (destroyed || !started) return
             val telemetry = backend.telemetry()
-            val observation = PS2GameTuning.observe(
+            PS2GameTuning.observe(
                 context = this@PS2EmulationActivity,
                 gameIdentity = gameIdentity(),
                 telemetry = telemetry,
@@ -77,23 +77,6 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                 frameLimitRequested = ps2Config.frameLimit,
                 caps = capabilities
             )
-            observation.frameLimitOverride?.let { enabled ->
-                val applied = backend.setFrameLimit(enabled)
-                if (applied && !destroyed) {
-                    runOnUiThread {
-                        if (destroyed) return@runOnUiThread
-                        Toast.makeText(
-                            this@PS2EmulationActivity,
-                            if (enabled) {
-                                "SmartPerf V2: limiter restaurado; o teste não trouxe ganho real."
-                            } else {
-                                "SmartPerf V2: testando limiter OFF só nesta sessão."
-                            },
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                }
-            }
             if (!destroyed && started) perfHandler.postDelayed(this, PERF_SAMPLE_MS)
         }
     }
@@ -101,7 +84,9 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        enableSustainedPerformanceIfAvailable()
+        // Do not force Android Sustained Performance Mode. It targets stable
+        // long-duration clocks rather than peak emulator throughput and can
+        // reduce performance early on lower-end devices.
         enterImmersiveMode()
 
         perfThread = HandlerThread("OmniCore-PS2-Perf", Process.THREAD_PRIORITY_BACKGROUND).apply { start() }
@@ -340,7 +325,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
             menu.add(0, MENU_CONTROLS, 40, if (controlsVisible) "Ocultar controles" else "Mostrar controles")
             menu.add(0, MENU_PERF, 50, "Desempenho agora")
             menu.add(0, MENU_STATUS, 51, "Mostrar status")
-            menu.add(0, MENU_RESET_TUNING, 52, "Resetar SmartPerf desta sessão")
+            menu.add(0, MENU_RESET_TUNING, 52, "Resetar medição desta sessão")
             menu.add(0, MENU_EXIT, 99, "Sair do jogo")
 
             setOnMenuItemClickListener { item ->
@@ -414,9 +399,8 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                         true
                     }
                     item.itemId == MENU_RESET_TUNING -> {
-                        backend.setFrameLimit(ps2Config.frameLimit)
                         PS2GameTuning.clear(this@PS2EmulationActivity, gameIdentity())
-                        Toast.makeText(this@PS2EmulationActivity, "SmartPerf desta sessão resetado.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@PS2EmulationActivity, "Medição desta sessão resetada.", Toast.LENGTH_SHORT).show()
                         true
                     }
                     item.itemId == MENU_EXIT -> {
@@ -570,14 +554,6 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         }
     }
 
-    private fun enableSustainedPerformanceIfAvailable() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
-        val power = getSystemService(PowerManager::class.java) ?: return
-        if (power.isSustainedPerformanceModeSupported) {
-            runCatching { window.setSustainedPerformanceMode(true) }
-        }
-    }
-
     private fun enterImmersiveMode() {
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility =
@@ -618,7 +594,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         private const val EXTRA_FILE_NAME = "ps2_file_name"
         private const val EXTRA_SIZE_BYTES = "ps2_size_bytes"
 
-        private const val PERF_SAMPLE_MS = 1800L
+        private const val PERF_SAMPLE_MS = 3000L
 
         private const val MENU_PAUSE = 1
         private const val MENU_SAVE_BASE = 100
