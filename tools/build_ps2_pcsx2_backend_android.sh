@@ -76,10 +76,13 @@ rm -f app/src/main/jniLibs/arm64-v8a/libPlay.so app/src/main/jniLibs/armeabi-v7a
 READELF="${ANDROID_NDK_HOME:-${OMNI_NDK_HOME:-}}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
 test -x "$READELF"
 
-# Android/bionic libraries are supplied by the OS and must never be vendored.
+# Android/NDK platform libraries are supplied by the OS and must never be
+# vendored from the upstream APK. Keep libc++_shared.so deliberately OUT of this
+# list: unlike bionic/platform libraries it is an app-shipped NDK runtime, and
+# librashader needs the exact copy packaged by the official ARMSX2 build.
 is_system_soname() {
   case "$1" in
-    libc.so|libdl.so|libm.so|liblog.so|libandroid.so|libz.so|libEGL.so|libGLESv2.so|libGLESv3.so|libvulkan.so|libOpenSLES.so|libaaudio.so|libjnigraphics.so|libnativewindow.so|libmediandk.so|libcamera2ndk.so|libbinder_ndk.so)
+    libc.so|libdl.so|libm.so|liblog.so|libandroid.so|libz.so|libEGL.so|libGLESv1_CM.so|libGLESv2.so|libGLESv3.so|libvulkan.so|libOpenSLES.so|libaaudio.so|libamidi.so|libjnigraphics.so|libnativewindow.so|libmediandk.so|libcamera2ndk.so|libbinder_ndk.so|libneuralnetworks.so|libsync.so)
       return 0 ;;
     *)
       return 1 ;;
