@@ -6,16 +6,16 @@ import com.omnicore.emulator.core.ps2.PS2Backend
 /** PlayStation 2 settings namespace. Nothing here mutates PS1 or N64 preferences. */
 object PS2Settings {
     enum class Preset(val storage: String, val label: String, val subtitle: String) {
-        AUTO("auto", "Inteligente", "Mede o desempenho real e só mantém ajustes reversíveis que comprovem ganho na sessão"),
-        PERFORMANCE("performance", "Desempenho", "Menor overhead e resposta de áudio mais curta"),
+        AUTO("auto", "Inteligente", "PCSX2 decide o renderer; OmniCore observa sem alterar o runtime sozinho"),
+        PERFORMANCE("performance", "Desempenho", "Base nativa 1× com caminho PCSX2 de menor overhead"),
         BALANCED("balanced", "Equilibrado", "Compatibilidade e latência moderadas"),
         QUALITY("quality", "Qualidade", "Aumenta resolução somente por escolha explícita"),
         CUSTOM("custom", "Custom", "Ajustes manuais do runtime PS2")
     }
 
     enum class RendererMode(val storage: String, val label: String) {
-        AUTO("auto", "Automático"),
-        GLES3("gles3", "OpenGL ES"),
+        AUTO("auto", "Automático (PCSX2)"),
+        GLES3("gles3", "OpenGL"),
         VULKAN("vulkan", "Vulkan")
     }
 
@@ -32,8 +32,8 @@ object PS2Settings {
     }
 
     enum class BootStyle(val storage: String, val label: String) {
-        CLASSIC("classic", "Intro OmniCore"),
-        DIRECT("direct", "Direta")
+        CLASSIC("classic", "BIOS clássica (real)"),
+        DIRECT("direct", "Direta / pular BIOS")
     }
 
     data class Config(
@@ -122,14 +122,14 @@ object PS2Settings {
     }
 
     /**
-     * AUTO chooses the best capability-safe renderer only for the initial boot.
-     * SmartPerf V2 never flips renderers from telemetry or persists a renderer
-     * experiment to the next launch.
+     * Alpha 6 leaves AUTO unresolved so PCSX2's own Android renderer selection
+     * can decide from its device/driver knowledge. OmniCore no longer turns AUTO
+     * into Vulkan before the core has a chance to choose.
      */
     fun rendererFor(config: Config, caps: PS2Backend.Capabilities): PS2Backend.Renderer = when (config.renderer) {
         RendererMode.VULKAN -> if (caps.vulkan) PS2Backend.Renderer.VULKAN else PS2Backend.Renderer.GLES3
         RendererMode.GLES3 -> PS2Backend.Renderer.GLES3
-        RendererMode.AUTO -> if (caps.vulkan) PS2Backend.Renderer.VULKAN else PS2Backend.Renderer.GLES3
+        RendererMode.AUTO -> PS2Backend.Renderer.AUTO
     }
 
     private fun presetConfig(preset: Preset): Config = when (preset) {
