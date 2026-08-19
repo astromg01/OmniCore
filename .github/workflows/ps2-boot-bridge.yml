@@ -1,4 +1,4 @@
-name: PS2 Boot Test 1
+name: PS2 Alpha 1 Release
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: ps2-boot-test1
+  group: ps2-alpha1-release
   cancel-in-progress: true
 
 jobs:
@@ -31,12 +31,30 @@ jobs:
           changed="$(git diff --name-only origin/agent/0.10.0-n64-foundation...HEAD)"
           forbidden='^(app/src/main/cpp/(native_bridge\.cpp|gl_presenter\.cpp|libretro_host_v7\.cpp|n64/)|app/src/main/java/com/omnicore/emulator/core/n64/|app/src/main/java/com/omnicore/emulator/emulation/N64|app/src/main/java/com/omnicore/emulator/performance/N64)'
           if echo "$changed" | grep -E "$forbidden"; then
-            echo "PS2 Boot Test modified protected PS1/N64 runtime source." >&2
+            echo "PS2 Alpha 1 modified protected PS1/N64 runtime source." >&2
             exit 1
           fi
           git diff --check origin/agent/0.10.0-n64-foundation...HEAD
 
-      - name: Verify Android and Play toolchains
+      - name: Verify PS2 Alpha 1 source contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'versionCode = 40' app/build.gradle.kts
+          grep -Fq 'versionName = "0.11.0"' app/build.gradle.kts
+          DETECTOR=app/src/main/java/com/omnicore/emulator/core/ps2/PS2IsoValidator.kt
+          LIBRARY=app/src/main/java/com/omnicore/emulator/library/LibraryImportEngine.kt
+          grep -Fq 'SYSTEM.CNF' "$DETECTOR"
+          grep -Fq 'BOOT2' "$DETECTOR"
+          grep -Fq 'PS2IsoValidator.isPlayStation2Iso' "$LIBRARY"
+          grep -Fq 'ConsoleSystem.PLAYSTATION_2 -> PS2Core()' app/src/main/java/com/omnicore/emulator/core/CoreRegistry.kt
+          grep -Fq 'android:process=":ps2"' app/src/main/AndroidManifest.xml
+          grep -Fq 'NativeInterop.bootDiskImage(request.imagePath)' app/src/main/java/com/omnicore/emulator/core/ps2/PlayPS2Backend.kt
+          grep -Fq 'NativeInterop.setupGsHandler(surface)' app/src/main/java/com/omnicore/emulator/core/ps2/PlayPS2Backend.kt
+          grep -Fq 'PS2 BOOT OK' app/src/main/java/com/omnicore/emulator/emulation/PS2EmulationActivity.kt
+          echo "OMNICORE_PS2_ALPHA1_SOURCE_OK"
+
+      - name: Verify Android toolchains
         shell: bash
         run: |
           set -euo pipefail
@@ -49,22 +67,39 @@ jobs:
             yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;29.0.14206865"
           fi
           test -d "$PLAY_NDK"
+          echo "OMNI_NDK_HOME=$OMNI_NDK" >> "$GITHUB_ENV"
           echo "PLAY_NDK_HOME=$PLAY_NDK" >> "$GITHUB_ENV"
+          test -x "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
           test -x "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign"
 
-      - name: Verify PS2 media routing contract
+      - name: Prepare stable DEV signing
         shell: bash
         run: |
           set -euo pipefail
-          DETECTOR=app/src/main/java/com/omnicore/emulator/core/ps2/PS2IsoValidator.kt
-          LIBRARY=app/src/main/java/com/omnicore/emulator/library/LibraryImportEngine.kt
-          test -f "$DETECTOR"
-          grep -Fq 'SYSTEM.CNF' "$DETECTOR"
-          grep -Fq 'BOOT2' "$DETECTOR"
-          grep -Fq 'PS2IsoValidator.isPlayStation2Iso' "$LIBRARY"
-          grep -Fq 'ConsoleSystem.PLAYSTATION_2' "$LIBRARY"
-          grep -Fq 'ConsoleSystem.PLAYSTATION_2 -> PS2Core()' app/src/main/java/com/omnicore/emulator/core/CoreRegistry.kt
-          echo "OMNICORE_PS2_MEDIA_ROUTING_OK iso9660-system-cnf-boot2"
+          mkdir -p build/signing
+          base64 -d config/omnicore-dev.keystore.b64 > build/signing/omnicore-dev.jks
+          chmod 600 build/signing/omnicore-dev.jks
+          echo "OMNICORE_DEV_KEYSTORE=$GITHUB_WORKSPACE/build/signing/omnicore-dev.jks" >> "$GITHUB_ENV"
+          echo "OMNICORE_DEV_STORE_PASSWORD=omnicore-dev-2026" >> "$GITHUB_ENV"
+          echo "OMNICORE_DEV_KEY_ALIAS=omnicore-dev" >> "$GITHUB_ENV"
+          echo "OMNICORE_DEV_KEY_PASSWORD=omnicore-dev-2026" >> "$GITHUB_ENV"
+
+      - name: Fetch and build protected PS1 and N64 cores
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_HOME="$OMNI_NDK_HOME"
+          chmod +x tools/fetch_ps1_core.sh tools/build_ps1_core_android.sh tools/fetch_n64_core.sh tools/build_n64_core_android.sh
+          tools/fetch_ps1_core.sh
+          tools/build_ps1_core_android.sh
+          tools/fetch_n64_core.sh
+          tools/build_n64_core_android.sh
+          test "$(git -C third_party/pcsx_rearmed rev-parse HEAD)" = "da2cb8ecd17fd0932ab6d94774c0522beebce6e3"
+          test "$(git -C third_party/mupen64plus_next rev-parse HEAD)" = "f275caf4b2bfa1e6d1c51636746ea793f3d80320"
+          for ABI in arm64-v8a armeabi-v7a; do
+            test -s "app/src/main/jniLibs/$ABI/libpcsx_rearmed_libretro.so"
+            test -s "app/src/main/jniLibs/$ABI/libmupen64plus_next_libretro.so"
+          done
 
       - name: Fetch pinned Play backend
         shell: bash
@@ -82,8 +117,9 @@ jobs:
           export PLAY_ABIS="arm64-v8a armeabi-v7a"
           export PLAY_BUILD_JOBS="2"
           tools/build_ps2_play_backend_android.sh
-          test -s app/src/main/jniLibs/arm64-v8a/libPlay.so
-          test -s app/src/main/jniLibs/armeabi-v7a/libPlay.so
+          for ABI in arm64-v8a armeabi-v7a; do
+            test -s "app/src/main/jniLibs/$ABI/libPlay.so"
+          done
 
       - name: Verify real Play boot JNI symbols
         shell: bash
@@ -106,28 +142,20 @@ jobs:
             LIB="app/src/main/jniLibs/$ABI/libPlay.so"
             table="$($READELF -Ws "$LIB")"
             for symbol in "${symbols[@]}"; do
-              grep -Fq "$symbol" <<< "$table" || {
-                echo "Missing Play JNI symbol $symbol for $ABI" >&2
-                exit 1
-              }
+              grep -Fq "$symbol" <<< "$table" || exit 1
             done
           done
           echo "OMNICORE_PS2_BOOT_API_SYMBOLS_OK"
 
-      - name: Validate real boot lifecycle
+      - name: Archive corresponding core sources
         shell: bash
         run: |
           set -euo pipefail
-          test -f app/src/main/java/com/virtualapplications/play/NativeInterop.java
-          test -f app/src/main/java/com/virtualapplications/play/Bootable.java
-          test -f app/src/main/java/com/omnicore/emulator/core/ps2/PlayPS2Backend.kt
-          test -f app/src/main/java/com/omnicore/emulator/core/ps2/PS2Core.kt
-          grep -Fq 'android:process=":ps2"' app/src/main/AndroidManifest.xml
-          grep -Fq 'NativeInterop.bootDiskImage(request.imagePath)' app/src/main/java/com/omnicore/emulator/core/ps2/PlayPS2Backend.kt
-          grep -Fq 'NativeInterop.setupGsHandler(surface)' app/src/main/java/com/omnicore/emulator/core/ps2/PlayPS2Backend.kt
-          grep -Fq 'PS2 BOOT OK' app/src/main/java/com/omnicore/emulator/emulation/PS2EmulationActivity.kt
+          mkdir -p build/source-artifacts
+          tar --exclude=.git -czf build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz -C third_party pcsx_rearmed
+          tar --exclude=.git -czf build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz -C third_party mupen64plus_next
 
-      - name: Build OmniCore PS2 Boot Test APK
+      - name: Build signed OmniCore PS2 Alpha 1 APK
         shell: bash
         run: |
           set -euo pipefail
@@ -135,73 +163,108 @@ jobs:
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           for ABI in arm64-v8a armeabi-v7a; do
+            unzip -l "$APK" | grep -q "lib/$ABI/libpcsx_rearmed_libretro.so"
+            unzip -l "$APK" | grep -q "lib/$ABI/libmupen64plus_next_libretro.so"
             unzip -l "$APK" | grep -q "lib/$ABI/libPlay.so"
             unzip -l "$APK" | grep -q "lib/$ABI/libomnicore_ps2_runtime.so"
           done
+          echo "OMNICORE_PS2_ALPHA1_APK_CONTAINER_OK"
 
-      - name: Verify APK 16 KB packaging
+      - name: Verify signer and 16 KB compatibility
         shell: bash
         run: |
           set -euo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
-          "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK"
-          echo "OMNICORE_PS2_BOOT_TEST1_OK play-jni iso-detect surface-uri-lifecycle dual-abi 16kb"
+          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          EXPECTED="9490d1ad4666312d6dd9e5b2a20699583919ae80a5536882bcd3f9accc793547"
+          "$APKSIGNER" verify --print-certs "$APK"
+          ACTUAL="$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n1 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          test "$ACTUAL" = "$EXPECTED"
+          CHECK_DIR="build/apk-alignment-check"
+          rm -rf "$CHECK_DIR" && mkdir -p "$CHECK_DIR"
+          unzip -q "$APK" -d "$CHECK_DIR"
+          READELF="$OMNI_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          while IFS= read -r -d '' SO; do
+            while IFS= read -r LOAD_LINE; do
+              ALIGN_HEX="$(awk '{print $NF}' <<< "$LOAD_LINE")"
+              [[ "$ALIGN_HEX" =~ ^0x[0-9A-Fa-f]+$ ]]
+              (( ALIGN_HEX >= 0x4000 ))
+            done < <("$READELF" -lW "$SO" | grep -E '^[[:space:]]*LOAD[[:space:]]')
+          done < <(find "$CHECK_DIR/lib" -type f -name '*.so' -print0)
+          "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" -v -c -P 16 4 "$APK"
+          echo "OMNICORE_PS2_ALPHA1_SIGNER_16KB_OK"
 
-      - name: Upload PS2 Boot Test APK
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: OmniCore-PS2-BootTest1
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-
-      - name: Record PS2 Boot Test failure
-        if: failure()
+      - name: Publish PS2 Alpha 1 prerelease
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          RESULT=/tmp/ps2-boot-test1-failure.txt
+          TAG="v0.11.0-ps2-alpha1"
+          TITLE="OmniCore v0.11.0 PS2 Alpha 1"
+          NOTES="First public device-test alpha for the isolated PlayStation 2 runtime. Uses the pinned Play! backend at 04bde0df87ee7c0e2f0151b51bb2cc22c88541da behind OmniCore's PS2Backend adapter, isolated in the :ps2 Android process. This gate validates real VM creation, Android Surface handoff, content-URI disk boot, pause/resume lifecycle, ISO9660 SYSTEM.CNF/BOOT2 media routing, ARM64 + ARMv7 packaging, the stable OmniCore DEV signer and 16 KB compatibility. PS1 and N64 cores are rebuilt at their protected pinned revisions and remain isolated. This is an experimental first PS2 boot build: touch controls, advanced renderer selection, game profiles and SmartPerf tuning will be expanded after physical-device boot feedback. No games, ROMs, BIOS, firmware or copyrighted console files are included."
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          OUT="build/OmniCore-v0.11.0-ps2-alpha1-debug.apk"
+          HASH="build/OmniCore-v0.11.0-ps2-alpha1-debug.sha256"
+          cp "$APK" "$OUT"
+          sha256sum "$OUT" > "$HASH"
+          TARGET="$(git rev-parse HEAD)"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES" --prerelease --target "$TARGET"
+          else
+            gh release create "$TAG" --target "$TARGET" --title "$TITLE" --notes "$NOTES" --prerelease
+          fi
+          gh release upload "$TAG" "$OUT" "$HASH" build/source-artifacts/pcsx-rearmed-da2cb8e-source.tar.gz build/source-artifacts/mupen64plus-next-f275caf-source.tar.gz --clobber
+
+      - name: Record PS2 Alpha 1 success
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RESULT=/tmp/ps2-alpha1-success.txt
+          {
+            echo "run_id=$GITHUB_RUN_ID"
+            echo "commit=$(git rev-parse HEAD)"
+            echo "status=success"
+            echo "version=0.11.0"
+            echo "tag=v0.11.0-ps2-alpha1"
+            echo "play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
+            echo "abis=arm64-v8a,armeabi-v7a"
+            echo "media_detection=iso9660-system-cnf-boot2"
+            echo "signer_sha256=9490d1ad4666312d6dd9e5b2a20699583919ae80a5536882bcd3f9accc793547"
+          } > "$RESULT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin agent/0.11.0-ps2-foundation
+          git reset --hard origin/agent/0.11.0-ps2-foundation
+          cp "$RESULT" .ci/ps2-alpha1-success.txt
+          rm -f .ci/ps2-alpha1-failure.txt
+          git add .ci/ps2-alpha1-success.txt .ci/ps2-alpha1-failure.txt 2>/dev/null || true
+          git commit -m "Record PS2 Alpha 1 validation success [skip ci]" || true
+          git push origin HEAD:agent/0.11.0-ps2-foundation
+
+      - name: Record PS2 Alpha 1 failure
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          RESULT=/tmp/ps2-alpha1-failure.txt
           {
             echo "run_id=$GITHUB_RUN_ID"
             echo "commit=$GITHUB_SHA"
             echo "status=failure"
-            echo "phase=ps2-boot-test1"
-            echo "play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
+            echo "version=0.11.0"
+            echo "phase=ps2-alpha1-release"
           } > "$RESULT"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin agent/0.11.0-ps2-foundation
           git reset --hard origin/agent/0.11.0-ps2-foundation
-          cp "$RESULT" .ci/ps2-boot-test1-failure.txt
-          rm -f .ci/ps2-boot-test1-success.txt
-          git add .ci/ps2-boot-test1-failure.txt .ci/ps2-boot-test1-success.txt 2>/dev/null || true
-          git commit -m "Record PS2 Boot Test 1 failure [skip ci]" || true
-          git push origin HEAD:agent/0.11.0-ps2-foundation
-
-      - name: Record PS2 Boot Test success
-        if: success()
-        shell: bash
-        run: |
-          set -euo pipefail
-          RESULT=/tmp/ps2-boot-test1-success.txt
-          {
-            echo "run_id=$GITHUB_RUN_ID"
-            echo "commit=$GITHUB_SHA"
-            echo "status=success"
-            echo "phase=ps2-boot-test1"
-            echo "play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
-            echo "backend=libPlay.so"
-            echo "abis=arm64-v8a,armeabi-v7a"
-            echo "media_detection=iso9660-system-cnf-boot2"
-            echo "bridge=vm+surface+content-uri+pause-resume"
-            echo "apk=artifact:OmniCore-PS2-BootTest1"
-          } > "$RESULT"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin agent/0.11.0-ps2-foundation
-          git reset --hard origin/agent/0.11.0-ps2-foundation
-          cp "$RESULT" .ci/ps2-boot-test1-success.txt
-          rm -f .ci/ps2-boot-test1-failure.txt
-          git add .ci/ps2-boot-test1-success.txt .ci/ps2-boot-test1-failure.txt 2>/dev/null || true
-          git commit -m "Record PS2 Boot Test 1 success [skip ci]" || true
-          git push origin HEAD:agent/0.11.0-ps2-foundation
+          cp "$RESULT" .ci/ps2-alpha1-failure.txt
+          git add .ci/ps2-alpha1-failure.txt
+          git commit -m "Record PS2 Alpha 1 validation failure [skip ci]" || true
+          git push origin HEAD:agent/0.11.0-ps2-foundation || true
