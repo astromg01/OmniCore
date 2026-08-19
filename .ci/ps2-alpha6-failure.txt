@@ -1,5 +1,6 @@
-run_id=32290094204
-commit=b6408c0836ddea562c4afd5a2304657a3f6ebea6
+run_id=32301397357
+commit=e035965e7f647b9fdb9ec77314f1b4842d49f3bc
 status=failure
 version=0.11.5
-phase=ps2-alpha6-pcsx2-foundation
+backend=pcsx2-armsx2
+armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
