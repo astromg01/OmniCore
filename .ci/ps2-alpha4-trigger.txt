@@ -2,3 +2,4 @@ phase=ps2-alpha4-compatibility
 version=0.11.3
 focus=gameconfig-general-compatibility-lto-media-telemetry
 reason=physical-device-slow-motion-and-general-compatibility-feedback
+retry=2-gameconfig-root-fix
