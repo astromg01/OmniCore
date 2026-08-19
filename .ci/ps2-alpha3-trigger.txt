@@ -1,0 +1,4 @@
+phase=ps2-alpha3-functional-baseline
+version=0.11.2
+focus=normal-speed,vulkan-auto,o3,clear-touch,classic-intro
+real_device_feedback=alpha2-runs-but-heavy-slowdown
