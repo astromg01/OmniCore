@@ -60,7 +60,7 @@ class Pcsx2PS2Backend(context: Context) : PS2Backend {
             backendVersion = "PCSX2/ARMSX2 $ARMSX2_PIN_SHORT",
             notes = when {
                 !arm64 -> "PCSX2 Android backend requires arm64-v8a."
-                NativeApp.hasNoNativeBinary -> "${NativeApp.nativeLoadDiagnostic()} ABI=${Build.SUPPORTED_ABIS.joinToString("/")}" 
+                NativeApp.hasNoNativeBinary -> "${NativeApp.nativeLoadDiagnostic()} ABI=${Build.SUPPORTED_ABIS.joinToString("/")}"
                 bios?.plausible != true -> "Select a valid user-owned PS2 BIOS before booting."
                 else -> "Pinned PCSX2 ARM64 emucore ready with real BIOS boot."
             }
@@ -326,21 +326,26 @@ class Pcsx2PS2Backend(context: Context) : PS2Backend {
                     stable -> { stableStreak++; lowStreak = 0; severeStreak = 0 }
                     else -> { severeStreak = 0; lowStreak = max(0, lowStreak - 1); stableStreak = max(0, stableStreak - 1) }
                 }
-                var desired = adaptiveLevel
+                val previousLevel = adaptiveLevel
+                var desired = previousLevel
                 if (samples >= 3) {
                     desired = when {
-                        sudden && adaptiveLevel < 1 -> 1
-                        severeStreak >= 2 -> min(2, adaptiveLevel + 1)
-                        lowStreak >= 3 -> min(2, adaptiveLevel + 1)
-                        stableStreak >= 8 -> max(0, adaptiveLevel - 1)
-                        else -> adaptiveLevel
+                        sudden && previousLevel < 1 -> 1
+                        severeStreak >= 2 -> min(2, previousLevel + 1)
+                        lowStreak >= 3 -> min(2, previousLevel + 1)
+                        stableStreak >= 8 -> max(0, previousLevel - 1)
+                        else -> previousLevel
                     }
                 }
-                if (desired != adaptiveLevel) {
+                if (desired != previousLevel) {
                     applyAdaptiveLevel(desired, fps, target, sudden)
                     adaptiveLevel = desired
-                    if (desired > adaptiveLevel) { lowStreak = 0; severeStreak = 0 }
-                    else stableStreak = 0
+                    if (desired > previousLevel) {
+                        lowStreak = 0
+                        severeStreak = 0
+                    } else {
+                        stableStreak = 0
+                    }
                 }
                 lastFps = fps
             }
