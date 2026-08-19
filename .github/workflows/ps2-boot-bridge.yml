@@ -1,4 +1,4 @@
-name: PS2 Boot Bridge
+name: PS2 Boot Test 1
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: ps2-boot-bridge
+  group: ps2-boot-test1
   cancel-in-progress: true
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
           changed="$(git diff --name-only origin/agent/0.10.0-n64-foundation...HEAD)"
           forbidden='^(app/src/main/cpp/(native_bridge\.cpp|gl_presenter\.cpp|libretro_host_v7\.cpp|n64/)|app/src/main/java/com/omnicore/emulator/core/n64/|app/src/main/java/com/omnicore/emulator/emulation/N64|app/src/main/java/com/omnicore/emulator/performance/N64)'
           if echo "$changed" | grep -E "$forbidden"; then
-            echo "PS2 Boot Bridge modified protected PS1/N64 runtime source." >&2
+            echo "PS2 Boot Test modified protected PS1/N64 runtime source." >&2
             exit 1
           fi
           git diff --check origin/agent/0.10.0-n64-foundation...HEAD
@@ -51,6 +51,20 @@ jobs:
           test -d "$PLAY_NDK"
           echo "PLAY_NDK_HOME=$PLAY_NDK" >> "$GITHUB_ENV"
           test -x "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign"
+
+      - name: Verify PS2 media routing contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          DETECTOR=app/src/main/java/com/omnicore/emulator/core/ps2/PS2IsoValidator.kt
+          LIBRARY=app/src/main/java/com/omnicore/emulator/library/LibraryImportEngine.kt
+          test -f "$DETECTOR"
+          grep -Fq 'SYSTEM.CNF' "$DETECTOR"
+          grep -Fq 'BOOT2' "$DETECTOR"
+          grep -Fq 'PS2IsoValidator.isPlayStation2Iso' "$LIBRARY"
+          grep -Fq 'ConsoleSystem.PLAYSTATION_2' "$LIBRARY"
+          grep -Fq 'ConsoleSystem.PLAYSTATION_2 -> PS2Core()' app/src/main/java/com/omnicore/emulator/core/CoreRegistry.kt
+          echo "OMNICORE_PS2_MEDIA_ROUTING_OK iso9660-system-cnf-boot2"
 
       - name: Fetch pinned Play backend
         shell: bash
@@ -100,7 +114,7 @@ jobs:
           done
           echo "OMNICORE_PS2_BOOT_API_SYMBOLS_OK"
 
-      - name: Validate Boot Bridge source isolation
+      - name: Validate real boot lifecycle
         shell: bash
         run: |
           set -euo pipefail
@@ -108,12 +122,12 @@ jobs:
           test -f app/src/main/java/com/virtualapplications/play/Bootable.java
           test -f app/src/main/java/com/omnicore/emulator/core/ps2/PlayPS2Backend.kt
           test -f app/src/main/java/com/omnicore/emulator/core/ps2/PS2Core.kt
-          grep -Fq 'ConsoleSystem.PLAYSTATION_2 -> PS2Core()' app/src/main/java/com/omnicore/emulator/core/CoreRegistry.kt
           grep -Fq 'android:process=":ps2"' app/src/main/AndroidManifest.xml
           grep -Fq 'NativeInterop.bootDiskImage(request.imagePath)' app/src/main/java/com/omnicore/emulator/core/ps2/PlayPS2Backend.kt
+          grep -Fq 'NativeInterop.setupGsHandler(surface)' app/src/main/java/com/omnicore/emulator/core/ps2/PlayPS2Backend.kt
           grep -Fq 'PS2 BOOT OK' app/src/main/java/com/omnicore/emulator/emulation/PS2EmulationActivity.kt
 
-      - name: Build OmniCore Boot Bridge APK
+      - name: Build OmniCore PS2 Boot Test APK
         shell: bash
         run: |
           set -euo pipefail
@@ -131,63 +145,63 @@ jobs:
           set -euo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
           "$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK"
-          echo "OMNICORE_PS2_BOOT_BRIDGE1_OK play-jni surface-uri-lifecycle dual-abi 16kb"
+          echo "OMNICORE_PS2_BOOT_TEST1_OK play-jni iso-detect surface-uri-lifecycle dual-abi 16kb"
 
-      - name: Upload Boot Bridge APK
+      - name: Upload PS2 Boot Test APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: OmniCore-PS2-BootBridge1
+          name: OmniCore-PS2-BootTest1
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Record Boot Bridge failure
+      - name: Record PS2 Boot Test failure
         if: failure()
         shell: bash
         run: |
           set -euo pipefail
-          RESULT=/tmp/ps2-boot-bridge-failure.txt
+          RESULT=/tmp/ps2-boot-test1-failure.txt
           {
             echo "run_id=$GITHUB_RUN_ID"
             echo "commit=$GITHUB_SHA"
             echo "status=failure"
-            echo "phase=boot-bridge-1-real-play-jni"
+            echo "phase=ps2-boot-test1"
             echo "play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
           } > "$RESULT"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin agent/0.11.0-ps2-foundation
           git reset --hard origin/agent/0.11.0-ps2-foundation
-          cp "$RESULT" .ci/ps2-boot-bridge-failure.txt
-          rm -f .ci/ps2-boot-bridge-success.txt
-          git add .ci/ps2-boot-bridge-failure.txt .ci/ps2-boot-bridge-success.txt 2>/dev/null || true
-          git commit -m "Record PS2 Boot Bridge failure [skip ci]" || true
+          cp "$RESULT" .ci/ps2-boot-test1-failure.txt
+          rm -f .ci/ps2-boot-test1-success.txt
+          git add .ci/ps2-boot-test1-failure.txt .ci/ps2-boot-test1-success.txt 2>/dev/null || true
+          git commit -m "Record PS2 Boot Test 1 failure [skip ci]" || true
           git push origin HEAD:agent/0.11.0-ps2-foundation
 
-      - name: Record Boot Bridge success
+      - name: Record PS2 Boot Test success
         if: success()
         shell: bash
         run: |
           set -euo pipefail
-          RESULT=/tmp/ps2-boot-bridge-success.txt
+          RESULT=/tmp/ps2-boot-test1-success.txt
           {
             echo "run_id=$GITHUB_RUN_ID"
             echo "commit=$GITHUB_SHA"
             echo "status=success"
-            echo "phase=boot-bridge-1-real-play-jni"
+            echo "phase=ps2-boot-test1"
             echo "play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
             echo "backend=libPlay.so"
             echo "abis=arm64-v8a,armeabi-v7a"
+            echo "media_detection=iso9660-system-cnf-boot2"
             echo "bridge=vm+surface+content-uri+pause-resume"
-            echo "renderer_gate=gles3-default"
-            echo "apk=artifact:OmniCore-PS2-BootBridge1"
+            echo "apk=artifact:OmniCore-PS2-BootTest1"
           } > "$RESULT"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin agent/0.11.0-ps2-foundation
           git reset --hard origin/agent/0.11.0-ps2-foundation
-          cp "$RESULT" .ci/ps2-boot-bridge-success.txt
-          rm -f .ci/ps2-boot-bridge-failure.txt
-          git add .ci/ps2-boot-bridge-success.txt .ci/ps2-boot-bridge-failure.txt 2>/dev/null || true
-          git commit -m "Record PS2 Boot Bridge success [skip ci]" || true
+          cp "$RESULT" .ci/ps2-boot-test1-success.txt
+          rm -f .ci/ps2-boot-test1-failure.txt
+          git add .ci/ps2-boot-test1-success.txt .ci/ps2-boot-test1-failure.txt 2>/dev/null || true
+          git commit -m "Record PS2 Boot Test 1 success [skip ci]" || true
           git push origin HEAD:agent/0.11.0-ps2-foundation
