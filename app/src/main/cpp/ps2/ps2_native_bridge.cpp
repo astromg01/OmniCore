@@ -9,7 +9,7 @@
 
 namespace {
 
-constexpr const char* kFoundationVersion = "0.11.0-ps2-bootbridge1";
+constexpr const char* kFoundationVersion = "0.11.2-ps2-alpha3";
 constexpr const char* kPlayRevision = "04bde0df87ee7c0e2f0151b51bb2cc22c88541da";
 
 std::string architectureName() {
@@ -73,11 +73,11 @@ Java_com_omnicore_emulator_core_ps2_PS2NativeBridge_nativeDescriptor(
     jobject /* thiz */) {
     const bool playReady = canLoad("libPlay.so");
     const bool bootApiReady = playReady && hasPlayBootApi();
-    std::string result = "OmniCore PS2 Boot Bridge 1 | isolated adapter | backend=";
+    std::string result = "OmniCore PS2 Alpha 3 | isolated adapter | backend=";
     result += playReady ? "Play-ready@" : "Play-not-packaged@";
     result += kPlayRevision;
     result += bootApiReady ? " | boot-api=ready" : " | boot-api=missing";
-    result += " | smartperf=contract-v1";
+    result += " | smartperf=functional-baseline";
     return makeString(env, result);
 }
 
