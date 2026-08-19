@@ -2,4 +2,4 @@ phase=ps2-alpha5-runtime-compatibility
 version=0.11.4
 focus=measured-renderer-tuning-bios-prep-frame-pacing
 reason=physical-device-slow-motion-and-compatibility-feedback
-retry=4-capture-android-build-diagnostics
+retry=5-fix-sustained-performance-api
