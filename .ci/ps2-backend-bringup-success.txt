@@ -1,7 +1,9 @@
-run_id=32199356349
-commit=1e91eefcb325a5276aac5e00b6dbaa45cd8e4a6e
+run_id=32201339178
+commit=dc349045986de52a5c9da6d06666d8305c207120
 status=success
-phase=backend-bringup-1-r2-arm64
+phase=backend-bringup-2-dualabi-apk
 play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da
 backend=libPlay.so
-abis=arm64-v8a
+abis=arm64-v8a,armeabi-v7a
+container_apk=app-debug.apk
+ps2_runtime=libomnicore_ps2_runtime.so
