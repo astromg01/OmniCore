@@ -55,11 +55,11 @@ class PS2GamepadOverlayView(
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = resources.displayMetrics.density * 1.35f
+        strokeWidth = resources.displayMetrics.density * 1.55f
     }
     private val guidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = resources.displayMetrics.density
+        strokeWidth = resources.displayMetrics.density * 1.05f
     }
     private val editPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.argb(245, 92, 220, 255)
@@ -156,12 +156,12 @@ class PS2GamepadOverlayView(
         val face = short * 0.052f * scale
         val stickRadius = short * 0.091f * scale
 
-        // Clear baseline: gameplay center stays open while thumbs naturally sit
-        // in the lower left/right thirds.
-        placeStick(leftStick, 0.19f, 0.78f, stickRadius)
-        placeStick(rightStick, 0.68f, 0.78f, stickRadius)
+        // Device-tested ergonomic baseline: both sticks stay in the natural lower
+        // thumb arcs, with the right stick moved out of the centre playfield.
+        placeStick(leftStick, 0.18f, 0.79f, stickRadius)
+        placeStick(rightStick, 0.70f, 0.79f, stickRadius)
 
-        val dX = 0.13f
+        val dX = 0.125f
         val dY = 0.58f
         val dRadius = normal * 0.82f
         val dSpaceX = dRadius * 1.36f / w
@@ -171,8 +171,8 @@ class PS2GamepadOverlayView(
         place("left", dX - dSpaceX, dY, dRadius)
         place("right", dX + dSpaceX, dY, dRadius)
 
-        val fX = 0.87f
-        val fY = 0.59f
+        val fX = 0.88f
+        val fY = 0.58f
         val fSpaceX = face * 1.43f / w
         val fSpaceY = face * 1.43f / h
         place("triangle", fX, fY - fSpaceY, face)
@@ -180,17 +180,17 @@ class PS2GamepadOverlayView(
         place("square", fX - fSpaceX, fY, face)
         place("circle", fX + fSpaceX, fY, face)
 
-        // Shoulder controls form a predictable upper rail rather than floating
-        // circles, leaving the middle of the game image unobstructed.
-        place("l2", 0.10f, 0.105f, small * 1.08f)
-        place("l1", 0.25f, 0.105f, small * 1.08f)
-        place("r1", 0.75f, 0.105f, small * 1.08f)
-        place("r2", 0.90f, 0.105f, small * 1.08f)
+        // Shoulder controls form a predictable upper rail and have generous
+        // invisible hit targets, while their visible footprint stays compact.
+        place("l2", 0.10f, 0.095f, small * 1.08f)
+        place("l1", 0.25f, 0.095f, small * 1.08f)
+        place("r1", 0.75f, 0.095f, small * 1.08f)
+        place("r2", 0.90f, 0.095f, small * 1.08f)
 
-        place("select", 0.455f, 0.86f, small * 0.88f)
-        place("start", 0.545f, 0.86f, small * 0.88f)
-        place("l3", 0.31f, 0.89f, small * 0.72f)
-        place("r3", 0.79f, 0.89f, small * 0.72f)
+        place("select", 0.455f, 0.88f, small * 0.88f)
+        place("start", 0.545f, 0.88f, small * 0.88f)
+        place("l3", 0.29f, 0.91f, small * 0.72f)
+        place("r3", 0.80f, 0.91f, small * 0.72f)
         postInvalidateOnAnimation()
     }
 
@@ -227,29 +227,29 @@ class PS2GamepadOverlayView(
         val now = SystemClock.uptimeMillis()
         val active = leftStick.pointerId != INVALID_POINTER || rightStick.pointerId != INVALID_POINTER ||
             pointerButtons.size() > 0 || now <= activeUntilMs
-        // The old 40% idle fade made controls hard to read. Clear mode keeps
-        // enough contrast to locate a button instantly without covering gameplay.
-        val idleFactor = if (config.dynamicOpacity && !active) 0.62f else 1f
+        // Clear should fade, not disappear. The first PCSX2 device baseline used
+        // 0.62 and made button outlines difficult to acquire against dark games.
+        val idleFactor = if (config.dynamicOpacity && !active) 0.72f else 1f
         return (config.touchOpacity * idleFactor).coerceIn(0.12f, 1f)
     }
 
     private fun drawStick(canvas: Canvas, stick: Stick, opacity: Float) {
-        fillPaint.color = Color.argb(alpha(44, opacity), 215, 222, 240)
-        strokePaint.color = Color.argb(alpha(155, opacity), 244, 247, 255)
+        fillPaint.color = Color.argb(alpha(48, opacity), 215, 222, 240)
+        strokePaint.color = Color.argb(alpha(190, opacity), 244, 247, 255)
         canvas.drawCircle(stick.centerX, stick.centerY, stick.radius, fillPaint)
         canvas.drawCircle(stick.centerX, stick.centerY, stick.radius, strokePaint)
 
-        guidePaint.color = Color.argb(alpha(60, opacity), 235, 240, 255)
+        guidePaint.color = Color.argb(alpha(88, opacity), 235, 240, 255)
         canvas.drawCircle(stick.centerX, stick.centerY, stick.radius * 0.56f, guidePaint)
 
         val knobRadius = stick.radius * 0.39f
         fillPaint.color = Color.argb(
-            alpha(if (stick.pointerId == INVALID_POINTER) 112 else 185, opacity),
+            alpha(if (stick.pointerId == INVALID_POINTER) 132 else 205, opacity),
             235,
             240,
             252
         )
-        strokePaint.color = Color.argb(alpha(175, opacity), 255, 255, 255)
+        strokePaint.color = Color.argb(alpha(210, opacity), 255, 255, 255)
         val knobX = stick.centerX + stick.valueX * stick.radius * 0.56f
         val knobY = stick.centerY + stick.valueY * stick.radius * 0.56f
         canvas.drawCircle(knobX, knobY, knobRadius, fillPaint)
@@ -263,8 +263,8 @@ class PS2GamepadOverlayView(
     private fun drawButton(canvas: Canvas, button: ButtonRegion, opacity: Float) {
         val isPressed = pressed.getOrElse(button.id) { false }
         val rgb = accentRgb(button.accent)
-        fillPaint.color = Color.argb(alpha(if (isPressed) 168 else 48, opacity), rgb[0], rgb[1], rgb[2])
-        strokePaint.color = Color.argb(alpha(if (isPressed) 245 else 168, opacity), rgb[0], rgb[1], rgb[2])
+        fillPaint.color = Color.argb(alpha(if (isPressed) 178 else 58, opacity), rgb[0], rgb[1], rgb[2])
+        strokePaint.color = Color.argb(alpha(if (isPressed) 255 else 202, opacity), rgb[0], rgb[1], rgb[2])
 
         val radius = button.radius
         when (button.shape) {
@@ -299,7 +299,7 @@ class PS2GamepadOverlayView(
             canvas.drawCircle(button.x, button.y, radius * 1.35f, editPaint)
         }
 
-        textPaint.alpha = alpha(if (isPressed) 255 else 238, opacity)
+        textPaint.alpha = alpha(if (isPressed) 255 else 248, opacity)
         textPaint.textSize = when (button.shape) {
             Shape.CIRCLE, Shape.DPAD -> (radius * 0.67f).coerceAtLeast(10f)
             Shape.PILL, Shape.SHOULDER -> (radius * 0.43f).coerceAtLeast(9f)
@@ -348,7 +348,7 @@ class PS2GamepadOverlayView(
 
     private fun capture(pointerId: Int, x: Float, y: Float) {
         val leftDistance = hypot(x - leftStick.centerX, y - leftStick.centerY)
-        if (leftDistance <= leftStick.radius * 1.30f && leftStick.pointerId == INVALID_POINTER) {
+        if (leftDistance <= leftStick.radius * 1.40f && leftStick.pointerId == INVALID_POINTER) {
             leftStick.pointerId = pointerId
             haptic()
             updateStick(leftStick, x, y)
@@ -356,7 +356,7 @@ class PS2GamepadOverlayView(
         }
         if (config.showRightStick) {
             val rightDistance = hypot(x - rightStick.centerX, y - rightStick.centerY)
-            if (rightDistance <= rightStick.radius * 1.30f && rightStick.pointerId == INVALID_POINTER) {
+            if (rightDistance <= rightStick.radius * 1.40f && rightStick.pointerId == INVALID_POINTER) {
                 rightStick.pointerId = pointerId
                 haptic()
                 updateStick(rightStick, x, y)
@@ -371,6 +371,18 @@ class PS2GamepadOverlayView(
 
     private fun retargetButton(pointerId: Int, x: Float, y: Float) {
         val oldId = pointerButtons.get(pointerId, NO_BUTTON)
+
+        // Small hysteresis around non-DPad buttons prevents a stationary thumb
+        // from flickering between adjacent face/shoulder targets. DPad keeps its
+        // shorter release radius so rolling directions still feels immediate.
+        if (oldId != NO_BUTTON) {
+            val old = buttons.firstOrNull { it.id == oldId }
+            if (old != null) {
+                val holdScale = if (old.shape == Shape.DPAD) 1.36f else 1.66f
+                if (hypot(x - old.x, y - old.y) <= old.radius * holdScale) return
+            }
+        }
+
         val next = findButton(x, y)?.id ?: NO_BUTTON
         if (oldId == next) return
         if (oldId != NO_BUTTON && !buttonHeldByAnotherPointer(oldId, pointerId)) setPressed(oldId, false)
@@ -390,9 +402,9 @@ class PS2GamepadOverlayView(
             if (!config.showL3R3 && isStickClick(button.id)) continue
             val distance = hypot(x - button.x, y - button.y)
             val hitScale = when (button.shape) {
-                Shape.SHOULDER -> 1.70f
-                Shape.PILL -> 1.55f
-                else -> 1.42f
+                Shape.SHOULDER -> 1.85f
+                Shape.PILL -> 1.72f
+                else -> 1.55f
             }
             if (distance <= button.radius * hitScale && distance < bestDistance) {
                 best = button
@@ -411,7 +423,12 @@ class PS2GamepadOverlayView(
             return
         }
         var normalized = ((magnitude - config.analogDeadzone) / (1f - config.analogDeadzone)).coerceIn(0f, 1f)
-        if (config.precisionAnalog) normalized *= 0.80f + 0.20f * normalized
+        if (config.precisionAnalog) {
+            // Preserve full throw while slowing the first half of the stick.
+            // Camera/steering fine-control is noticeably easier than the old
+            // almost-linear 0.80+0.20*x curve.
+            normalized *= 0.68f + 0.32f * normalized
+        }
         normalized = (normalized * config.analogSensitivity).coerceIn(0f, 1f)
         val inv = if (magnitude > 0.0001f) normalized / magnitude else 0f
         setStick(stick, (dx * inv).coerceIn(-1f, 1f), (dy * inv).coerceIn(-1f, 1f))
