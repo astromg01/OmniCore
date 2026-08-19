@@ -125,14 +125,14 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                 controls.visibility = if (controlsVisible) View.VISIBLE else View.GONE
                 statusView.visibility = View.VISIBLE
                 statusView.text = "PS2 • preparando ${currentGame.title}…"
-                tryBoot()
+                attemptBoot()
             }
         } else {
             classicReady = true
             classicBoot.visibility = View.GONE
             controls.visibility = View.VISIBLE
             statusView.visibility = View.VISIBLE
-            tryBoot()
+            attemptBoot()
         }
     }
 
@@ -212,13 +212,13 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
     override fun surfaceCreated(holder: SurfaceHolder) {
         configureDisplayPacing(holder.surface)
         backend.attachSurface(holder.surface)
-        tryBoot()
+        attemptBoot()
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         configureDisplayPacing(holder.surface)
         backend.attachSurface(holder.surface)
-        tryBoot()
+        attemptBoot()
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -229,7 +229,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         backend.attachSurface(null)
     }
 
-    private fun tryBoot() {
+    private fun attemptBoot() {
         if (!classicReady || destroyed || started || booting) return
         val surface = surfaceView.holder.surface
         if (!surface.isValid) return
@@ -517,7 +517,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                 backend.resume()
                 perfHandler.removeCallbacks(perfSampler)
                 perfHandler.postDelayed(perfSampler, PERF_SAMPLE_MS)
-            } else if (::surfaceView.isInitialized) tryBoot()
+            } else if (::surfaceView.isInitialized) attemptBoot()
         }
     }
 
@@ -532,12 +532,17 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun configureDisplayPacing(surface: Surface) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && surface.isValid) {
-            runCatching {
-                surface.setFrameRate(
+        if (!surface.isValid) return
+        runCatching {
+            when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> surface.setFrameRate(
                     60f,
                     Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
                     Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS
+                )
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> surface.setFrameRate(
+                    60f,
+                    Surface.FRAME_RATE_COMPATIBILITY_DEFAULT
                 )
             }
         }
