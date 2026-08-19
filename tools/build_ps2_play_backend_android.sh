@@ -39,8 +39,9 @@ PATCH_DB="$PLAY_SRC/GameConfig.xml"
 test -s "$PATCH_DB"
 mkdir -p app/src/main/assets
 install -m 0644 "$PATCH_DB" app/src/main/assets/GameConfig.xml
-grep -Fq '<GameConfigs' app/src/main/assets/GameConfig.xml
+grep -Fq '<Config>' app/src/main/assets/GameConfig.xml
 grep -Fq '<GameConfig ' app/src/main/assets/GameConfig.xml
+grep -Fq '<IdleLoopBlock' app/src/main/assets/GameConfig.xml
 printf 'Play! GameConfig compatibility database staged into OmniCore assets.\n'
 
 for ABI in $PLAY_ABIS; do
@@ -85,7 +86,7 @@ if $BRINGUP2; then
   READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
   for ABI in arm64-v8a armeabi-v7a; do
     LIB="app/src/main/jniLibs/$ABI/libPlay.so"
-    "$READELF" -lW "$LIB" | awk '$1 == "LOAD" { count++; if ($NF != "0x4000" && $NF != "0x10000") bad=1 } END { if (count == 0 || bad) exit 1 }'
+    "$READELF" -lW "$LIB" | awk '$1 == "LOAD" { count++; if ($NF != "0x4000" && $NF != "0x10000") bad=1 } END { if(count == 0 || bad) exit 1 }'
     if "$READELF" -dW "$LIB" | grep -q 'libc++_shared.so'; then
       echo "Unexpected shared C++ runtime dependency for $ABI" >&2
       exit 1
