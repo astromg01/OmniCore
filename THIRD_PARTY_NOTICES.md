@@ -26,18 +26,31 @@ OmniCore uses Mupen64Plus-Next as the Nintendo 64 backend.
 
 The Android N64 workflow fetches that exact revision, applies only the OmniCore Android packaging/build adjustments required for core coexistence and 16 KB ELF alignment, builds the ARM64 and ARMv7 shared libraries, and publishes the corresponding source archive beside applicable APKs.
 
-## Play! — PS2 backend candidate
+## PCSX2 via ARMSX2 — current PS2 Alpha 6 backend
 
-The PS2 development branch builds Play! as an external, separately fetched Android backend behind the OmniCore `PS2Backend` boundary. Play! source code is not copied into the OmniCore source tree by the bring-up scripts.
+OmniCore PS2 Alpha 6 uses the Android ARM64 PCSX2 emucore maintained by the ARMSX2 project behind OmniCore's `PS2Backend` boundary. The ARMSX2 application UI is not embedded; OmniCore supplies its own library, controls, lifecycle and console-isolation layer while using the pinned native emucore and required runtime resources.
+
+- Project: ARMSX2 / PCSX2 Android port
+- Upstream: https://github.com/ARMSX2/ARMSX2
+- Pinned revision: `7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3`
+- Core lineage: PCSX2
+- Upstream license for the emucore/project: GNU GPL v3 or later as declared by upstream
+- Packaged ABI: `arm64-v8a`
+- Packaged page-size variants: `libemucore_4k.so`, `libemucore_16k.so`
+
+The Alpha 6 workflow fetches the exact pinned tree, builds the Android emucore from source, embeds the GPLv3 license text from that same source snapshot, and publishes the corresponding source archive beside the APK. OmniCore does not bundle a Sony BIOS; a valid user-owned BIOS is required by this backend.
+
+Where the resulting distributed work is subject to the GNU GPL, the GPL controls the rights and obligations for that affected work as stated in `COPYRIGHT.md`.
+
+## Play! — legacy PS2 Alpha 1–5 backend
+
+Earlier PS2 development builds used Play! as the backend behind `PS2Backend`. Alpha 6 no longer packages `libPlay.so`.
 
 - Project: Play!
 - Upstream: https://github.com/jpd002/Play-
-- Pinned revision: `04bde0df87ee7c0e2f0151b51bb2cc22c88541da`
+- Last OmniCore pin: `04bde0df87ee7c0e2f0151b51bb2cc22c88541da`
 - Upstream license: BSD 2-Clause style
 - Local license text: `third_party/licenses/Play-BSD-2-Clause.txt`
-- Packaged backend library during bring-up: `libPlay.so`
-
-The build fetches the exact upstream revision including its declared submodules and compiles the Android `Play` target separately for each supported ABI. OmniCore-specific lifecycle, telemetry, controls, storage and SmartPerf logic remain outside the upstream tree.
 
 ## libretro ABI declarations
 
@@ -49,4 +62,4 @@ https://github.com/libretro/libretro-common/blob/master/include/libretro.h
 
 ## Proprietary content
 
-OmniCore does not include Sony BIOS files, Nintendo ROMs, games, firmware, console keys or other proprietary console/game content. Users must provide content they are legally entitled to use.
+OmniCore does not include Sony BIOS files, Nintendo ROMs, games, firmware, console keys or other proprietary console/game content. Users must provide content and firmware they are legally entitled to use.
