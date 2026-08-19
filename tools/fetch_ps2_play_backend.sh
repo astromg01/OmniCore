@@ -18,8 +18,10 @@ test -f "$DEST/License.txt"
 test -f "$DEST/Source/ui_android/CMakeLists.txt"
 test -f "$DEST/Source/CMakeLists.txt"
 test -s "$DEST/GameConfig.xml"
-grep -Fq '<Config>' "$DEST/GameConfig.xml"
+grep -Fq '<GameConfigs>' "$DEST/GameConfig.xml"
 grep -Fq '<GameConfig ' "$DEST/GameConfig.xml"
 grep -Fq '<IdleLoopBlock' "$DEST/GameConfig.xml"
+COUNT="$(grep -c '<GameConfig ' "$DEST/GameConfig.xml")"
+test "$COUNT" -eq 47
 git -C "$DEST" diff --quiet
-printf 'Play! backend + compatibility database fetched at %s\n' "$PIN"
+printf 'Play! backend + compatibility database fetched at %s (%s profiles)\n' "$PIN" "$COUNT"
