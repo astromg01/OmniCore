@@ -51,7 +51,8 @@ for ABI in $PLAY_ABIS; do
     -DBUILD_PSFPLAYER=OFF \
     -DBUILD_LIBRETRO_CORE=OFF \
     -DENABLE_AMAZON_S3=OFF \
-    -DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG -frtti -fexceptions" \
+    -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG" \
+    -DCMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG -frtti -fexceptions" \
     -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384"
 
   echo "=== Building Play! for $ABI with -j$PLAY_BUILD_JOBS ==="
