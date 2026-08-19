@@ -72,20 +72,81 @@ done
 JNI_DIR="app/src/main/jniLibs/arm64-v8a"
 mkdir -p "$JNI_DIR"
 rm -f app/src/main/jniLibs/arm64-v8a/libPlay.so app/src/main/jniLibs/armeabi-v7a/libPlay.so
-cp -f "$STAGE/lib/arm64-v8a/libemucore_4k.so" "$JNI_DIR/"
-cp -f "$STAGE/lib/arm64-v8a/libemucore_16k.so" "$JNI_DIR/"
 
-# Copy only non-system DT_NEEDED dependencies that are actually packaged by the
-# official APK. This avoids blindly vendoring unrelated AndroidX native payloads.
 READELF="${ANDROID_NDK_HOME:-${OMNI_NDK_HOME:-}}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
 test -x "$READELF"
-for core in "$STAGE/lib/arm64-v8a/libemucore_4k.so" "$STAGE/lib/arm64-v8a/libemucore_16k.so"; do
+
+# Android/bionic libraries are supplied by the OS and must never be vendored.
+is_system_soname() {
+  case "$1" in
+    libc.so|libdl.so|libm.so|liblog.so|libandroid.so|libz.so|libEGL.so|libGLESv2.so|libGLESv3.so|libvulkan.so|libOpenSLES.so|libaaudio.so|libjnigraphics.so|libnativewindow.so|libmediandk.so|libcamera2ndk.so|libbinder_ndk.so)
+      return 0 ;;
+    *)
+      return 1 ;;
+  esac
+}
+
+# Import the complete DT_NEEDED closure, not just the emucore's first-level
+# dependencies. The pinned ARMSX2 nightly links emucore -> librashader ->
+# libc++_shared; copying only direct deps produces an APK that builds cleanly but
+# fails System.loadLibrary() on device.
+declare -A seen=()
+queue=("libemucore_4k.so" "libemucore_16k.so")
+closure_file="$WORK/native-dependency-closure.txt"
+: > "$closure_file"
+
+while (( ${#queue[@]} > 0 )); do
+  lib="${queue[0]}"
+  queue=("${queue[@]:1}")
+  [[ -n "${seen[$lib]:-}" ]] && continue
+
+  src_lib="$STAGE/lib/arm64-v8a/$lib"
+  if [[ ! -s "$src_lib" ]]; then
+    echo "Required ARMSX2 native library missing from upstream APK: $lib" >&2
+    exit 1
+  fi
+
+  cp -f "$src_lib" "$JNI_DIR/$lib"
+  seen[$lib]=1
+  echo "$lib" >> "$closure_file"
+
   while IFS= read -r dep; do
-    if [[ -s "$STAGE/lib/arm64-v8a/$dep" ]]; then
-      cp -f "$STAGE/lib/arm64-v8a/$dep" "$JNI_DIR/"
+    [[ -z "$dep" ]] && continue
+    if is_system_soname "$dep"; then
+      continue
     fi
-  done < <("$READELF" -d "$core" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
+    if [[ -s "$STAGE/lib/arm64-v8a/$dep" ]]; then
+      [[ -n "${seen[$dep]:-}" ]] || queue+=("$dep")
+    else
+      echo "Unresolved non-system DT_NEEDED dependency: $lib -> $dep" >&2
+      exit 1
+    fi
+  done < <("$READELF" -d "$src_lib" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
 done
+
+sort -u -o "$closure_file" "$closure_file"
+
+# Regression guard for the exact failure seen on the first Alpha 6 device test.
+# If librashader is in the closure, its shared C++ runtime must be there too.
+if [[ -s "$JNI_DIR/liblibrashader_capi.so" ]]; then
+  test -s "$JNI_DIR/libc++_shared.so"
+fi
+
+# Re-validate the copied closure itself. Any non-system dependency must resolve
+# inside the final jniLibs directory, so CI catches runtime linker failures before
+# Gradle packages the APK.
+while IFS= read -r lib; do
+  while IFS= read -r dep; do
+    [[ -z "$dep" ]] && continue
+    if is_system_soname "$dep"; then
+      continue
+    fi
+    if [[ ! -s "$JNI_DIR/$dep" ]]; then
+      echo "Final JNI closure unresolved: $lib -> $dep" >&2
+      exit 1
+    fi
+  done < <("$READELF" -d "$JNI_DIR/$lib" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
+done < "$closure_file"
 
 RESOURCE_SRC="$STAGE/assets/resources"
 RESOURCE_DST="app/src/main/assets/pcsx2/resources"
@@ -103,6 +164,8 @@ test -s "$LICENSE_DIR/GPL-3.0-PCSX2-ARMSX2.txt"
 rm -f "$DIAG"
 printf 'OMNICORE_PCSX2_IMPORT_OK pin=%s tag=%s native_libs=%s resources=%s sha256=%s\n' \
   "$PIN" "$TAG" \
-  "$(find "$JNI_DIR" -maxdepth 1 -type f -name '*.so' | wc -l)" \
+  "$(wc -l < "$closure_file" | tr -d ' ')" \
   "$(find "$RESOURCE_DST" -type f | wc -l)" \
   "$(cut -d' ' -f1 "$WORK/upstream-apk.sha256")"
+echo 'Resolved native dependency closure:'
+cat "$closure_file"
