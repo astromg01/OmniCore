@@ -27,10 +27,17 @@ class PlayPS2Backend(context: Context) : PS2Backend {
     @Volatile private var initialized = false
     @Volatile private var running = false
     @Volatile private var activeRenderer = PS2Backend.Renderer.AUTO
-    @Volatile private var statsStartedAtMs = 0L
     @Volatile private var systemMetricsSampledAtMs = 0L
     @Volatile private var cachedMemoryPressure = 0f
     @Volatile private var cachedThermalStatus = PowerManager.THERMAL_STATUS_NONE
+
+    // Windowed telemetry is intentionally kept in the adapter. Alpha 5 used a
+    // boot-to-now average which reacted too slowly for safe adaptive decisions.
+    @Volatile private var lastTelemetryAtMs = 0L
+    @Volatile private var lastTelemetryFrames = 0
+    @Volatile private var lastTelemetryDrawCalls = 0
+    @Volatile private var lastWindowFps = -1f
+    @Volatile private var lastWindowDrawCallsPerFrame = -1f
 
     override val id: String = "play-pinned-04bde0df"
 
@@ -92,7 +99,7 @@ class PlayPS2Backend(context: Context) : PS2Backend {
             NativeInterop.notifyPreferencesChanged()
             NativeInterop.bootDiskImage(request.imagePath)
             runCatching { StatsManager.clearStats() }
-            statsStartedAtMs = SystemClock.elapsedRealtime()
+            resetTelemetryWindow()
             systemMetricsSampledAtMs = 0L
             NativeInterop.resumeVirtualMachine()
             running = true
@@ -116,6 +123,7 @@ class PlayPS2Backend(context: Context) : PS2Backend {
     @Synchronized
     override fun resume() {
         if (!initialized || !running) return
+        resetTelemetryWindow()
         runCatching { NativeInterop.resumeVirtualMachine() }
     }
 
@@ -124,9 +132,25 @@ class PlayPS2Backend(context: Context) : PS2Backend {
         releaseAllInput()
         if (initialized && running) runCatching { NativeInterop.pauseVirtualMachine() }
         running = false
-        statsStartedAtMs = 0L
         systemMetricsSampledAtMs = 0L
+        resetTelemetryWindow()
         attachedSurface = null
+    }
+
+    /**
+     * Applies Play!'s real frame-limiter preference for this process only.
+     * We deliberately do not call SettingsManager.save(): SmartPerf probes must
+     * never alter the next boot or become another persistent auto-tuning trap.
+     */
+    @Synchronized
+    override fun setFrameLimit(enabled: Boolean): Boolean {
+        if (!initialized || !running) return false
+        return runCatching {
+            SettingsManager.setPreferenceBoolean(PREF_LIMIT_FRAMERATE, enabled)
+            NativeInterop.notifyPreferencesChanged()
+            resetTelemetryWindow()
+            true
+        }.getOrDefault(false)
     }
 
     override fun telemetry(): PS2Backend.Telemetry {
@@ -135,19 +159,32 @@ class PlayPS2Backend(context: Context) : PS2Backend {
 
         val frames = if (running) runCatching { StatsManager.getFrames() }.getOrDefault(0) else 0
         val drawCalls = if (running) runCatching { StatsManager.getDrawCalls() }.getOrDefault(0) else 0
-        val elapsedMs = if (statsStartedAtMs > 0L) {
-            (now - statsStartedAtMs).coerceAtLeast(0L)
-        } else 0L
-        val fps = if (frames > 0 && elapsedMs >= 250L) {
-            frames * 1000f / elapsedMs.toFloat()
-        } else -1f
+
+        val previousAt = lastTelemetryAtMs
+        val deltaMs = if (previousAt > 0L) (now - previousAt).coerceAtLeast(0L) else 0L
+        if (running && deltaMs >= MIN_TELEMETRY_WINDOW_MS) {
+            val deltaFrames = (frames - lastTelemetryFrames).coerceAtLeast(0)
+            val deltaDrawCalls = (drawCalls - lastTelemetryDrawCalls).coerceAtLeast(0)
+            lastWindowFps = deltaFrames * 1000f / deltaMs.toFloat()
+            lastWindowDrawCallsPerFrame = if (deltaFrames > 0) {
+                deltaDrawCalls.toFloat() / deltaFrames.toFloat()
+            } else -1f
+            lastTelemetryAtMs = now
+            lastTelemetryFrames = frames
+            lastTelemetryDrawCalls = drawCalls
+        } else if (previousAt == 0L) {
+            lastTelemetryAtMs = now
+            lastTelemetryFrames = frames
+            lastTelemetryDrawCalls = drawCalls
+        }
+
+        val fps = lastWindowFps
         val frameMs = if (fps > 0f) 1000f / fps else -1f
-        val drawCallsPerFrame = if (frames > 0) drawCalls.toFloat() / frames.toFloat() else -1f
 
         return PS2Backend.Telemetry(
             hostFrameMs = frameMs,
             measuredFps = fps,
-            drawCallsPerFrame = drawCallsPerFrame,
+            drawCallsPerFrame = lastWindowDrawCallsPerFrame,
             thermalStatus = cachedThermalStatus,
             memoryPressure = cachedMemoryPressure,
             renderer = if (running) activeRenderer else PS2Backend.Renderer.AUTO,
@@ -176,6 +213,14 @@ class PlayPS2Backend(context: Context) : PS2Backend {
         } else PowerManager.THERMAL_STATUS_NONE
 
         systemMetricsSampledAtMs = nowMs
+    }
+
+    private fun resetTelemetryWindow() {
+        lastTelemetryAtMs = SystemClock.elapsedRealtime()
+        lastTelemetryFrames = if (running) runCatching { StatsManager.getFrames() }.getOrDefault(0) else 0
+        lastTelemetryDrawCalls = if (running) runCatching { StatsManager.getDrawCalls() }.getOrDefault(0) else 0
+        lastWindowFps = -1f
+        lastWindowDrawCallsPerFrame = -1f
     }
 
     @Synchronized
@@ -264,5 +309,6 @@ class PlayPS2Backend(context: Context) : PS2Backend {
         private const val PREF_LIMIT_FRAMERATE = "ps2.limitframerate"
         private const val PREF_SPU_BLOCK_COUNT = "audio.spublockcount"
         private const val SYSTEM_METRICS_SAMPLE_MS = 7_500L
+        private const val MIN_TELEMETRY_WINDOW_MS = 600L
     }
 }
