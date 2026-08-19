@@ -7,10 +7,12 @@ import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.system.Os;
 import android.system.OsConstants;
+import android.util.Log;
 import android.view.Surface;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
 
 /**
  * Minimal OmniCore Java ABI shim for the pinned ARMSX2/PCSX2 Android emucore.
@@ -23,16 +25,36 @@ import java.io.IOException;
 public final class NativeApp {
     private NativeApp() {}
 
+    private static final String TAG = "OmniCorePCSX2";
     private static volatile Context appContext;
     public static volatile boolean hasNoNativeBinary = true;
+    public static volatile String nativeLoadError = "";
+    public static volatile String selectedNativeLibrary = "";
+    public static volatile long selectedPageSize = 4096L;
 
     static {
+        selectedPageSize = runtimePageSize();
+        selectedNativeLibrary = selectedPageSize >= 16384L ? "emucore_16k" : "emucore_4k";
         try {
-            System.loadLibrary(selectNativeLibraryName());
+            System.loadLibrary(selectedNativeLibrary);
             hasNoNativeBinary = false;
+            nativeLoadError = "";
+            Log.i(TAG, "PCSX2 native core loaded: " + selectedNativeLibrary
+                    + " pageSize=" + selectedPageSize
+                    + " abis=" + Arrays.toString(Build.SUPPORTED_ABIS));
         } catch (Throwable error) {
             hasNoNativeBinary = true;
-            System.err.println("OMNICORE_PCSX2_LOAD_FAILED: " + error.getMessage());
+            String message = error.getMessage();
+            nativeLoadError = error.getClass().getSimpleName()
+                    + ((message == null || message.isEmpty()) ? "" : ": " + message);
+            Log.e(TAG, "PCSX2 native core load failed: library=" + selectedNativeLibrary
+                    + " pageSize=" + selectedPageSize
+                    + " abis=" + Arrays.toString(Build.SUPPORTED_ABIS)
+                    + " error=" + nativeLoadError, error);
+            System.err.println("OMNICORE_PCSX2_LOAD_FAILED library=" + selectedNativeLibrary
+                    + " pageSize=" + selectedPageSize
+                    + " abis=" + Arrays.toString(Build.SUPPORTED_ABIS)
+                    + " error=" + nativeLoadError);
         }
     }
 
@@ -47,6 +69,14 @@ public final class NativeApp {
 
     private static String selectNativeLibraryName() {
         return runtimePageSize() >= 16384L ? "emucore_16k" : "emucore_4k";
+    }
+
+    public static String nativeLoadDiagnostic() {
+        if (!hasNoNativeBinary) {
+            return "loaded " + selectedNativeLibrary + " (pageSize=" + selectedPageSize + ")";
+        }
+        return "failed " + selectedNativeLibrary + " (pageSize=" + selectedPageSize + "): "
+                + (nativeLoadError.isEmpty() ? "unknown linker error" : nativeLoadError);
     }
 
     public static void bindContext(Context context) {
