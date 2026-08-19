@@ -4,13 +4,17 @@ import android.content.Context
 import android.os.PowerManager
 import com.omnicore.emulator.core.ps2.PS2Backend
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Conservative per-game tuning driven only by measurements produced by Play!.
+ * Measurement-only per-game PS2 tuning.
  *
- * It never changes resolution, skips cycles or mutates a running GS backend.
- * When AUTO renderer performs severely below real-time for a sustained sample,
- * the alternate renderer is queued for the next launch of that same game.
+ * Alpha 5 used to persist an alternate GS renderer after sustained slow samples.
+ * On real devices that can turn a bootable game into a black screen on the next
+ * launch. Runtime renderer changes are therefore advisory only until a renderer
+ * can be validated safely before becoming persistent.
+ *
+ * Resolution and cycle skipping are never changed here.
  */
 object PS2GameTuning {
     data class State(
@@ -27,10 +31,14 @@ object PS2GameTuning {
         val queuedRendererChange: Boolean
     )
 
-    private const val PREFS = "ps2_game_tuning_v1"
+    private const val LEGACY_PREFS = "ps2_game_tuning_v1"
     private const val MIN_SAMPLE_FRAMES = 180
     private const val SLOW_FPS = 24f
-    private const val REQUIRED_SLOW_SAMPLES = 5
+
+    // Telemetry history is intentionally process-local. This keeps the gameplay
+    // path free of SharedPreferences writes and prevents an unsafe renderer from
+    // being carried into the next boot.
+    private val liveStates = ConcurrentHashMap<String, State>()
 
     fun apply(
         context: Context,
@@ -39,17 +47,10 @@ object PS2GameTuning {
         autoRendererRequested: Boolean,
         caps: PS2Backend.Capabilities
     ): PS2SmartPerf.Plan {
-        if (!autoRendererRequested) return plan
-        val state = read(context, gameIdentity)
-        val forced = state.forcedRenderer ?: return plan
-        val usable = when (forced) {
-            PS2Backend.Renderer.VULKAN -> caps.vulkan
-            PS2Backend.Renderer.GLES3 -> caps.gles3
-            PS2Backend.Renderer.AUTO -> false
-        }
-        return if (usable) {
-            plan.copy(renderer = forced, reason = "ajuste medido por jogo: ${forced.name}")
-        } else plan
+        // Retire the Alpha 5 persisted renderer once. The selected launch plan is
+        // always the plan resolved from current user settings/device capability.
+        clearLegacyRenderer(context, gameIdentity)
+        return plan
     }
 
     fun observe(
@@ -60,92 +61,80 @@ object PS2GameTuning {
         autoRendererRequested: Boolean,
         caps: PS2Backend.Capabilities
     ): Observation {
-        val previous = read(context, gameIdentity)
+        val stateKey = key(gameIdentity)
+        val previous = liveStates[stateKey] ?: emptyState()
+
         if (!autoRendererRequested || telemetry.sampleFrames < MIN_SAMPLE_FRAMES || telemetry.measuredFps <= 0f) {
             return Observation(previous, false)
         }
+
         if (telemetry.thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE || telemetry.memoryPressure >= 0.90f) {
-            val state = previous.copy(
+            val next = previous.copy(
+                forcedRenderer = null,
                 lastFps = telemetry.measuredFps,
                 lastDrawCallsPerFrame = telemetry.drawCallsPerFrame,
-                note = "amostra ignorada por pressão térmica/memória"
+                note = "amostra ignorada por pressão térmica/memória; renderer mantido"
             )
-            write(context, gameIdentity, state)
-            return Observation(state, false)
+            liveStates[stateKey] = next
+            return Observation(next, false)
         }
 
         val slow = telemetry.measuredFps < SLOW_FPS
-        var state = previous.copy(
+        val next = previous.copy(
+            forcedRenderer = null,
             samples = previous.samples + 1,
             slowSamples = if (slow) previous.slowSamples + 1 else 0,
             lastFps = telemetry.measuredFps,
             lastDrawCallsPerFrame = telemetry.drawCallsPerFrame,
-            note = if (slow) "slow-motion sustentado em observação" else "renderer atual estável"
+            note = if (slow) {
+                "slow-motion medido; renderer ${activeRenderer.name} mantido por segurança"
+            } else {
+                "renderer ${activeRenderer.name} estável"
+            }
         )
+        liveStates[stateKey] = next
 
-        var queued = false
-        if (state.slowSamples >= REQUIRED_SLOW_SAMPLES) {
-            val alternate = when (activeRenderer) {
-                PS2Backend.Renderer.VULKAN -> if (caps.gles3) PS2Backend.Renderer.GLES3 else null
-                PS2Backend.Renderer.GLES3 -> if (caps.vulkan) PS2Backend.Renderer.VULKAN else null
-                PS2Backend.Renderer.AUTO -> null
-            }
-            if (alternate != null && alternate != state.forcedRenderer) {
-                state = state.copy(
-                    forcedRenderer = alternate,
-                    slowSamples = 0,
-                    note = "${alternate.name} agendado para o próximo boot após slow-motion medido"
-                )
-                queued = true
-            }
-        }
-        write(context, gameIdentity, state)
-        return Observation(state, queued)
+        // Never queue a renderer switch from telemetry alone. A future tuning
+        // revision may benchmark an alternate renderer in a disposable probe,
+        // but the normal next boot must stay known-good.
+        return Observation(next, false)
     }
 
     fun read(context: Context, gameIdentity: String): State {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val key = key(gameIdentity)
-        val renderer = prefs.getString("${key}_renderer", null)?.let { raw ->
-            PS2Backend.Renderer.entries.firstOrNull { it.name == raw }
-        }
-        return State(
-            forcedRenderer = renderer,
-            samples = prefs.getInt("${key}_samples", 0),
-            slowSamples = prefs.getInt("${key}_slow", 0),
-            lastFps = prefs.getFloat("${key}_fps", -1f),
-            lastDrawCallsPerFrame = prefs.getFloat("${key}_draw", -1f),
-            note = prefs.getString("${key}_note", "sem histórico medido") ?: "sem histórico medido"
-        )
+        clearLegacyRenderer(context, gameIdentity)
+        return liveStates[key(gameIdentity)] ?: emptyState()
     }
 
     fun clear(context: Context, gameIdentity: String) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val key = key(gameIdentity)
-        prefs.edit()
-            .remove("${key}_renderer")
-            .remove("${key}_samples")
-            .remove("${key}_slow")
-            .remove("${key}_fps")
-            .remove("${key}_draw")
-            .remove("${key}_note")
+        val stateKey = key(gameIdentity)
+        liveStates.remove(stateKey)
+        context.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE).edit()
+            .remove("${stateKey}_renderer")
+            .remove("${stateKey}_samples")
+            .remove("${stateKey}_slow")
+            .remove("${stateKey}_fps")
+            .remove("${stateKey}_draw")
+            .remove("${stateKey}_note")
             .apply()
     }
 
-    private fun write(context: Context, gameIdentity: String, state: State) {
-        val key = key(gameIdentity)
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .apply {
-                if (state.forcedRenderer == null) remove("${key}_renderer")
-                else putString("${key}_renderer", state.forcedRenderer.name)
-            }
-            .putInt("${key}_samples", state.samples)
-            .putInt("${key}_slow", state.slowSamples)
-            .putFloat("${key}_fps", state.lastFps)
-            .putFloat("${key}_draw", state.lastDrawCallsPerFrame)
-            .putString("${key}_note", state.note)
-            .apply()
+    private fun clearLegacyRenderer(context: Context, gameIdentity: String) {
+        val stateKey = key(gameIdentity)
+        val prefs = context.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
+        val rendererKey = "${stateKey}_renderer"
+        if (prefs.contains(rendererKey)) {
+            prefs.edit().remove(rendererKey).apply()
+        }
     }
+
+    private fun emptyState() = State(
+        forcedRenderer = null,
+        samples = 0,
+        slowSamples = 0,
+        lastFps = -1f,
+        lastDrawCallsPerFrame = -1f,
+        note = "sem histórico medido"
+    )
 
     private fun key(identity: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(identity.toByteArray())
