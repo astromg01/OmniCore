@@ -34,6 +34,9 @@ object PS2GameTuning {
     private const val LEGACY_PREFS = "ps2_game_tuning_v1"
     private const val MIN_SAMPLE_FRAMES = 180
     private const val SLOW_FPS = 24f
+    // Kept as the Alpha 5 sustained-slow diagnostic threshold. Reaching it no
+    // longer changes or persists the renderer; it only enriches the note.
+    private const val REQUIRED_SLOW_SAMPLES = 5
 
     // Telemetry history is intentionally process-local. This keeps the gameplay
     // path free of SharedPreferences writes and prevents an unsafe renderer from
@@ -80,16 +83,18 @@ object PS2GameTuning {
         }
 
         val slow = telemetry.measuredFps < SLOW_FPS
+        val slowSamples = if (slow) previous.slowSamples + 1 else 0
+        val sustained = slowSamples >= REQUIRED_SLOW_SAMPLES
         val next = previous.copy(
             forcedRenderer = null,
             samples = previous.samples + 1,
-            slowSamples = if (slow) previous.slowSamples + 1 else 0,
+            slowSamples = slowSamples,
             lastFps = telemetry.measuredFps,
             lastDrawCallsPerFrame = telemetry.drawCallsPerFrame,
-            note = if (slow) {
-                "slow-motion medido; renderer ${activeRenderer.name} mantido por segurança"
-            } else {
-                "renderer ${activeRenderer.name} estável"
+            note = when {
+                sustained -> "slow-motion sustentado; renderer ${activeRenderer.name} mantido por segurança"
+                slow -> "slow-motion medido; renderer ${activeRenderer.name} mantido por segurança"
+                else -> "renderer ${activeRenderer.name} estável"
             }
         )
         liveStates[stateKey] = next
