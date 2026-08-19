@@ -65,6 +65,7 @@ import com.omnicore.emulator.storage.GameLibraryStore
 import com.omnicore.emulator.storage.Ps1Files
 import com.omnicore.emulator.ui.achievements.AchievementsScreen
 import com.omnicore.emulator.ui.n64.N64SettingsDialog
+import com.omnicore.emulator.ui.ps2.PS2SettingsDialog
 import com.omnicore.emulator.ui.theme.OmniStarfieldBackground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -81,10 +82,7 @@ private val OmniTextSoft = Color(0xFFB2B7CE)
 private val OmniAccent = Color(0xFFA58BFF)
 private val OmniAccent2 = Color(0xFF74DFFF)
 
-/**
- * System-neutral OmniCore shell. No single console owns the home screen.
- * Console-specific controls live under Systems/Settings and keep separate state.
- */
+/** System-neutral OmniCore shell. Console-specific state remains isolated. */
 @Composable
 fun OmniCoreV4App() {
     val context = LocalContext.current
@@ -99,6 +97,7 @@ fun OmniCoreV4App() {
     var message by remember { mutableStateOf<String?>(null) }
     var biosCount by remember { mutableIntStateOf(0) }
     var showN64Settings by remember { mutableStateOf(false) }
+    var showPS2Settings by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         val startup = withContext(Dispatchers.IO) {
@@ -262,13 +261,15 @@ fun OmniCoreV4App() {
                     )
                     OmniHubScreen.SYSTEMS -> OmniSystems(
                         games = games,
-                        onN64Settings = { showN64Settings = true }
+                        onN64Settings = { showN64Settings = true },
+                        onPS2Settings = { showPS2Settings = true }
                     )
                     OmniHubScreen.ACHIEVEMENTS -> AchievementsScreen()
                     OmniHubScreen.SETTINGS -> OmniSettings(
                         biosCount = biosCount,
                         onImportBios = { biosPicker.launch(arrayOf("application/octet-stream", "*/*")) },
-                        onN64Settings = { showN64Settings = true }
+                        onN64Settings = { showN64Settings = true },
+                        onPS2Settings = { showPS2Settings = true }
                     )
                 }
             }
@@ -283,7 +284,7 @@ fun OmniCoreV4App() {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        "O scanner identifica os sistemas automaticamente. Uma mesma pasta pode conter PS1 e Nintendo 64.",
+                        "O scanner identifica os sistemas automaticamente. Uma mesma pasta pode conter PS1, N64 e PS2.",
                         color = OmniTextSoft
                     )
                     Button(
@@ -302,7 +303,7 @@ fun OmniCoreV4App() {
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF30364B))
                     ) { Text("Selecionar arquivos") }
                     Text(
-                        "N64: .z64, .n64, .v64, .rom/.bin por assinatura, ZIP e GZIP. PS1: CUE/BIN e imagens compatíveis do core.",
+                        "N64: Z64/N64/V64/ZIP/GZIP • PS1: CUE/BIN e imagens compatíveis • PS2: ISO identificada por SYSTEM.CNF/BOOT2.",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF7F879D)
                     )
@@ -313,9 +314,8 @@ fun OmniCoreV4App() {
         )
     }
 
-    if (showN64Settings) {
-        N64SettingsDialog(onDismiss = { showN64Settings = false })
-    }
+    if (showN64Settings) N64SettingsDialog(onDismiss = { showN64Settings = false })
+    if (showPS2Settings) PS2SettingsDialog(onDismiss = { showPS2Settings = false })
 
     message?.let { text ->
         AlertDialog(
@@ -391,9 +391,7 @@ private fun OmniLibrary(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item {
-            OmniHero(games)
-        }
+        item { OmniHero(games) }
         item {
             OutlinedTextField(
                 value = query,
@@ -485,7 +483,7 @@ private fun OmniHero(games: List<GameEntry>) {
             Text("OMNICORE HUB", color = OmniAccent2, fontWeight = FontWeight.Black, style = MaterialTheme.typography.labelMedium)
             Text("Uma biblioteca. Vários sistemas.", fontWeight = FontWeight.Black, style = MaterialTheme.typography.headlineSmall)
             Text(
-                "${games.size} jogo(s) • $represented sistema(s) na biblioteca • PS1 funcional • N64 em validação Alpha",
+                "${games.size} jogo(s) • $represented sistema(s) • PS1 estável • N64 manutenção • PS2 Alpha",
                 color = OmniTextSoft,
                 style = MaterialTheme.typography.bodySmall
             )
@@ -532,7 +530,11 @@ private fun OmniGameCard(game: GameEntry, onPlay: (GameEntry) -> Unit, onRemove:
 }
 
 @Composable
-private fun OmniSystems(games: List<GameEntry>, onN64Settings: () -> Unit) {
+private fun OmniSystems(
+    games: List<GameEntry>,
+    onN64Settings: () -> Unit,
+    onPS2Settings: () -> Unit
+) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -560,8 +562,12 @@ private fun OmniSystems(games: List<GameEntry>, onN64Settings: () -> Unit) {
                 }
                 when (info.system) {
                     ConsoleSystem.NINTENDO_64 -> {
-                        Text("Mupen64Plus-Next • GLES3 • AAudio • ROM por assinatura • ZIP/GZIP", color = OmniTextSoft)
+                        Text("Mupen64Plus-Next • runtime :n64 • N64 SmartPerf protegido", color = OmniTextSoft)
                         Button(onClick = onN64Settings) { Text("Configurar Nintendo 64") }
+                    }
+                    ConsoleSystem.PLAYSTATION_2 -> {
+                        Text("Play! pinado • runtime :ps2 • DualShock 2 touch • SmartPerf PS2", color = OmniTextSoft)
+                        Button(onClick = onPS2Settings) { Text("Configurar PlayStation 2") }
                     }
                     ConsoleSystem.PLAYSTATION_1 ->
                         Text("PCSX-ReARMed • CUE/BIN • CHD/PBP • saves/estados • BIOS opcional", color = OmniTextSoft)
@@ -574,7 +580,12 @@ private fun OmniSystems(games: List<GameEntry>, onN64Settings: () -> Unit) {
 }
 
 @Composable
-private fun OmniSettings(biosCount: Int, onImportBios: () -> Unit, onN64Settings: () -> Unit) {
+private fun OmniSettings(
+    biosCount: Int,
+    onImportBios: () -> Unit,
+    onN64Settings: () -> Unit,
+    onPS2Settings: () -> Unit
+) {
     val context = LocalContext.current
     var ps1Preset by remember { mutableStateOf(Ps1Settings.readPreset(context)) }
     var ps1Aspect by remember { mutableStateOf(Ps1Settings.readAspectMode(context)) }
@@ -626,6 +637,13 @@ private fun OmniSettings(biosCount: Int, onImportBios: () -> Unit, onN64Settings
                 Text("Nintendo 64", fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
                 Text("SmartPerf, CPU, RSP, resolução, controles e Controller Pak pertencem somente ao N64.", color = OmniTextSoft)
                 Button(onClick = onN64Settings) { Text("Abrir ajustes N64") }
+            }
+        }
+        item {
+            OmniCard {
+                Text("PlayStation 2", fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
+                Text("Presets, renderer, resolução, boot clássico, áudio e DualShock 2 touch pertencem somente ao PS2.", color = OmniTextSoft)
+                Button(onClick = onPS2Settings) { Text("Abrir ajustes PS2") }
             }
         }
         item {
