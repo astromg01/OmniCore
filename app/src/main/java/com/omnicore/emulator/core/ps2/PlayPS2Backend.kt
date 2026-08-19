@@ -54,7 +54,7 @@ class PlayPS2Backend(context: Context) : PS2Backend {
             backendVersion = nativeProbe?.playRevision?.take(12).orEmpty().ifBlank { "unavailable" },
             notes = when {
                 nativeProbe?.playBackend != true -> "libPlay.so is not packaged or could not be loaded."
-                nativeProbe.playBootApi.not() -> "Required Play! boot symbols are missing."
+                nativeProbe?.playBootApi != true -> "Required Play! boot symbols are missing."
                 !jniLoadable -> "Play! JNI_OnLoad/ABI shim validation failed."
                 !compatibilityDb -> "Play! GameConfig.xml compatibility database is missing from APK assets."
                 else -> "Play! VM/input/settings JNI + GameConfig compatibility database ready."
