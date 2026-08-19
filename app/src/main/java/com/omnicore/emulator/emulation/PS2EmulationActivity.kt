@@ -3,12 +3,12 @@ package com.omnicore.emulator.emulation
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.view.Gravity
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -549,9 +549,9 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun enableSustainedPerformanceIfAvailable() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
-            packageManager.hasSystemFeature(PackageManager.FEATURE_SUSTAINED_PERFORMANCE_MODE)
-        ) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+        val power = getSystemService(PowerManager::class.java) ?: return
+        if (power.isSustainedPerformanceModeSupported) {
             runCatching { window.setSustainedPerformanceMode(true) }
         }
     }
