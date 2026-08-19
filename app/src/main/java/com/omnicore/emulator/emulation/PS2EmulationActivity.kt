@@ -7,8 +7,9 @@ import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
-import android.os.Looper
+import android.os.HandlerThread
 import android.os.PowerManager
+import android.os.Process
 import android.view.Gravity
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -55,9 +56,14 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
     private var controlsVisible = true
     private var manualPaused = false
     private var bootThread: Thread? = null
-    private val perfHandler = Handler(Looper.getMainLooper())
-    private var tuningToastShown = false
+    private lateinit var perfThread: HandlerThread
+    private lateinit var perfHandler: Handler
 
+    /**
+     * Performance sampling deliberately runs off the UI thread. Alpha 5 used the
+     * main looper every 1.8 s, which could add visible hub/gameplay frame-time
+     * spikes on lower-end devices even when the native query itself was short.
+     */
     private val perfSampler = object : Runnable {
         override fun run() {
             if (destroyed || !started) return
@@ -67,18 +73,28 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                 gameIdentity = gameIdentity(),
                 telemetry = telemetry,
                 activeRenderer = launchPlan.renderer,
-                autoRendererRequested = ps2Config.renderer == PS2Settings.RendererMode.AUTO,
+                adaptiveRequested = ps2Config.preset == PS2Settings.Preset.AUTO,
+                frameLimitRequested = ps2Config.frameLimit,
                 caps = capabilities
             )
-            if (observation.queuedRendererChange && !tuningToastShown) {
-                tuningToastShown = true
-                Toast.makeText(
-                    this@PS2EmulationActivity,
-                    "PS2: slow-motion medido. ${observation.state.forcedRenderer} será testado no próximo boot deste jogo.",
-                    Toast.LENGTH_LONG
-                ).show()
+            observation.frameLimitOverride?.let { enabled ->
+                val applied = backend.setFrameLimit(enabled)
+                if (applied && !destroyed) {
+                    runOnUiThread {
+                        if (destroyed) return@runOnUiThread
+                        Toast.makeText(
+                            this@PS2EmulationActivity,
+                            if (enabled) {
+                                "SmartPerf V2: limiter restaurado; o teste não trouxe ganho real."
+                            } else {
+                                "SmartPerf V2: testando limiter OFF só nesta sessão."
+                            },
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
             }
-            perfHandler.postDelayed(this, PERF_SAMPLE_MS)
+            if (!destroyed && started) perfHandler.postDelayed(this, PERF_SAMPLE_MS)
         }
     }
 
@@ -87,6 +103,9 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         enableSustainedPerformanceIfAvailable()
         enterImmersiveMode()
+
+        perfThread = HandlerThread("OmniCore-PS2-Perf", Process.THREAD_PRIORITY_BACKGROUND).apply { start() }
+        perfHandler = Handler(perfThread.looper)
 
         currentGame = gameFromIntent() ?: run {
             Toast.makeText(this, "Imagem PlayStation 2 inválida.", Toast.LENGTH_LONG).show()
@@ -222,7 +241,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
-        perfHandler.removeCallbacks(perfSampler)
+        if (::perfHandler.isInitialized) perfHandler.removeCallbacks(perfSampler)
         controls.releaseAll()
         backend.releaseAllInput()
         if (started) backend.pause()
@@ -275,7 +294,6 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                 when (result) {
                     is PS2Backend.BootResult.Started -> {
                         started = true
-                        tuningToastShown = false
                         statusView.text = "PS2 BOOT OK • ${result.renderer} • ${launchPlan.internalResolutionFactor}×"
                         perfHandler.removeCallbacks(perfSampler)
                         perfHandler.postDelayed(perfSampler, PERF_SAMPLE_MS)
@@ -322,7 +340,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
             menu.add(0, MENU_CONTROLS, 40, if (controlsVisible) "Ocultar controles" else "Mostrar controles")
             menu.add(0, MENU_PERF, 50, "Desempenho agora")
             menu.add(0, MENU_STATUS, 51, "Mostrar status")
-            menu.add(0, MENU_RESET_TUNING, 52, "Resetar ajuste deste jogo")
+            menu.add(0, MENU_RESET_TUNING, 52, "Resetar SmartPerf desta sessão")
             menu.add(0, MENU_EXIT, 99, "Sair do jogo")
 
             setOnMenuItemClickListener { item ->
@@ -396,8 +414,9 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                         true
                     }
                     item.itemId == MENU_RESET_TUNING -> {
+                        backend.setFrameLimit(ps2Config.frameLimit)
                         PS2GameTuning.clear(this@PS2EmulationActivity, gameIdentity())
-                        Toast.makeText(this@PS2EmulationActivity, "Ajuste medido deste jogo foi resetado.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@PS2EmulationActivity, "SmartPerf desta sessão resetado.", Toast.LENGTH_SHORT).show()
                         true
                     }
                     item.itemId == MENU_EXIT -> {
@@ -418,7 +437,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         val thermal = telemetry.thermalStatus
         val memoryPct = (telemetry.memoryPressure * 100).toInt().coerceIn(0, 100)
         val fps = if (telemetry.measuredFps > 0f) String.format("%.1f", telemetry.measuredFps) else "--"
-        val draws = if (telemetry.drawCallsPerFrame > 0f) String.format("%.0f", telemetry.drawCallsPerFrame) else "--"
+        val draws = if (telemetry.drawCallsPerFrame >= 0f) String.format("%.0f", telemetry.drawCallsPerFrame) else "--"
         Toast.makeText(
             this,
             "PS2 ${launchPlan.renderer} • $fps FPS • $draws draws/frame • térmico $thermal • memória $memoryPct% • ${decision.pressure} • ${tuning.note}",
@@ -500,7 +519,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
             source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
 
     override fun onPause() {
-        perfHandler.removeCallbacks(perfSampler)
+        if (::perfHandler.isInitialized) perfHandler.removeCallbacks(perfSampler)
         if (::controls.isInitialized) controls.releaseAll()
         if (::backend.isInitialized) {
             backend.releaseAllInput()
@@ -515,18 +534,21 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         if (::backend.isInitialized) {
             if (started && !manualPaused && !controls.isEditMode()) {
                 backend.resume()
-                perfHandler.removeCallbacks(perfSampler)
-                perfHandler.postDelayed(perfSampler, PERF_SAMPLE_MS)
+                if (::perfHandler.isInitialized) {
+                    perfHandler.removeCallbacks(perfSampler)
+                    perfHandler.postDelayed(perfSampler, PERF_SAMPLE_MS)
+                }
             } else if (::surfaceView.isInitialized) attemptBoot()
         }
     }
 
     override fun onDestroy() {
         destroyed = true
-        perfHandler.removeCallbacksAndMessages(null)
+        if (::perfHandler.isInitialized) perfHandler.removeCallbacksAndMessages(null)
         if (::classicBoot.isInitialized) classicBoot.cancel()
         if (::controls.isInitialized) controls.releaseAll()
         if (::backend.isInitialized) backend.stop()
+        if (::perfThread.isInitialized) perfThread.quitSafely()
         bootThread = null
         super.onDestroy()
     }
