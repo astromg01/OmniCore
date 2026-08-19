@@ -104,12 +104,17 @@ public final class NativeApp {
     public static native void renderOpenGL();
     public static native void renderVulkan();
     public static native void renderUpscalemultiplier(float value);
+    public static native void renderPreloading(int value);
     public static native void speedhackLimitermode(int value);
+    public static native void speedhackEecyclerate(int value);
+    public static native void speedhackEecycleskip(int value);
+    public static native void setInstantVU1(boolean enabled);
 
     public static native void setPadButton(int index, int range, boolean pressed);
     public static native void resetKeyStatus();
 
     public static native float getFPS();
+    public static native float getNominalFrameRate();
     public static native boolean saveStateToSlot(int slot);
     public static native boolean loadStateFromSlot(int slot);
 
