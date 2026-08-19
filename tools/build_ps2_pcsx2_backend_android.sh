@@ -4,24 +4,23 @@ set -Eeuo pipefail
 SRC="${1:-build/third_party/armsx2}"
 WORK="${2:-build/ps2-pcsx2}"
 PIN="7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3"
-ANDROID_PROJECT="$SRC/platforms/android"
-APP_GRADLE="$ANDROID_PROJECT/app/build.gradle.kts"
-APK_OUT="$ANDROID_PROJECT/app/build/outputs/apk/github/release/app-github-release.apk"
+TAG="nightly-20260819"
+ASSET="ARMSX2-nightly-20260819-7f0ae7a6c6-Android-arm64.apk"
+URL="https://github.com/ARMSX2/ARMSX2/releases/download/${TAG}/${ASSET}"
 DIAG="/tmp/ps2-alpha6-build-diagnostic.txt"
-LOG="${RUNNER_TEMP:-/tmp}/alpha6-pcsx2-native.log"
+LOG="${RUNNER_TEMP:-/tmp}/alpha6-pcsx2-import.log"
 
 on_error() {
   local rc=$?
   {
-    echo 'failure_stage=pcsx2-armsx2-native-build'
+    echo 'failure_stage=pcsx2-armsx2-official-nightly-import'
     echo "exit_code=$rc"
     echo "source_pin=$PIN"
-    echo 'upstream_compile_sdk=37'
-    echo 'compatibility_port_sdk=36'
-    echo 'upstream_cmake=3.31.6'
+    echo "binary_tag=$TAG"
+    echo "binary_asset=$ASSET"
     if [[ -s "$LOG" ]]; then
-      echo '--- last 260 build lines ---'
-      tail -n 260 "$LOG"
+      echo '--- last 180 import lines ---'
+      tail -n 180 "$LOG"
     fi
   } > "$DIAG"
   exit "$rc"
@@ -29,112 +28,69 @@ on_error() {
 trap on_error ERR
 exec > >(tee -a "$LOG") 2>&1
 
-: "${ANDROID_SDK_ROOT:?ANDROID_SDK_ROOT must be set}"
-export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-
 if [[ "$(git -C "$SRC" rev-parse HEAD)" != "$PIN" ]]; then
   echo "Unexpected ARMSX2 source revision" >&2
   exit 1
 fi
-
-test -x "$ANDROID_PROJECT/gradlew"
 test -s "$SRC/COPYING.GPLv3"
-test -s "$APP_GRADLE"
-
-# The pinned ARMSX2 snapshot currently declares API 37, but the ubuntu-24.04
-# Android SDK channel available to this CI does not expose platforms;android-37.
-# Keep the source pin fixed and apply the smallest reproducible frontend port:
-# compile/target SDK 36 only. Native PCSX2 code, NDK ABI and optimization flags
-# remain untouched.
-grep -Fq 'compileSdk = 37' "$APP_GRADLE"
-grep -Fq 'targetSdk = 37' "$APP_GRADLE"
-sed -i 's/compileSdk = 37/compileSdk = 36/' "$APP_GRADLE"
-sed -i 's/targetSdk = 37/targetSdk = 36/' "$APP_GRADLE"
-grep -Fq 'compileSdk = 36' "$APP_GRADLE"
-grep -Fq 'targetSdk = 36' "$APP_GRADLE"
-
-SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-test -x "$SDKMANAGER"
-if [[ ! -d "$ANDROID_SDK_ROOT/platforms/android-36" || ! -d "$ANDROID_SDK_ROOT/cmake/3.31.6" ]]; then
-  yes | "$SDKMANAGER" 'platforms;android-36' 'cmake;3.31.6' || true
-fi
-test -d "$ANDROID_SDK_ROOT/platforms/android-36"
-test -d "$ANDROID_SDK_ROOT/cmake/3.31.6"
-
-# Match the pinned upstream Android build prerequisites. shaderc's SPIR-V stack
-# is fetched on demand and librashader requires the Android Rust std target.
-if command -v rustup >/dev/null 2>&1; then
-  rustup target add aarch64-linux-android
-else
-  echo 'rustup is required for the ARMSX2 Android build' >&2
-  exit 1
-fi
-(
-  cd "$ANDROID_PROJECT"
-  python3 app/src/main/cpp/3rdparty/shaderc/utils/git-sync-deps
-)
 
 rm -rf "$WORK"
 mkdir -p "$WORK"
-
-# ARMSX2 release falls back to Android's debug signing config when no private
-# release keystore is supplied. Ensure the standard local debug key exists so
-# the upstream intermediate APK can be assembled on a fresh CI runner.
-mkdir -p "$HOME/.android"
-if [[ ! -f "$HOME/.android/debug.keystore" ]]; then
-  keytool -genkeypair -v \
-    -keystore "$HOME/.android/debug.keystore" \
-    -storepass android -alias androiddebugkey -keypass android \
-    -dname "CN=Android Debug,O=Android,C=US" \
-    -keyalg RSA -keysize 2048 -validity 10000 >/dev/null 2>&1
-fi
-
-build_variant() {
-  local page_size="$1"
-  local lib_name="$2"
-  local copy_to="$3"
-
-  # Force a clean native configuration between the 4K and 16K variants without
-  # relying on a non-upstream Gradle task such as :app:cleanCxx.
-  rm -rf "$ANDROID_PROJECT/app/.cxx" "$ANDROID_PROJECT/app/build"
-
-  "$ANDROID_PROJECT/gradlew" -p "$ANDROID_PROJECT" :app:assembleGithubRelease \
-    --stacktrace --no-daemon \
-    -Parmsx2.hostPageSize="$page_size" \
-    -Parmsx2.nativeLibName="$lib_name"
-
-  test -s "$APK_OUT"
-  unzip -l "$APK_OUT" | grep -Fq "lib/arm64-v8a/lib${lib_name}.so"
-  cp -f "$APK_OUT" "$copy_to"
-}
-
-echo "=== PCSX2/ARMSX2 4 KB core ==="
-build_variant "0x1000" "emucore_4k" "$WORK/armsx2-4k.apk"
-
-echo "=== PCSX2/ARMSX2 16 KB core ==="
-build_variant "0x4000" "emucore_16k" "$WORK/armsx2-16k.apk"
-
+APK="$WORK/$ASSET"
 STAGE="$WORK/stage"
-rm -rf "$STAGE"
-mkdir -p "$STAGE/base" "$STAGE/lib/arm64-v8a"
-unzip -q "$WORK/armsx2-4k.apk" -d "$STAGE/base"
+LIST="$WORK/upstream-apk-listing.txt"
 
-# Mirror upstream's universal-page layout: keep support libraries from the 4K
-# build, then add the page-size-specific 16K emucore. NativeApp selects at load.
-find "$STAGE/base/lib/arm64-v8a" -maxdepth 1 -type f -name '*.so' -exec cp -f {} "$STAGE/lib/arm64-v8a/" \;
-unzip -p "$WORK/armsx2-16k.apk" "lib/arm64-v8a/libemucore_16k.so" > "$STAGE/lib/arm64-v8a/libemucore_16k.so"
-test -s "$STAGE/lib/arm64-v8a/libemucore_4k.so"
-test -s "$STAGE/lib/arm64-v8a/libemucore_16k.so"
+# The exact pinned revision has an official ARMSX2 nightly Android asset built by
+# upstream's own dual-core (4K + 16K) pipeline. Importing that already-validated
+# native payload avoids depending on the snapshot's non-blocking Android-from-
+# source reconciliation job while keeping source and binary on the same commit.
+echo "Downloading official ARMSX2 nightly: $URL"
+curl --fail --location --retry 4 --retry-all-errors --connect-timeout 30 \
+  --output "$APK" "$URL"
+test -s "$APK"
+unzip -tq "$APK" >/dev/null
+sha256sum "$APK" | tee "$WORK/upstream-apk.sha256"
+unzip -l "$APK" > "$LIST"
+
+grep -Fq 'lib/arm64-v8a/libemucore_4k.so' "$LIST"
+grep -Fq 'lib/arm64-v8a/libemucore_16k.so' "$LIST"
+grep -Fq 'assets/resources/' "$LIST"
+
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+unzip -q "$APK" 'lib/arm64-v8a/*.so' 'assets/resources/*' -d "$STAGE"
+
+for core in libemucore_4k.so libemucore_16k.so; do
+  test -s "$STAGE/lib/arm64-v8a/$core"
+  size="$(stat -c%s "$STAGE/lib/arm64-v8a/$core")"
+  if (( size <= 10000000 )); then
+    echo "$core is unexpectedly small ($size bytes)" >&2
+    exit 1
+  fi
+done
 
 JNI_DIR="app/src/main/jniLibs/arm64-v8a"
 mkdir -p "$JNI_DIR"
 rm -f app/src/main/jniLibs/arm64-v8a/libPlay.so app/src/main/jniLibs/armeabi-v7a/libPlay.so
-find "$STAGE/lib/arm64-v8a" -maxdepth 1 -type f -name '*.so' -exec cp -f {} "$JNI_DIR/" \;
+cp -f "$STAGE/lib/arm64-v8a/libemucore_4k.so" "$JNI_DIR/"
+cp -f "$STAGE/lib/arm64-v8a/libemucore_16k.so" "$JNI_DIR/"
 
-RESOURCE_SRC="$STAGE/base/assets/resources"
+# Copy only non-system DT_NEEDED dependencies that are actually packaged by the
+# official APK. This avoids blindly vendoring unrelated AndroidX native payloads.
+READELF="${ANDROID_NDK_HOME:-${OMNI_NDK_HOME:-}}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+test -x "$READELF"
+for core in "$STAGE/lib/arm64-v8a/libemucore_4k.so" "$STAGE/lib/arm64-v8a/libemucore_16k.so"; do
+  while IFS= read -r dep; do
+    if [[ -s "$STAGE/lib/arm64-v8a/$dep" ]]; then
+      cp -f "$STAGE/lib/arm64-v8a/$dep" "$JNI_DIR/"
+    fi
+  done < <("$READELF" -d "$core" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
+done
+
+RESOURCE_SRC="$STAGE/assets/resources"
 RESOURCE_DST="app/src/main/assets/pcsx2/resources"
 test -d "$RESOURCE_SRC"
-rm -rf "app/src/main/assets/pcsx2"
+rm -rf app/src/main/assets/pcsx2
 mkdir -p "$RESOURCE_DST"
 cp -a "$RESOURCE_SRC/." "$RESOURCE_DST/"
 test -n "$(find "$RESOURCE_DST" -type f -print -quit)"
@@ -145,7 +101,8 @@ install -m 0644 "$SRC/COPYING.GPLv3" "$LICENSE_DIR/GPL-3.0-PCSX2-ARMSX2.txt"
 test -s "$LICENSE_DIR/GPL-3.0-PCSX2-ARMSX2.txt"
 
 rm -f "$DIAG"
-printf 'OMNICORE_PCSX2_BUILD_OK pin=%s sdk=36 cmake=3.31.6 libs=%s resources=%s\n' \
-  "$PIN" \
-  "$(find "$STAGE/lib/arm64-v8a" -maxdepth 1 -type f -name '*.so' | wc -l)" \
-  "$(find "$RESOURCE_DST" -type f | wc -l)"
+printf 'OMNICORE_PCSX2_IMPORT_OK pin=%s tag=%s native_libs=%s resources=%s sha256=%s\n' \
+  "$PIN" "$TAG" \
+  "$(find "$JNI_DIR" -maxdepth 1 -type f -name '*.so' | wc -l)" \
+  "$(find "$RESOURCE_DST" -type f | wc -l)" \
+  "$(cut -d' ' -f1 "$WORK/upstream-apk.sha256")"
