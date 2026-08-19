@@ -14,8 +14,8 @@ import java.util.UUID
  *
  * Import is system-neutral: console filters never blindly force a file to a
  * backend. N64 is signature-detected, PS1 CUE companions are grouped, PS2 ISO
- * media is content-detected through ISO9660 SYSTEM.CNF/BOOT2, and a single
- * selected folder may contain games from more than one system.
+ * media is content-detected through ISO9660 SYSTEM.CNF/BOOT2, and ambiguous
+ * compressed/container extensions remain explicit user choices.
  */
 object LibraryImportEngine {
     data class Report(
@@ -134,11 +134,14 @@ object LibraryImportEngine {
 
             val candidates = RomDetector.candidates(doc.name)
             val activeCandidates = candidates.filter { it in ACTIVE_SYSTEMS }
+            val explicitOnly = doc.extension in EXPLICIT_SYSTEM_EXTENSIONS
             val system = when {
-                // CHD remains intentionally manual for PS2 until its compressed
-                // metadata path is validated. A PS2 filter can still route a
-                // user-selected CHD without pretending auto-detection exists.
+                // BIN/CHD/CSO can belong to more than one console. A PS2 filter
+                // is allowed to route a user-selected file, but the global
+                // scanner must not guess merely because another backend is not
+                // active yet.
                 preferredSystem != null && preferredSystem in candidates -> preferredSystem
+                explicitOnly -> null
                 activeCandidates.size == 1 -> activeCandidates.single()
                 candidates.size == 1 -> candidates.single()
                 else -> null
@@ -187,6 +190,8 @@ object LibraryImportEngine {
 
     private fun cleanTitle(name: String): String =
         name.substringBeforeLast('.', name).replace('_', ' ').trim().ifBlank { name }
+
+    private val EXPLICIT_SYSTEM_EXTENSIONS = setOf("bin", "chd", "cso")
 
     private val ACTIVE_SYSTEMS = setOf(
         ConsoleSystem.PLAYSTATION_1,
