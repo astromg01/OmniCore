@@ -8,6 +8,7 @@
     native <methods>;
 }
 
+-keep class kr.co.iefriends.pcsx2.NativeApp { *; }
 -keep class com.virtualapplications.play.** { *; }
 -keep class com.omnicore.emulator.core.** { *; }
 
