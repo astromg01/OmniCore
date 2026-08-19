@@ -5,6 +5,7 @@ SRC="${1:-build/third_party/armsx2}"
 WORK="${2:-build/ps2-pcsx2}"
 PIN="7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3"
 ANDROID_PROJECT="$SRC/platforms/android"
+APP_GRADLE="$ANDROID_PROJECT/app/build.gradle.kts"
 APK_OUT="$ANDROID_PROJECT/app/build/outputs/apk/github/release/app-github-release.apk"
 
 : "${ANDROID_SDK_ROOT:?ANDROID_SDK_ROOT must be set}"
@@ -17,6 +18,18 @@ fi
 
 test -x "$ANDROID_PROJECT/gradlew"
 test -s "$SRC/COPYING.GPLv3"
+test -s "$APP_GRADLE"
+
+# The pinned upstream snapshot declares compile/target SDK 37, while the stable
+# GitHub Android image currently exposes API 36. The PCSX2 native core does not
+# depend on that compileSdk number, so apply a visible, reproducible Android
+# frontend build-port to the fetched source tree. The modified source is what
+# the release workflow archives as corresponding source.
+sed -i 's/compileSdk = 37/compileSdk = 36/' "$APP_GRADLE"
+sed -i 's/targetSdk = 37/targetSdk = 36/' "$APP_GRADLE"
+grep -Fq 'compileSdk = 36' "$APP_GRADLE"
+grep -Fq 'targetSdk = 36' "$APP_GRADLE"
+
 rm -rf "$WORK"
 mkdir -p "$WORK"
 
@@ -70,9 +83,6 @@ mkdir -p "$JNI_DIR"
 rm -f app/src/main/jniLibs/arm64-v8a/libPlay.so app/src/main/jniLibs/armeabi-v7a/libPlay.so
 find "$STAGE/lib/arm64-v8a" -maxdepth 1 -type f -name '*.so' -exec cp -f {} "$JNI_DIR/" \;
 
-# PCSX2 runtime resources are generated into the upstream APK from its canonical
-# resources tree. Stage the exact built payload under a namespaced asset root;
-# Pcsx2PS2Backend copies it to <DataRoot>/resources on first run.
 RESOURCE_SRC="$STAGE/base/assets/resources"
 RESOURCE_DST="app/src/main/assets/pcsx2/resources"
 test -d "$RESOURCE_SRC"
@@ -81,14 +91,12 @@ mkdir -p "$RESOURCE_DST"
 cp -a "$RESOURCE_SRC/." "$RESOURCE_DST/"
 test -n "$(find "$RESOURCE_DST" -type f -print -quit)"
 
-# Carry the license text from the exact source snapshot that produced emucore.
 LICENSE_DIR="app/src/main/assets/licenses"
 mkdir -p "$LICENSE_DIR"
 install -m 0644 "$SRC/COPYING.GPLv3" "$LICENSE_DIR/GPL-3.0-PCSX2-ARMSX2.txt"
-
 test -s "$LICENSE_DIR/GPL-3.0-PCSX2-ARMSX2.txt"
 
-printf 'OMNICORE_PCSX2_BUILD_OK pin=%s libs=%s resources=%s\n' \
+printf 'OMNICORE_PCSX2_BUILD_OK pin=%s sdk=36 libs=%s resources=%s\n' \
   "$PIN" \
   "$(find "$STAGE/lib/arm64-v8a" -maxdepth 1 -type f -name '*.so' | wc -l)" \
   "$(find "$RESOURCE_DST" -type f | wc -l)"
