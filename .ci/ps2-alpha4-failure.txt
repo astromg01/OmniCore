@@ -1,5 +1,0 @@
-run_id=32236029112
-commit=f7132284426761e00221da8962a30183f60ad8ff
-status=failure
-version=0.11.3
-phase=ps2-alpha4-compatibility
