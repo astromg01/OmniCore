@@ -16,12 +16,13 @@ if [[ "$(git -C "$SRC" rev-parse HEAD)" != "$PIN" ]]; then
 fi
 
 test -x "$ANDROID_PROJECT/gradlew"
+test -s "$SRC/COPYING.GPLv3"
 rm -rf "$WORK"
 mkdir -p "$WORK"
 
 # ARMSX2 release falls back to Android's debug signing config when no private
 # release keystore is supplied. Ensure the standard local debug key exists so
-# the upstream packaging task is deterministic on a fresh CI runner.
+# the upstream intermediate APK can be assembled on a fresh CI runner.
 mkdir -p "$HOME/.android"
 if [[ ! -f "$HOME/.android/debug.keystore" ]]; then
   keytool -genkeypair -v \
@@ -39,8 +40,7 @@ build_variant() {
   "$ANDROID_PROJECT/gradlew" -p "$ANDROID_PROJECT" :app:cleanCxx --no-daemon
   "$ANDROID_PROJECT/gradlew" -p "$ANDROID_PROJECT" :app:assembleGithubRelease --no-daemon \
     -Parmsx2.hostPageSize="$page_size" \
-    -Parmsx2.nativeLibName="$lib_name" \
-    -Parmsx2.applicationId="com.omnicore.pcsx2.buildcore"
+    -Parmsx2.nativeLibName="$lib_name"
 
   test -s "$APK_OUT"
   unzip -l "$APK_OUT" | grep -Fq "lib/arm64-v8a/lib${lib_name}.so"
@@ -58,8 +58,8 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/base" "$STAGE/lib/arm64-v8a"
 unzip -q "$WORK/armsx2-4k.apk" -d "$STAGE/base"
 
-# Keep the support libraries from upstream's universal baseline and package
-# both page-size-specific emucore variants. The shim chooses at runtime.
+# Mirror upstream's universal-page layout: keep support libraries from the 4K
+# build, then add the page-size-specific 16K emucore. NativeApp selects at load.
 find "$STAGE/base/lib/arm64-v8a" -maxdepth 1 -type f -name '*.so' -exec cp -f {} "$STAGE/lib/arm64-v8a/" \;
 unzip -p "$WORK/armsx2-16k.apk" "lib/arm64-v8a/libemucore_16k.so" > "$STAGE/lib/arm64-v8a/libemucore_16k.so"
 test -s "$STAGE/lib/arm64-v8a/libemucore_4k.so"
@@ -67,19 +67,26 @@ test -s "$STAGE/lib/arm64-v8a/libemucore_16k.so"
 
 JNI_DIR="app/src/main/jniLibs/arm64-v8a"
 mkdir -p "$JNI_DIR"
+rm -f app/src/main/jniLibs/arm64-v8a/libPlay.so app/src/main/jniLibs/armeabi-v7a/libPlay.so
 find "$STAGE/lib/arm64-v8a" -maxdepth 1 -type f -name '*.so' -exec cp -f {} "$JNI_DIR/" \;
 
 # PCSX2 runtime resources are generated into the upstream APK from its canonical
-# bin/resources tree. Stage that exact built payload under a namespaced asset
-# root; Pcsx2PS2Backend copies it to <DataRoot>/resources on first run.
+# resources tree. Stage the exact built payload under a namespaced asset root;
+# Pcsx2PS2Backend copies it to <DataRoot>/resources on first run.
 RESOURCE_SRC="$STAGE/base/assets/resources"
 RESOURCE_DST="app/src/main/assets/pcsx2/resources"
 test -d "$RESOURCE_SRC"
 rm -rf "app/src/main/assets/pcsx2"
 mkdir -p "$RESOURCE_DST"
 cp -a "$RESOURCE_SRC/." "$RESOURCE_DST/"
-
 test -n "$(find "$RESOURCE_DST" -type f -print -quit)"
+
+# Carry the license text from the exact source snapshot that produced emucore.
+LICENSE_DIR="app/src/main/assets/licenses"
+mkdir -p "$LICENSE_DIR"
+install -m 0644 "$SRC/COPYING.GPLv3" "$LICENSE_DIR/GPL-3.0-PCSX2-ARMSX2.txt"
+
+test -s "$LICENSE_DIR/GPL-3.0-PCSX2-ARMSX2.txt"
 
 printf 'OMNICORE_PCSX2_BUILD_OK pin=%s libs=%s resources=%s\n' \
   "$PIN" \
