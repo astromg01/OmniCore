@@ -32,7 +32,7 @@ object PS2Settings {
     }
 
     enum class BootStyle(val storage: String, val label: String) {
-        CLASSIC("classic", "Clássica OmniCore"),
+        CLASSIC("classic", "Visual OmniCore"),
         DIRECT("direct", "Direta")
     }
 
@@ -69,8 +69,8 @@ object PS2Settings {
     }
 
     fun readBootStyle(context: Context): BootStyle {
-        val raw = prefs(context).getString(KEY_BOOT_STYLE, BootStyle.CLASSIC.storage)
-        return BootStyle.entries.firstOrNull { it.storage == raw } ?: BootStyle.CLASSIC
+        val raw = prefs(context).getString(KEY_BOOT_STYLE, BootStyle.DIRECT.storage)
+        return BootStyle.entries.firstOrNull { it.storage == raw } ?: BootStyle.DIRECT
     }
 
     fun saveBootStyle(context: Context, style: BootStyle) {
@@ -123,9 +123,8 @@ object PS2Settings {
 
     /**
      * Play!'s Android backend supports both OpenGL ES and Vulkan. For the AUTO
-     * path we prefer Vulkan whenever the device and packaged backend expose it,
-     * matching the backend's Android-oriented fast path. Explicit GLES remains
-     * available as the compatibility fallback.
+     * path we prefer Vulkan whenever the device and packaged backend expose it.
+     * Explicit GLES remains available as the compatibility fallback.
      */
     fun rendererFor(config: Config, caps: PS2Backend.Capabilities): PS2Backend.Renderer = when (config.renderer) {
         RendererMode.VULKAN -> if (caps.vulkan) PS2Backend.Renderer.VULKAN else PS2Backend.Renderer.GLES3
@@ -138,25 +137,25 @@ object PS2Settings {
             preset, RendererMode.AUTO, InternalResolution.NATIVE,
             widescreen = false, presentation = Presentation.FIT,
             forceBilinear = false, frameLimit = true, spuBlockCount = 100,
-            bootStyle = BootStyle.CLASSIC
+            bootStyle = BootStyle.DIRECT
         )
         Preset.BALANCED -> Config(
             preset, RendererMode.AUTO, InternalResolution.NATIVE,
             widescreen = false, presentation = Presentation.FIT,
             forceBilinear = false, frameLimit = true, spuBlockCount = 100,
-            bootStyle = BootStyle.CLASSIC
+            bootStyle = BootStyle.DIRECT
         )
         Preset.QUALITY -> Config(
             preset, RendererMode.AUTO, InternalResolution.X2,
             widescreen = false, presentation = Presentation.FIT,
             forceBilinear = true, frameLimit = true, spuBlockCount = 100,
-            bootStyle = BootStyle.CLASSIC
+            bootStyle = BootStyle.DIRECT
         )
         Preset.AUTO, Preset.CUSTOM -> Config(
             Preset.AUTO, RendererMode.AUTO, InternalResolution.NATIVE,
             widescreen = false, presentation = Presentation.FIT,
             forceBilinear = false, frameLimit = true, spuBlockCount = 100,
-            bootStyle = BootStyle.CLASSIC
+            bootStyle = BootStyle.DIRECT
         )
     }
 
