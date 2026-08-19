@@ -28,6 +28,9 @@ class PlayPS2Backend(context: Context) : PS2Backend {
     @Volatile private var running = false
     @Volatile private var activeRenderer = PS2Backend.Renderer.AUTO
     @Volatile private var statsStartedAtMs = 0L
+    @Volatile private var systemMetricsSampledAtMs = 0L
+    @Volatile private var cachedMemoryPressure = 0f
+    @Volatile private var cachedThermalStatus = PowerManager.THERMAL_STATUS_NONE
 
     override val id: String = "play-pinned-04bde0df"
 
@@ -90,6 +93,7 @@ class PlayPS2Backend(context: Context) : PS2Backend {
             NativeInterop.bootDiskImage(request.imagePath)
             runCatching { StatsManager.clearStats() }
             statsStartedAtMs = SystemClock.elapsedRealtime()
+            systemMetricsSampledAtMs = 0L
             NativeInterop.resumeVirtualMachine()
             running = true
             PS2Backend.BootResult.Started(id, activeRenderer)
@@ -121,29 +125,18 @@ class PlayPS2Backend(context: Context) : PS2Backend {
         if (initialized && running) runCatching { NativeInterop.pauseVirtualMachine() }
         running = false
         statsStartedAtMs = 0L
+        systemMetricsSampledAtMs = 0L
         attachedSurface = null
     }
 
     override fun telemetry(): PS2Backend.Telemetry {
-        val am = appContext.getSystemService(ActivityManager::class.java)
-        val memory = ActivityManager.MemoryInfo()
-        runCatching { am?.getMemoryInfo(memory) }
-        val memoryPressure = when {
-            memory.totalMem <= 0L -> 0f
-            memory.lowMemory -> 1f
-            else -> (1f - memory.availMem.toFloat() / memory.totalMem.toFloat()).coerceIn(0f, 1f)
-        }
-        val thermal = if (Build.VERSION.SDK_INT >= 29) {
-            runCatching {
-                appContext.getSystemService(PowerManager::class.java)?.currentThermalStatus
-                    ?: PowerManager.THERMAL_STATUS_NONE
-            }.getOrDefault(PowerManager.THERMAL_STATUS_NONE)
-        } else PowerManager.THERMAL_STATUS_NONE
+        val now = SystemClock.elapsedRealtime()
+        refreshSystemMetrics(now)
 
         val frames = if (running) runCatching { StatsManager.getFrames() }.getOrDefault(0) else 0
         val drawCalls = if (running) runCatching { StatsManager.getDrawCalls() }.getOrDefault(0) else 0
         val elapsedMs = if (statsStartedAtMs > 0L) {
-            (SystemClock.elapsedRealtime() - statsStartedAtMs).coerceAtLeast(0L)
+            (now - statsStartedAtMs).coerceAtLeast(0L)
         } else 0L
         val fps = if (frames > 0 && elapsedMs >= 250L) {
             frames * 1000f / elapsedMs.toFloat()
@@ -155,11 +148,34 @@ class PlayPS2Backend(context: Context) : PS2Backend {
             hostFrameMs = frameMs,
             measuredFps = fps,
             drawCallsPerFrame = drawCallsPerFrame,
-            thermalStatus = thermal,
-            memoryPressure = memoryPressure,
+            thermalStatus = cachedThermalStatus,
+            memoryPressure = cachedMemoryPressure,
             renderer = if (running) activeRenderer else PS2Backend.Renderer.AUTO,
             sampleFrames = frames
         )
+    }
+
+    private fun refreshSystemMetrics(nowMs: Long) {
+        val previous = systemMetricsSampledAtMs
+        if (previous > 0L && nowMs - previous < SYSTEM_METRICS_SAMPLE_MS) return
+
+        val am = appContext.getSystemService(ActivityManager::class.java)
+        val memory = ActivityManager.MemoryInfo()
+        runCatching { am?.getMemoryInfo(memory) }
+        cachedMemoryPressure = when {
+            memory.totalMem <= 0L -> cachedMemoryPressure
+            memory.lowMemory -> 1f
+            else -> (1f - memory.availMem.toFloat() / memory.totalMem.toFloat()).coerceIn(0f, 1f)
+        }
+
+        cachedThermalStatus = if (Build.VERSION.SDK_INT >= 29) {
+            runCatching {
+                appContext.getSystemService(PowerManager::class.java)?.currentThermalStatus
+                    ?: PowerManager.THERMAL_STATUS_NONE
+            }.getOrDefault(cachedThermalStatus)
+        } else PowerManager.THERMAL_STATUS_NONE
+
+        systemMetricsSampledAtMs = nowMs
     }
 
     @Synchronized
@@ -247,5 +263,6 @@ class PlayPS2Backend(context: Context) : PS2Backend {
         private const val PREF_FORCE_BILINEAR = "renderer.opengl.forcebilineartextures"
         private const val PREF_LIMIT_FRAMERATE = "ps2.limitframerate"
         private const val PREF_SPU_BLOCK_COUNT = "audio.spublockcount"
+        private const val SYSTEM_METRICS_SAMPLE_MS = 7_500L
     }
 }
