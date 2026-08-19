@@ -3,6 +3,7 @@ package com.omnicore.emulator.library
 import android.content.Context
 import android.net.Uri
 import com.omnicore.emulator.core.n64.N64RomValidator
+import com.omnicore.emulator.core.ps2.PS2IsoValidator
 import com.omnicore.emulator.model.ConsoleSystem
 import com.omnicore.emulator.model.GameEntry
 import com.omnicore.emulator.storage.SafGameSource
@@ -12,8 +13,9 @@ import java.util.UUID
  * Shared import pipeline for the OmniCore library.
  *
  * Import is system-neutral: console filters never blindly force a file to a
- * backend. N64 is signature-detected, PS1 CUE companions are grouped, and a
- * single selected folder may contain games from more than one system.
+ * backend. N64 is signature-detected, PS1 CUE companions are grouped, PS2 ISO
+ * media is content-detected through ISO9660 SYSTEM.CNF/BOOT2, and a single
+ * selected folder may contain games from more than one system.
  */
 object LibraryImportEngine {
     data class Report(
@@ -80,8 +82,8 @@ object LibraryImportEngine {
         val warnings = inheritedWarnings.toMutableList()
         val consumed = mutableSetOf<String>()
 
-        // Build PS1 CUE entries without returning early. N64 or other systems in
-        // the exact same folder continue through the scanner afterwards.
+        // Build PS1 CUE entries without returning early. N64/PS2 or other
+        // systems in the exact same folder continue through the scanner.
         val cues = docs.filter { it.extension == "cue" }
         val referencedPs1Tracks = mutableSetOf<String>()
         cues.forEach { cue ->
@@ -121,9 +123,21 @@ object LibraryImportEngine {
                 return@forEach
             }
 
+            // .iso is shared by several consoles. Only classify it as PS2 when
+            // ISO9660 SYSTEM.CNF explicitly contains BOOT2. This keeps PS1/PSP/
+            // Wii images from being routed to Play! by extension alone.
+            if (doc.extension == "iso" && PS2IsoValidator.isPlayStation2Iso(context, doc.uri, doc.name)) {
+                games += entry(doc, ConsoleSystem.PLAYSTATION_2, folderUri = null)
+                consumed += doc.uri.toString()
+                return@forEach
+            }
+
             val candidates = RomDetector.candidates(doc.name)
             val activeCandidates = candidates.filter { it in ACTIVE_SYSTEMS }
             val system = when {
+                // CHD remains intentionally manual for PS2 until its compressed
+                // metadata path is validated. A PS2 filter can still route a
+                // user-selected CHD without pretending auto-detection exists.
                 preferredSystem != null && preferredSystem in candidates -> preferredSystem
                 activeCandidates.size == 1 -> activeCandidates.single()
                 candidates.size == 1 -> candidates.single()
@@ -176,6 +190,7 @@ object LibraryImportEngine {
 
     private val ACTIVE_SYSTEMS = setOf(
         ConsoleSystem.PLAYSTATION_1,
-        ConsoleSystem.NINTENDO_64
+        ConsoleSystem.NINTENDO_64,
+        ConsoleSystem.PLAYSTATION_2
     )
 }
