@@ -1,10 +1,11 @@
-OmniCore PS2 Alpha 1 release trigger
-phase=ps2-alpha1-release
-version=0.11.0
-version_code=40
+OmniCore PS2 Alpha 2 release trigger
+phase=ps2-alpha2-release
+version=0.11.1
+version_code=41
 play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da
-media_detection=iso9660-system-cnf-boot2
-bridge=vm+surface+content-uri+pause-resume
-release_tag=v0.11.0-ps2-alpha1
+features=dualshock2-touch,physical-pad,settings,smartperf,save-state,classic-boot
+quality_floor=native-1x-no-auto-downscale
+cycle_skip=never-auto
+release_tag=v0.11.1-ps2-alpha2
 ci_status_protocol=commit-status-v1
-revision=5
+revision=1
