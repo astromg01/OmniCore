@@ -4,7 +4,6 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,7 +46,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -66,7 +64,6 @@ import com.omnicore.emulator.storage.Ps1Files
 import com.omnicore.emulator.ui.achievements.AchievementsScreen
 import com.omnicore.emulator.ui.n64.N64SettingsDialog
 import com.omnicore.emulator.ui.ps2.PS2SettingsDialog
-import com.omnicore.emulator.ui.theme.OmniStarfieldBackground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -74,13 +71,17 @@ import kotlinx.coroutines.withContext
 private enum class OmniHubScreen { LIBRARY, SYSTEMS, ACHIEVEMENTS, SETTINGS }
 private enum class OmniSort { RECENT, TITLE, SIZE }
 
-private val OmniBgTop = Color(0xFF0B0A1D)
-private val OmniBgBottom = Color(0xFF050711)
-private val OmniPanel = Color(0xE8171930)
+// Lean Hub uses opaque, single-pass surfaces. Alpha 5 feedback showed that
+// stacked gradients/translucent cards were too expensive during scroll on
+// lower-end Android GPUs even after the animated starfield was removed.
+private val OmniBg = Color(0xFF070914)
+private val OmniPanel = Color(0xFF171A2E)
 private val OmniPanelStrong = Color(0xFF1C1C35)
 private val OmniTextSoft = Color(0xFFB2B7CE)
 private val OmniAccent = Color(0xFFA58BFF)
 private val OmniAccent2 = Color(0xFF74DFFF)
+private val OmniBadge = Color(0xFF293253)
+private val OmniHeroPanel = Color(0xFF15253A)
 
 /** System-neutral OmniCore shell. Console-specific state remains isolated. */
 @Composable
@@ -193,14 +194,9 @@ fun OmniCoreV4App() {
         }
     }
 
-    Box(
-        Modifier.fillMaxSize().background(
-            Brush.verticalGradient(listOf(OmniBgTop, OmniBgBottom))
-        )
-    ) {
-        OmniStarfieldBackground()
+    Box(Modifier.fillMaxSize().background(OmniBg)) {
         Scaffold(
-            containerColor = Color.Transparent,
+            containerColor = OmniBg,
             topBar = {
                 OmniTopBar(
                     gameCount = games.size,
@@ -209,7 +205,7 @@ fun OmniCoreV4App() {
                 )
             },
             bottomBar = {
-                NavigationBar(containerColor = Color(0xF20C0E15), tonalElevation = 10.dp) {
+                NavigationBar(containerColor = Color(0xFF0C0E15), tonalElevation = 0.dp) {
                     NavigationBarItem(
                         selected = screen == OmniHubScreen.LIBRARY,
                         onClick = { screen = OmniHubScreen.LIBRARY },
@@ -330,15 +326,14 @@ fun OmniCoreV4App() {
 
 @Composable
 private fun OmniTopBar(gameCount: Int, importing: Boolean, onImport: () -> Unit) {
-    Surface(color = Color(0xF20B0D14), tonalElevation = 8.dp) {
+    Surface(color = Color(0xFF0B0D14), tonalElevation = 0.dp) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Box(
-                Modifier.size(42.dp).clip(RoundedCornerShape(14.dp))
-                    .background(Brush.linearGradient(listOf(OmniAccent, OmniAccent2))),
+                Modifier.size(42.dp).clip(RoundedCornerShape(14.dp)).background(OmniAccent),
                 contentAlignment = Alignment.Center
             ) {
                 Text("★", color = Color(0xFFFFD85A), fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleLarge)
@@ -472,12 +467,12 @@ private fun OmniLibrary(
 @Composable
 private fun OmniHero(games: List<GameEntry>) {
     val represented = games.map { it.system }.distinct().size
-    Card(colors = CardDefaults.cardColors(containerColor = Color.Transparent), shape = RoundedCornerShape(22.dp)) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = OmniHeroPanel),
+        shape = RoundedCornerShape(20.dp)
+    ) {
         Column(
-            Modifier.fillMaxWidth().background(
-                Brush.linearGradient(listOf(Color(0xFF202843), Color(0xFF12332F))),
-                RoundedCornerShape(22.dp)
-            ).padding(20.dp),
+            Modifier.fillMaxWidth().padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text("OMNICORE HUB", color = OmniAccent2, fontWeight = FontWeight.Black, style = MaterialTheme.typography.labelMedium)
@@ -494,9 +489,9 @@ private fun OmniHero(games: List<GameEntry>) {
 @Composable
 private fun OmniGameCard(game: GameEntry, onPlay: (GameEntry) -> Unit, onRemove: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth().border(1.dp, Color(0x223C4358), RoundedCornerShape(19.dp)),
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = OmniPanel),
-        shape = RoundedCornerShape(19.dp)
+        shape = RoundedCornerShape(18.dp)
     ) {
         Row(
             Modifier.fillMaxWidth().padding(14.dp),
@@ -504,8 +499,7 @@ private fun OmniGameCard(game: GameEntry, onPlay: (GameEntry) -> Unit, onRemove:
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Box(
-                Modifier.size(58.dp).clip(RoundedCornerShape(17.dp))
-                    .background(Brush.linearGradient(listOf(Color(0xFF303A60), Color(0xFF1B4742)))),
+                Modifier.size(58.dp).clip(RoundedCornerShape(16.dp)).background(OmniBadge),
                 contentAlignment = Alignment.Center
             ) {
                 Text(game.system.shortName, color = Color.White, fontWeight = FontWeight.Black)
@@ -642,7 +636,7 @@ private fun OmniSettings(
         item {
             OmniCard {
                 Text("PlayStation 2", fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
-                Text("Presets, renderer, resolução, boot clássico, áudio e DualShock 2 touch pertencem somente ao PS2.", color = OmniTextSoft)
+                Text("Presets, renderer, resolução, Intro OmniCore, áudio e DualShock 2 touch pertencem somente ao PS2.", color = OmniTextSoft)
                 Button(onClick = onPS2Settings) { Text("Abrir ajustes PS2") }
             }
         }
@@ -659,9 +653,9 @@ private fun OmniSettings(
 @Composable
 private fun OmniCard(content: @Composable ColumnScope.() -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth().border(1.dp, Color(0x223C4358), RoundedCornerShape(19.dp)),
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = OmniPanel),
-        shape = RoundedCornerShape(19.dp)
+        shape = RoundedCornerShape(18.dp)
     ) {
         Column(
             Modifier.fillMaxWidth().padding(16.dp),
