@@ -24,7 +24,7 @@ android {
 
     signingConfigs {
         // DEV-ONLY signing. CI injects the public development keystore so
-        // sideloaded development builds can update in-place across runners.
+        // sideloaded device-test builds can update in-place across runners.
         // Production / Play builds must use a private production key instead.
         if (!devKeystorePath.isNullOrBlank()) {
             create("development") {
@@ -38,6 +38,21 @@ android {
 
     buildTypes {
         getByName("debug") {
+            if (!devKeystorePath.isNullOrBlank()) {
+                signingConfig = signingConfigs.getByName("development")
+            }
+        }
+        getByName("release") {
+            // Alpha device-test builds use release runtime characteristics so UI
+            // performance measurements are not distorted by a debuggable APK.
+            isDebuggable = false
+            isJniDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             if (!devKeystorePath.isNullOrBlank()) {
                 signingConfig = signingConfigs.getByName("development")
             }
