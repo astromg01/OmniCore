@@ -19,6 +19,12 @@ interface PS2Backend {
     fun stop()
     fun telemetry(): Telemetry
 
+    /**
+     * Session-only frame limiter control used by SmartPerf probes.
+     * Implementations must not persist this outside the active PS2 session.
+     */
+    fun setFrameLimit(enabled: Boolean): Boolean
+
     /** DualShock 2 input sink used by touch and physical Android controllers. */
     fun setButton(controlId: Int, pressed: Boolean)
     fun setAxis(controlId: Int, value: Float)
