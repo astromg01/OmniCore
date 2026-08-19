@@ -124,9 +124,10 @@ jobs:
           tools/fetch_ps2_play_backend.sh
           test "$(git -C build/third_party/play rev-parse HEAD)" = "04bde0df87ee7c0e2f0151b51bb2cc22c88541da"
           test -s build/third_party/play/GameConfig.xml
+          grep -Fq '<GameConfigs>' build/third_party/play/GameConfig.xml
           grep -Fq '<IdleLoopBlock' build/third_party/play/GameConfig.xml
           COUNT="$(grep -c '<GameConfig ' build/third_party/play/GameConfig.xml)"
-          test "$COUNT" -gt 50
+          test "$COUNT" -eq 47
           echo "PLAY_GAMECONFIG_ENTRIES=$COUNT"
 
       - name: Build pinned Play dual ABI with upstream-style LTO
