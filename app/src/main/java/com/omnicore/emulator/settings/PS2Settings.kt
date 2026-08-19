@@ -80,15 +80,12 @@ object PS2Settings {
     fun resolve(context: Context): Config {
         val preset = readPreset(context)
         if (preset != Preset.CUSTOM) {
-            val storage = prefs(context)
-            val base = presetConfig(preset)
-            return base.copy(
-                // Alpha 6 device testing exposed that the old presets hard-coded
-                // this to false, so the PCSX2 widescreen wiring never ran even
-                // though the backend itself was correct. Keep widescreen on by
-                // default for normal presets, while respecting an explicit saved
-                // preference if the user has one.
-                widescreen = storage.getBoolean(KEY_WIDESCREEN, true),
+            return presetConfig(preset).copy(
+                // Alpha 6 device test proved normal presets never reached the
+                // PCSX2 widescreen path because legacy state could keep this off.
+                // Normal presets now guarantee widescreen; CUSTOM remains the
+                // explicit opt-out path.
+                widescreen = true,
                 bootStyle = readBootStyle(context)
             )
         }
@@ -131,11 +128,6 @@ object PS2Settings {
             .apply()
     }
 
-    /**
-     * Alpha 6 leaves AUTO unresolved so PCSX2's own Android renderer selection
-     * can decide from its device/driver knowledge. OmniCore no longer turns AUTO
-     * into Vulkan before the core has a chance to choose.
-     */
     fun rendererFor(config: Config, caps: PS2Backend.Capabilities): PS2Backend.Renderer = when (config.renderer) {
         RendererMode.VULKAN -> if (caps.vulkan) PS2Backend.Renderer.VULKAN else PS2Backend.Renderer.GLES3
         RendererMode.GLES3 -> PS2Backend.Renderer.GLES3
