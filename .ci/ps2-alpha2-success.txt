@@ -1,0 +1,9 @@
+run_id=32213950038
+commit=96cf307b35c8674ad764e3a46d60436f6dbe9b06
+status=success
+version=0.11.1
+tag=v0.11.1-ps2-alpha2
+play_revision=04bde0df87ee7c0e2f0151b51bb2cc22c88541da
+abis=arm64-v8a,armeabi-v7a
+features=dualshock2-touch,physical-pad,settings,smartperf,save-state,classic-boot
+signer_sha256=9490d1ad4666312d6dd9e5b2a20699583919ae80a5536882bcd3f9accc793547
