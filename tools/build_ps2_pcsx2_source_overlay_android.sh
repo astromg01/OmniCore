@@ -7,6 +7,7 @@ PIN="7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3"
 ROOT="$SRC/platforms/android"
 GRADLE="$ROOT/gradlew"
 APK="$ROOT/app/build/outputs/apk/play/release/app-play-release.apk"
+GRADLE_APP="$ROOT/app/build.gradle.kts"
 
 [[ -d "$SRC/.git" ]] || { echo "Missing ARMSX2 clone: $SRC" >&2; exit 1; }
 [[ "$(git -C "$SRC" rev-parse HEAD)" == "$PIN" ]] || { echo "Unexpected ARMSX2 source revision" >&2; exit 1; }
@@ -23,8 +24,28 @@ chmod +x "$GRADLE"
 
 SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 if [[ -n "$SDK" && -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]]; then
-  yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" \
-    'platforms;android-37' 'ndk;28.2.13676358' 'cmake;3.31.6' >/dev/null || true
+  # GitHub's current Android image carries API 36 but does not yet expose
+  # platforms;android-37 through sdkmanager. The wrapper application's target
+  # level is irrelevant to the native emucore ABI, so build the pinned source
+  # against API 36 when 37 is unavailable instead of blocking Visibility v1.
+  if ! yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" \
+      'platforms;android-37' 'ndk;28.2.13676358' 'cmake;3.31.6' >/dev/null 2>&1; then
+    yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" \
+      'platforms;android-36' 'ndk;28.2.13676358' 'cmake;3.31.6' >/dev/null
+  fi
+fi
+
+if [[ ! -d "$SDK/platforms/android-37" ]]; then
+  python3 - "$GRADLE_APP" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+s = s.replace("compileSdk = 37", "compileSdk = 36")
+s = s.replace("targetSdk = 37", "targetSdk = 36")
+p.write_text(s)
+print("PCSX2 source overlay: API 36 wrapper fallback enabled; native ABI unchanged")
+PY
 fi
 
 if command -v rustup >/dev/null 2>&1; then
@@ -68,7 +89,7 @@ build_core() {
   local size
   size="$(stat -c%s "$out")"
   (( size > 10000000 )) || { echo "Patched $name unexpectedly small: $size" >&2; exit 1; }
-done
+}
 
 build_core 0x1000 emucore_4k
 build_core 0x4000 emucore_16k
