@@ -2,5 +2,5 @@ phase=ps2-alpha6-pcsx2-foundation
 version=0.11.5
 backend=pcsx2-armsx2
 armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
-focus=consolidated-native-throughput-fog-safe
-attempt=30-ndk29-outline-atomics-async-readback-hotpath-cleanup
+focus=rollback-to-stable-alpha6-baseline
+attempt=30b-rollback-to-29b
