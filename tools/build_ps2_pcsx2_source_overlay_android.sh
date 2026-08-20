@@ -23,15 +23,30 @@ git -C "$SRC" submodule update --init --recursive --depth=1
 chmod +x "$GRADLE"
 
 SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-if [[ -n "$SDK" && -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]]; then
+SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+
+# sdkmanager may close stdin early after consuming its answer. With global
+# pipefail enabled that makes `yes | sdkmanager` look like a failure because
+# `yes` exits on SIGPIPE even when sdkmanager itself succeeded. Always inspect
+# sdkmanager's own PIPESTATUS entry instead.
+install_sdk_packages() {
+  local rc
+  set +o pipefail
+  yes | "$SDKMANAGER" "$@" >/dev/null 2>&1
+  rc=${PIPESTATUS[1]}
+  set -o pipefail
+  return "$rc"
+}
+
+if [[ -n "$SDK" && -x "$SDKMANAGER" ]]; then
   # GitHub's current Android image carries API 36 but does not yet expose
   # platforms;android-37 through sdkmanager. The wrapper application's target
   # level is irrelevant to the native emucore ABI, so build the pinned source
   # against API 36 when 37 is unavailable instead of blocking Visibility v1.
-  if ! yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" \
-      'platforms;android-37' 'ndk;28.2.13676358' 'cmake;3.31.6' >/dev/null 2>&1; then
-    yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" \
-      'platforms;android-36' 'ndk;28.2.13676358' 'cmake;3.31.6' >/dev/null
+  if ! install_sdk_packages \
+      'platforms;android-37' 'ndk;28.2.13676358' 'cmake;3.31.6'; then
+    install_sdk_packages \
+      'platforms;android-36' 'ndk;28.2.13676358' 'cmake;3.31.6'
   fi
 fi
 
