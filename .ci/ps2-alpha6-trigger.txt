@@ -2,5 +2,5 @@ phase=ps2-alpha6-pcsx2-foundation
 version=0.11.5
 backend=pcsx2-armsx2
 armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
-focus=rollback-to-stable-alpha6-baseline
-attempt=30b-rollback-to-29b
+focus=nethersx2-inspired-static-performance-architecture-v1
+attempt=31-device-gamedb-static-tier-readback-policy
