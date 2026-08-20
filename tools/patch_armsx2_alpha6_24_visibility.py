@@ -162,7 +162,7 @@ Java_kr_co_iefriends_pcsx2_NativeApp_getOmniVisibilitySnapshot(JNIEnv* env, jcla
 {
     const OmniVisibilityTelemetry::Snapshot s = OmniVisibilityTelemetry::Read();
     char buffer[512]{};
-    std::snprintf(buffer, sizeof(buffer),
+    snprintf(buffer, sizeof(buffer),
         "ok=1;source=omnicore-gs-visibility-v1;cullTests=%llu;culled=%llu;drawBatches=%llu;fogDraws=%llu;alphaDraws=%llu;indices=%llu;fogIndices=%llu;alphaIndices=%llu",
         static_cast<unsigned long long>(s.cull_tests),
         static_cast<unsigned long long>(s.culled),
