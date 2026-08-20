@@ -18,6 +18,10 @@ internal const val PERF_PROFILE_UNKNOWN = 0
 internal const val PERF_PROFILE_RENDER = 1 // legacy compatibility
 internal const val PERF_PROFILE_GS = 2
 internal const val PERF_PROFILE_GPU = 3
+// #22: GS pipelining is useful, but EE+VU can become the new parallel critical
+// path. BALANCED keeps the Vulkan GS split while reserving scheduler priority
+// for EE/VU instead of disabling the pipeline and regressing GS throughput.
+internal const val PERF_PROFILE_BALANCED = 4
 
 internal const val PERF_VIS_UNKNOWN = 0
 internal const val PERF_VIS_GEOMETRY = 1
@@ -30,6 +34,7 @@ internal fun ps2PerfProfileName(profile: Int): String = when (profile) {
     PERF_PROFILE_RENDER -> "RENDER"
     PERF_PROFILE_GS -> "GS"
     PERF_PROFILE_GPU -> "GPU"
+    PERF_PROFILE_BALANCED -> "BALANCED"
     else -> "UNKNOWN"
 }
 
