@@ -100,6 +100,7 @@ add_library(
     omnicore_ps2_runtime
     SHARED
     ps2/ps2_native_bridge.cpp
+    ps2/ps2_thread_perf_fallback.cpp
 )
 
 target_compile_features(omnicore_ps2_runtime PRIVATE cxx_std_20)
