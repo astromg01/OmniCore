@@ -204,26 +204,31 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk "$OUT"
           sha256sum "$OUT" > "$HASH"
           cat > build/alpha6-release-notes.md <<'EOF'
-          ## ⬇️ BAIXE ESTE ARQUIVO
+          ## ⬇️ DOWNLOAD THIS FILE
           **`OmniCore-v0.11.5-ps2-alpha6.apk`**
 
-          Este é o único APK da Alpha 6. Os outros assets são checksum e código-fonte correspondente.
+          This is the only Alpha 6 APK. The other assets are checksums and corresponding source archives.
 
-          ### Alpha 6 — nova fundação PS2
-          - PCSX2 via ARMSX2 Android ARM64 substitui o Play! usado nas Alphas 1–5.
-          - BIOS real do usuário é obrigatória; nenhuma BIOS Sony é incluída ou baixada.
-          - BIOS clássica = firmware real com Fast Boot OFF; Direta = Fast Boot.
-          - Renderer Automático é delegado ao PCSX2.
-          - SmartPerf fica measurement-only: sem troca automática de renderer/limiter/resolução e sem cycle skipping.
-          - Baseline de qualidade 1× e Lean Hub otimizado preservados.
-          - PS1/N64 continuam isolados e protegidos.
-          - Pin PCSX2/ARMSX2: `7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3`.
+          ### Alpha 6 — PCSX2 Foundation
+          - PCSX2 through the pinned ARMSX2 Android ARM64 foundation replaces the Play! runtime used by Alphas 1–5.
+          - A real user-supplied PS2 BIOS is required. OmniCore does not bundle or download Sony firmware.
+          - Direct Boot uses PCSX2 Fast Boot; Classic BIOS boot uses the real firmware path with Fast Boot disabled.
+          - Automatic renderer selection is delegated to PCSX2.
+          - SmartPerf is measurement-only: no automatic renderer, limiter or internal-resolution switching and no cycle skipping.
+          - The 1.0× minimum quality floor is preserved; Alpha 6 does not disable fog or alpha effects to manufacture FPS.
+          - The source-built PCSX2 GS path now exposes Visibility v1 telemetry for primitive culling, draw batches, fog workload and alpha workload.
+          - BALANCED keeps the visual-safe lockstep path instead of re-enabling the flicker-prone pipelined path.
+          - PS1 and N64 runtimes remain isolated and protected by CI.
+          - PCSX2/ARMSX2 pin: `7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3`.
 
-          ### Primeiro teste
-          Selecione uma BIOS válida, use Automático + 1× + limiter ligado, teste primeiro Direta e depois BIOS clássica.
+          ### Current device-test focus
+          Use **Automatic + 1× + frame limiter enabled**. Test Direct Boot first, then Classic BIOS boot. In a repeatable heavy gameplay scene, enable the PS2 telemetry HUD and capture GS, CULL, FOG, ALPHA and synchronization readings before any active visibility culling is enabled.
 
-          ### Fonte/licença
-          O emucore PCSX2/ARMSX2 é GPLv3-or-later conforme o upstream. A licença está no APK e o snapshot de fonte correspondente está anexado nesta Release.
+          ### Latest CI validation
+          GitHub Actions run `32401858158` completed successfully after the Android system-SONAME validation fix. The pipeline validated the pinned source-built PCSX2/ARMSX2 emucore, Visibility v1 JNI symbol, protected PS1/N64 cores, signed release APK, expected DEV signer, 16 KB compatibility and corresponding source archives.
+
+          ### Source and license
+          The PCSX2/ARMSX2 emucore is GPLv3-or-later according to upstream licensing. The license is included in the APK and the corresponding pinned source snapshot is attached to this prerelease.
           EOF
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "$TITLE" --notes-file build/alpha6-release-notes.md --prerelease --target "$GITHUB_SHA"
