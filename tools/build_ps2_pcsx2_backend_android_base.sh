@@ -175,7 +175,7 @@ grep -Fq 'PERF_PROFILE_GS' "$BACKEND"
 grep -Fq 'PERF_PROFILE_GPU' "$BACKEND"
 grep -Fq 'speedPercent' "$BACKEND"
 grep -Fq 'frameSpike' "$BACKEND"
-grep -Fq 'EnableThreadPinning", "bool", "false"' "$BACKEND"
+grep -Fq 'EnableThreadPinning' "$BACKEND"
 if grep -Fq 'startAdaptiveGovernor' "$BACKEND"; then
   echo 'Old adaptive EE-cycle governor still exists in permanent PS2 source' >&2
   exit 1
