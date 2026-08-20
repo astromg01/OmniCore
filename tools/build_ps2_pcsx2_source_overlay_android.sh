@@ -12,9 +12,15 @@ GRADLE_APP="$ROOT/app/build.gradle.kts"
 [[ "$(git -C "$SRC" rev-parse HEAD)" == "$PIN" ]] || { echo "Unexpected ARMSX2 source revision" >&2; exit 1; }
 test -s "$SRC/pcsx2/GS/OmniVisibilityTelemetry.h"
 grep -Fq 'getOmniVisibilitySnapshot' "$SRC/platforms/android/app/src/main/cpp/native-lib.cpp"
-grep -Fq 'OmniVisibilityTelemetry::RecordCull' "$SRC/pcsx2/GS/GSState.cpp"
+# Alpha 6 #29 Visibility v2 replaces the old single RecordCull hook with one
+# primitive-entry hook plus separate fast/legacy rejection accounting. Require
+# the v2 contract here so a valid v2 overlay is not rejected before Gradle runs.
+grep -Fq 'OmniVisibilityTelemetry::RecordFastCull' "$SRC/pcsx2/GS/GSState.cpp"
+grep -Fq 'OmniVisibilityTelemetry::RecordLegacyCull' "$SRC/pcsx2/GS/GSState.cpp"
+grep -Fq 'thread_local std::uint64_t tl_primitive_tests' "$SRC/pcsx2/GS/OmniVisibilityTelemetry.h"
+grep -Fq 'source=omnicore-gs-visibility-v2' "$SRC/platforms/android/app/src/main/cpp/native-lib.cpp"
 
-# Alpha 6 Visibility v1 only needs the patched emucore. The official nightly
+# Alpha 6 Visibility v2 only needs the patched emucore. The official nightly
 # import remains responsible for Java/resources and the dependent native
 # libraries. Building an APK here would unnecessarily run AndroidX AAR metadata
 # checks even though none of those Java/Kotlin dependencies participate in the
@@ -131,4 +137,4 @@ for core in "$DEST/libemucore_4k.so" "$DEST/libemucore_16k.so"; do
   done < <("$READELF" -d "$core" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
 done
 
-echo 'OMNICORE_PCSX2_ALPHA6_24_SOURCE_BUILD_OK cores=4k+16k visibility_jni=1 native_only=1 pgo_or_lto=1'
+echo 'OMNICORE_PCSX2_ALPHA6_29_SOURCE_BUILD_OK cores=4k+16k visibility_v2_jni=1 true_primitive_denominator=1 native_only=1 pgo_or_lto=1'
