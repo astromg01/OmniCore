@@ -12,23 +12,29 @@ GRADLE_APP="$ROOT/app/build.gradle.kts"
 [[ "$(git -C "$SRC" rev-parse HEAD)" == "$PIN" ]] || { echo "Unexpected ARMSX2 source revision" >&2; exit 1; }
 test -s "$SRC/pcsx2/GS/OmniVisibilityTelemetry.h"
 grep -Fq 'getOmniVisibilitySnapshot' "$SRC/platforms/android/app/src/main/cpp/native-lib.cpp"
-# Alpha 6 #30 keeps the Visibility v2 ABI for compatibility, but retires the
-# per-primitive counters from the release hot path after the device study.
+# Alpha 6 #29 Visibility v2 replaces the old single RecordCull hook with one
+# primitive-entry hook plus separate fast/legacy rejection accounting. Require
+# the v2 contract here so a valid v2 overlay is not rejected before Gradle runs.
 grep -Fq 'OmniVisibilityTelemetry::RecordFastCull' "$SRC/pcsx2/GS/GSState.cpp"
 grep -Fq 'OmniVisibilityTelemetry::RecordLegacyCull' "$SRC/pcsx2/GS/GSState.cpp"
-grep -Fq 'inline void RecordFastCull(bool) {}' "$SRC/pcsx2/GS/OmniVisibilityTelemetry.h"
-grep -Fq 'inline void RecordLegacyCull(bool) {}' "$SRC/pcsx2/GS/OmniVisibilityTelemetry.h"
-grep -Fq 'source=omnicore-gs-visibility-retired' "$SRC/platforms/android/app/src/main/cpp/native-lib.cpp"
+grep -Fq 'thread_local std::uint64_t tl_primitive_tests' "$SRC/pcsx2/GS/OmniVisibilityTelemetry.h"
+grep -Fq 'source=omnicore-gs-visibility-v2' "$SRC/platforms/android/app/src/main/cpp/native-lib.cpp"
 
-# Alpha 6 only needs the patched emucore. The official nightly import remains
-# responsible for Java/resources and dependent native libraries. Building the
-# upstream APK would unnecessarily run AndroidX AAR metadata checks.
+# Alpha 6 Visibility v2 only needs the patched emucore. The official nightly
+# import remains responsible for Java/resources and the dependent native
+# libraries. Building an APK here would unnecessarily run AndroidX AAR metadata
+# checks even though none of those Java/Kotlin dependencies participate in the
+# emucore ABI.
 git -C "$SRC" submodule update --init --recursive --depth=1
 chmod +x "$GRADLE"
 
 SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
 
+# sdkmanager may close stdin early after consuming its answer. With global
+# pipefail enabled that makes `yes | sdkmanager` look like a failure because
+# `yes` exits on SIGPIPE even when sdkmanager itself succeeded. Always inspect
+# sdkmanager's own PIPESTATUS entry instead.
 install_sdk_packages() {
   local rc
   set +o pipefail
@@ -39,10 +45,11 @@ install_sdk_packages() {
 }
 
 if [[ -n "$SDK" && -x "$SDKMANAGER" ]]; then
-  # #30 follows the current ARMSX2 release toolchain. Upstream records a
-  # measurable Android performance gain from NDK 29, while the ABI/device floor
-  # is still controlled by minSdk and -march rather than the NDK version.
-  install_sdk_packages 'platforms;android-36' 'ndk;29.0.14206865' 'cmake;3.31.6'
+  # The hosted runner exposes API 36. That is sufficient for configuring the
+  # Android native toolchain. We deliberately do NOT package the upstream app,
+  # so AndroidX libraries whose AAR metadata asks for compileSdk 37 are outside
+  # this source-overlay build path.
+  install_sdk_packages 'platforms;android-36' 'ndk;28.2.13676358' 'cmake;3.31.6'
 fi
 
 if [[ ! -d "$SDK/platforms/android-37" ]]; then
@@ -84,18 +91,16 @@ build_core() {
   local out="$DEST/lib${name}.so"
   local built=""
 
-  echo "=== OmniCore patched PCSX2 native-only core: $name page=$page NDK29 armv8-a+outline-atomics ==="
+  echo "=== OmniCore patched PCSX2 native-only core: $name page=$page ==="
   rm -rf "$ROOT/app/.cxx" "$ROOT/app/build/intermediates/cxx"
 
-  # One universally safe ARMv8.0 binary is retained for Alpha 6. Outline
-  # atomics lets modern ARM cores dispatch to LSE without making the APK SIGILL
-  # on older A53-class devices. PGO + LTO remain enabled as before.
+  # Build ONLY the external-native variant. assemblePlayRelease also launches
+  # checkPlayReleaseAarMetadata; current AndroidX 1.19/2.11 metadata requires
+  # compileSdk 37 and made #26 fail after the C++ build had already started.
+  # The native task has no dependency on those AAR metadata checks.
   "$GRADLE" -p "$ROOT" :app:externalNativeBuildPlayRelease \
     "-Parmsx2.hostPageSize=$page" \
     "-Parmsx2.nativeLibName=$name" \
-    "-Parmsx2.ndkVersion=29.0.14206865" \
-    "-Parmsx2.march=armv8-a" \
-    "-Parmsx2.marchExtra=-moutline-atomics" \
     "${PGO_ARGS[@]}" \
     --no-daemon --stacktrace
 
@@ -132,4 +137,4 @@ for core in "$DEST/libemucore_4k.so" "$DEST/libemucore_16k.so"; do
   done < <("$READELF" -d "$core" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
 done
 
-echo 'OMNICORE_PCSX2_ALPHA6_30_SOURCE_BUILD_OK cores=4k+16k ndk29=1 armv8_baseline=1 outline_atomics=1 pgo_or_lto=1 visibility_hotpath_retired=1'
+echo 'OMNICORE_PCSX2_ALPHA6_29_SOURCE_BUILD_OK cores=4k+16k visibility_v2_jni=1 true_primitive_denominator=1 native_only=1 pgo_or_lto=1'
