@@ -1,5 +1,7 @@
 package com.omnicore.emulator.core.ps2
 
+import kr.co.iefriends.pcsx2.NativeApp
+
 /** Native PS2 foundation/boot-bridge probe plus low-overhead PCSX2 perf sampling. */
 object PS2NativeBridge {
     init {
@@ -66,7 +68,7 @@ object PS2NativeBridge {
     /**
      * Prefer PCSX2's own counters when the symbols are exported. Official
      * ARMSX2 release builds currently hide them, so #20 falls back to Linux
-     * /proc task CPU accounting for OmniCore's exact EE VM tid plus PCSX2's
+     * /proc task CPU accounting for OmniCore's EE VM thread plus PCSX2's
      * explicitly named GS/MTVU threads. This is read-only telemetry and never
      * mutates emulation timing, JIT state, affinity, or renderer state.
      */
@@ -78,8 +80,18 @@ object PS2NativeBridge {
         val direct = parsePerf(runCatching { nativePcsx2Performance() }.getOrDefault(""))
         if (direct.available) return direct
 
+        // Existing callers from #18/#19 do not need to change. Resolve the two
+        // exported, ABI-stable counters here so the procfs fallback can also
+        // report estimated speed and CPU milliseconds per emulated frame.
+        val measuredFps = if (fps > 1f) fps else
+            runCatching { NativeApp.getFPS() }.getOrDefault(-1f)
+        val targetFps = if (nominalFps > 1f) nominalFps else
+            runCatching { NativeApp.getNominalFrameRate() }.getOrDefault(0f)
+
         val fallback = parsePerf(
-            runCatching { nativePcsx2ThreadPerformance(eeTid, fps, nominalFps) }.getOrDefault("")
+            runCatching {
+                nativePcsx2ThreadPerformance(eeTid, measuredFps, targetFps)
+            }.getOrDefault("")
         )
         return if (fallback.available) fallback else direct
     }
