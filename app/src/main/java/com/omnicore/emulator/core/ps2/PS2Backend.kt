@@ -58,6 +58,16 @@ interface PS2Backend {
         EXTERNAL
     }
 
+    /**
+     * Static pre-boot policy tier. SAFE/OPTIMAL/FAST are resolved once per
+     * session; they never mutate EE timing or visual quality while the VM runs.
+     */
+    enum class PerformanceTier {
+        SAFE,
+        OPTIMAL,
+        FAST
+    }
+
     data class RuntimeConfig(
         val renderer: Renderer = Renderer.AUTO,
         val biosMode: BiosMode = BiosMode.AUTO,
@@ -74,7 +84,8 @@ interface PS2Backend {
         val audioTargetMs: Int = 64,
         val queueAheadFrames: Int = 1,
         val allowAsyncTextureUpload: Boolean = true,
-        val allowCycleSkipping: Boolean = false
+        val allowCycleSkipping: Boolean = false,
+        val performanceTier: PerformanceTier = PerformanceTier.OPTIMAL
     ) {
         init {
             require(internalResolutionFactor in setOf(1, 2, 4))
