@@ -50,9 +50,9 @@ void* openLoadedCore() {
     }
 #endif
 
-    // samplePcsx2Performance() is only called once the VM is active, so the
-    // emucore should already be resident. This second pass is a compatibility
-    // fallback for Android linkers which do not expose RTLD_NOLOAD reliably.
+    // Sampling only occurs once the VM is active, so the selected core should
+    // already be resident. The regular dlopen pass keeps older Android linkers
+    // working when RTLD_NOLOAD is unavailable or unreliable.
     for (const char* name : kCoreNames) {
         if (void* handle = dlopen(name, RTLD_NOW | RTLD_LOCAL)) {
             return handle;
@@ -71,6 +71,8 @@ struct Pcsx2PerfApi {
     using DoubleFn = double (*)();
 
     void* handle = nullptr;
+    FloatFn speed = nullptr;
+    FloatFn internalFps = nullptr;
     DoubleFn eeUsage = nullptr;
     DoubleFn eeTime = nullptr;
     FloatFn gsUsage = nullptr;
@@ -93,10 +95,12 @@ struct Pcsx2PerfApi {
         if (!handle) handle = openLoadedCore();
         if (!handle) return false;
 
-        // PCSX2 PerformanceMetrics functions are C++ namespace functions in the
-        // pinned ARM64 emucore. Resolve them dynamically so OmniCore keeps the
-        // official upstream binary untouched and can fail soft if a future pin
-        // changes symbol visibility/ABI.
+        // ARM64 uses the Itanium C++ ABI. These names map directly to the
+        // PerformanceMetrics accessors in the pinned PCSX2 core. Speed/internal
+        // FPS are optional additions for #19; all subsystem counters remain the
+        // required minimum so failure is soft instead of taking the VM down.
+        speed = resolve<FloatFn>(handle, "_ZN18PerformanceMetrics8GetSpeedEv");
+        internalFps = resolve<FloatFn>(handle, "_ZN18PerformanceMetrics14GetInternalFPSEv");
         eeUsage = resolve<DoubleFn>(handle, "_ZN18PerformanceMetrics17GetCPUThreadUsageEv");
         eeTime = resolve<DoubleFn>(handle, "_ZN18PerformanceMetrics23GetCPUThreadAverageTimeEv");
         gsUsage = resolve<FloatFn>(handle, "_ZN18PerformanceMetrics16GetGSThreadUsageEv");
@@ -133,10 +137,15 @@ std::string perfSnapshot() {
         return "ok=0;source=pcsx2-symbols-unavailable";
     }
 
+    const float speed = g_perfApi.speed ? g_perfApi.speed() : -1.0f;
+    const float internalFps = g_perfApi.internalFps ? g_perfApi.internalFps() : -1.0f;
+
     std::ostringstream out;
     out.setf(std::ios::fixed);
     out << std::setprecision(3)
         << "ok=1;source=pcsx2-performance-metrics"
+        << ";speedPct=" << speed
+        << ";internalFps=" << internalFps
         << ";eePct=" << g_perfApi.eeUsage()
         << ";eeMs=" << g_perfApi.eeTime()
         << ";vuPct=" << g_perfApi.vuUsage()
@@ -169,7 +178,7 @@ Java_com_omnicore_emulator_core_ps2_PS2NativeBridge_nativeDescriptor(
     result += core4k ? "ready" : "missing";
     result += " | core16k=";
     result += core16k ? "ready" : "missing";
-    result += " | native-perf=dynamic";
+    result += " | native-perf=v2-speed-internalfps";
     return makeString(env, result);
 }
 
