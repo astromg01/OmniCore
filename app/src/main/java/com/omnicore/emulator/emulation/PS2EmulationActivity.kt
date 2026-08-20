@@ -55,14 +55,15 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
     private var classicReady = false
     private var controlsVisible = true
     private var manualPaused = false
+    private var perfHudVisible = false
     private var bootThread: Thread? = null
     private lateinit var perfThread: HandlerThread
     private lateinit var perfHandler: Handler
 
     /**
-     * Performance sampling stays off the UI thread and is measurement-only.
-     * The PCSX2 baseline keeps automatic renderer/limiter/resolution changes
-     * disabled so telemetry can never destabilize a running game.
+     * Sampling stays off the UI thread. Alpha 6 #19 keeps the runtime knobs
+     * next-boot-only while optionally surfacing PCSX2's native EE/VU/GS/GPU
+     * measurements in the in-game HUD.
      */
     private val perfSampler = object : Runnable {
         override fun run() {
@@ -77,6 +78,14 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                 frameLimitRequested = ps2Config.frameLimit,
                 caps = capabilities
             )
+            if (perfHudVisible && !destroyed) {
+                runOnUiThread {
+                    if (!destroyed && started && perfHudVisible) {
+                        statusView.text = formatPerformanceHud(telemetry)
+                        statusView.visibility = View.VISIBLE
+                    }
+                }
+            }
             if (!destroyed && started) perfHandler.postDelayed(this, PERF_SAMPLE_MS)
         }
     }
@@ -287,7 +296,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                         perfHandler.removeCallbacks(perfSampler)
                         perfHandler.postDelayed(perfSampler, PERF_SAMPLE_MS)
                         statusView.postDelayed({
-                            if (!destroyed && started) statusView.visibility = View.GONE
+                            if (!destroyed && started && !perfHudVisible) statusView.visibility = View.GONE
                         }, 1700L)
                     }
                     is PS2Backend.BootResult.Rejected -> {
@@ -330,6 +339,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
             menu.add(0, MENU_PERF, 50, "Desempenho agora")
             menu.add(0, MENU_STATUS, 51, "Mostrar status")
             menu.add(0, MENU_RESET_TUNING, 52, "Resetar medição desta sessão")
+            menu.add(0, MENU_HUD, 53, if (perfHudVisible) "Ocultar telemetria PS2" else "Mostrar telemetria PS2")
             menu.add(0, MENU_EXIT, 99, "Sair do jogo")
 
             setOnMenuItemClickListener { item ->
@@ -407,6 +417,18 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
                         Toast.makeText(this@PS2EmulationActivity, "Medição desta sessão resetada.", Toast.LENGTH_SHORT).show()
                         true
                     }
+                    item.itemId == MENU_HUD -> {
+                        perfHudVisible = !perfHudVisible
+                        if (perfHudVisible && started) {
+                            statusView.text = formatPerformanceHud(backend.telemetry())
+                            statusView.visibility = View.VISIBLE
+                            perfHandler.removeCallbacks(perfSampler)
+                            perfHandler.post(perfSampler)
+                        } else if (started) {
+                            statusView.visibility = View.GONE
+                        }
+                        true
+                    }
                     item.itemId == MENU_EXIT -> {
                         finish()
                         true
@@ -422,16 +444,30 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         val telemetry = backend.telemetry()
         val decision = PS2SmartPerf.adapt(launchPlan, telemetry)
         val tuning = PS2GameTuning.read(this, gameIdentity())
-        val thermal = telemetry.thermalStatus
         val memoryPct = (telemetry.memoryPressure * 100).toInt().coerceIn(0, 100)
-        val fps = if (telemetry.measuredFps > 0f) String.format("%.1f", telemetry.measuredFps) else "--"
-        val draws = if (telemetry.drawCallsPerFrame >= 0f) String.format("%.0f", telemetry.drawCallsPerFrame) else "--"
         Toast.makeText(
             this,
-            "PS2 ${launchPlan.renderer} • $fps FPS • $draws draws/frame • térmico $thermal • memória $memoryPct% • ${decision.pressure} • ${tuning.note}",
+            "PS2 ${launchPlan.renderer} • ${fmt(telemetry.measuredFps)} FPS • " +
+                "${fmt(telemetry.emulationSpeedPercent)}% speed • ${telemetry.bottleneck}/${telemetry.visibilityPressure} • " +
+                "EE ${fmt(telemetry.eeUsagePercent)}% VU ${fmt(telemetry.vuUsagePercent)}% " +
+                "GS ${fmt(telemetry.gsUsagePercent + telemetry.gsBackUsagePercent)}% GPU ${fmt(telemetry.gpuUsagePercent)}% • " +
+                "peak ${fmt(telemetry.peakFrameMs)}ms • térmico ${telemetry.thermalStatus} • memória $memoryPct% • " +
+                "${decision.pressure} • ${tuning.note}",
             Toast.LENGTH_LONG
         ).show()
     }
+
+    private fun formatPerformanceHud(t: PS2Backend.Telemetry): String = buildString {
+        append("PS2 PERF • ${t.bottleneck} • VIS ${t.visibilityPressure}\n")
+        append("FPS ${fmt(t.measuredFps)} • INT ${fmt(t.internalFps)} • SPD ${fmt(t.emulationSpeedPercent)}%\n")
+        append("EE ${fmt(t.eeUsagePercent)}%/${fmt(t.eeMs)}ms • VU ${fmt(t.vuUsagePercent)}%/${fmt(t.vuMs)}ms\n")
+        append("GS ${fmt(t.gsUsagePercent)}%/${fmt(t.gsMs)}ms • GSB ${fmt(t.gsBackUsagePercent)}%/${fmt(t.gsBackMs)}ms\n")
+        append("GPU ${fmt(t.gpuUsagePercent)}%/${fmt(t.presentMs)}ms • frame ${fmt(t.frameAverageMs)}/${fmt(t.frameMaximumMs)}ms\n")
+        append("peak ${fmt(t.peakFrameMs)}ms • spikes ${t.spikeCount} • T${t.thermalStatus}")
+    }
+
+    private fun fmt(value: Float): String =
+        if (value >= 0f && value.isFinite()) String.format("%.1f", value) else "--"
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (isGamepadSource(event.source)) {
@@ -615,7 +651,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         private const val EXTRA_FILE_NAME = "ps2_file_name"
         private const val EXTRA_SIZE_BYTES = "ps2_size_bytes"
 
-        private const val PERF_SAMPLE_MS = 3000L
+        private const val PERF_SAMPLE_MS = 1200L
 
         private const val MENU_PAUSE = 1
         private const val MENU_SAVE_BASE = 100
@@ -629,6 +665,7 @@ class PS2EmulationActivity : Activity(), SurfaceHolder.Callback {
         private const val MENU_PERF = 500
         private const val MENU_STATUS = 501
         private const val MENU_RESET_TUNING = 502
+        private const val MENU_HUD = 503
         private const val MENU_EXIT = 999
 
         fun intent(context: Context, game: GameEntry): Intent =
