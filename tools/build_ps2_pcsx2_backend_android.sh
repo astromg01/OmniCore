@@ -226,15 +226,13 @@ if vu_cache not in text:
         raise SystemExit('PS2 recompiler settings anchor not found')
     text = text.replace(fastmem, fastmem + '\n' + vu_cache, 1)
 
-# The governor can remain compiled for telemetry/reference, but it must not be
-# started until we have a non-JIT-invalidating adaptation strategy.
+# The old governor must not be started. It can remain in source only until the
+# next transform replaces it with a non-JIT pressure profiler.
 text = text.replace(
     '            startAdaptiveGovernor()\n            PS2Backend.BootResult.Started(id, activeRenderer)',
     '            PS2Backend.BootResult.Started(id, activeRenderer)',
     1,
 )
-if '            startAdaptiveGovernor()\n            PS2Backend.BootResult.Started(id, activeRenderer)' in text:
-    raise SystemExit('PS2 adaptive governor is still armed at boot')
 
 # Avoid a redundant post-boot cycle-skip write. ARMSX2 routes it through a full
 # ApplySettings() even when writing zero, so doing it after the VM starts creates
@@ -248,10 +246,224 @@ text = text.replace(
 p.write_text(text, encoding="utf-8")
 PY
 
+# Alpha 6 #15: depth/geometry + entity-pressure expansion.
+#
+# Device testing shows #14 is a stable CPU/JIT baseline, but deep scenes (large
+# visible world/geometry) and dense entity bursts can still drop hard. Do NOT
+# return to dynamic EE cycle hacks: those invalidate/reconfigure the JIT and were
+# the source of #13's hitch regression. Instead:
+#   1) coalesce consecutive render passes, which the pinned core explicitly
+#      implements for tiled mobile GPUs to reduce tile load/store bandwidth;
+#   2) enable the GS front/back Pipelined mode on sufficiently multi-core phones,
+#      but learn per-game pressure and disable it on the next boot when the title
+#      proves compute/entity-bound (so the extra GS thread cannot starve EE/VU);
+#   3) keep a background pressure profiler which samples FPS + process CPU load +
+#      thermal state only. It NEVER mutates EE cycle rate/skip or rebuilds JIT.
+#      Its only live action is thermal-safe ADPF gating; its render/compute choice
+#      is persisted and consumed pre-boot on the next launch.
+python3 - "$BACKEND" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+p = Path(sys.argv[1])
+text = p.read_text(encoding="utf-8")
+
+# Feed the image path into pre-boot policy selection and arm the safe profiler
+# only after the VM is fully active.
+text = text.replace(
+    '            applyPreBootConfig(request.config)\n',
+    '            applyPreBootConfig(request.config, request.imagePath)\n',
+    1,
+)
+text = text.replace(
+    '            running = true\n            applyPostBootConfig(request.config)\n            PS2Backend.BootResult.Started(id, activeRenderer)',
+    '            running = true\n            applyPostBootConfig(request.config)\n            startPressureProfiler(request.imagePath)\n            PS2Backend.BootResult.Started(id, activeRenderer)',
+    1,
+)
+
+text = text.replace(
+    '    private fun applyPreBootConfig(config: PS2Backend.RuntimeConfig) {',
+    '    private fun applyPreBootConfig(config: PS2Backend.RuntimeConfig, imagePath: String) {',
+    1,
+)
+
+queue_anchor = '''        NativeApp.setSetting("EmuCore/GS", "VsyncQueueSize", "int", queueAhead.coerceIn(1, 3).toString())'''
+scene_block = '''        NativeApp.setSetting("EmuCore/GS", "VsyncQueueSize", "int", queueAhead.coerceIn(1, 3).toString())
+
+        // Mobile tiled-GPU depth/geometry path. Coalescing keeps consecutive
+        // draws targeting the same RT in one render pass, avoiding repeated tile
+        // load/store traffic. Pipelined GS splits GIF parsing/vertex building
+        // from draw/texture-cache/device work. It is enabled only when the phone
+        // has enough cores and the learned per-game profile has not identified
+        // compute/entity pressure.
+        val perfPrefs = appContext.getSharedPreferences(PERF_PREFS, Context.MODE_PRIVATE)
+        val perfKey = perfProfileKey(imagePath)
+        val learnedProfile = perfPrefs.getInt(perfKey, PERF_PROFILE_UNKNOWN)
+        val am = appContext.getSystemService(ActivityManager::class.java)
+        val memory = ActivityManager.MemoryInfo()
+        runCatching { am?.getMemoryInfo(memory) }
+        val power = appContext.getSystemService(PowerManager::class.java)
+        val pipelineCapable = Runtime.getRuntime().availableProcessors() >= 8 &&
+            memory.totalMem >= 3L * 1024L * 1024L * 1024L && power?.isPowerSaveMode != true
+        val useGsPipeline = pipelineCapable && learnedProfile != PERF_PROFILE_COMPUTE
+        NativeApp.setSetting("EmuCore/GS", "CoalesceRenderPasses", "bool", "true")
+        NativeApp.setSetting("EmuCore/GS", "SkipDuplicateFrames", "bool", "true")
+        NativeApp.setSetting("EmuCore/GS", "GSBackThreadMode", "int", if (useGsPipeline) "3" else "0")
+        Log.i("OmniCorePS2Perf", "preboot profile=$learnedProfile gsPipeline=$useGsPipeline cores=${Runtime.getRuntime().availableProcessors()}")'''
+if 'CoalesceRenderPasses' not in text:
+    if queue_anchor not in text:
+        raise SystemExit('PS2 VsyncQueueSize anchor not found for scene-pressure block')
+    text = text.replace(queue_anchor, scene_block, 1)
+
+# Replace the old EE-cycle governor wholesale. Keeping it around, even dead,
+# makes it too easy for a later refactor to re-arm the harmful path.
+pattern = re.compile(
+    r'\n    private fun startAdaptiveGovernor\(\) \{.*?\n    private fun publishSurface\(surface: Surface\) \{',
+    re.S,
+)
+replacement = r'''
+    private fun startPressureProfiler(imagePath: String) {
+        governorStop = false
+        governorThread?.interrupt()
+        val profileKey = perfProfileKey(imagePath)
+        governorThread = Thread({
+            runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND) }
+            val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+            val prefs = appContext.getSharedPreferences(PERF_PREFS, Context.MODE_PRIVATE)
+            val power = appContext.getSystemService(PowerManager::class.java)
+            var lastWallNs = System.nanoTime()
+            var lastCpuMs = Process.getElapsedCpuTime()
+            var renderPressure = 0f
+            var computePressure = 0f
+            var samples = 0
+            var learned = prefs.getInt(profileKey, PERF_PROFILE_UNKNOWN)
+            var adpfEnabled = Build.VERSION.SDK_INT >= 33 && power?.isPowerSaveMode != true
+
+            while (!governorStop && running) {
+                try { Thread.sleep(PRESSURE_SAMPLE_MS) } catch (_: InterruptedException) {
+                    if (governorStop || !running) break
+                }
+                if (governorStop || !running) break
+                if (paused) {
+                    lastWallNs = System.nanoTime()
+                    lastCpuMs = Process.getElapsedCpuTime()
+                    continue
+                }
+
+                val fps = runCatching { NativeApp.getFPS() }.getOrDefault(-1f)
+                val nominal = runCatching { NativeApp.getNominalFrameRate() }.getOrDefault(0f)
+                val nowWallNs = System.nanoTime()
+                val nowCpuMs = Process.getElapsedCpuTime()
+                val wallMs = ((nowWallNs - lastWallNs) / 1_000_000f).coerceAtLeast(1f)
+                val cpuMs = (nowCpuMs - lastCpuMs).coerceAtLeast(0L).toFloat()
+                lastWallNs = nowWallNs
+                lastCpuMs = nowCpuMs
+                if (fps <= 1f) continue
+
+                val target = if (nominal > 20f) nominal else 60f
+                val ratio = (fps / target).coerceIn(0f, 1.15f)
+                val processCoreLoad = (cpuMs / wallMs / cores.toFloat()).coerceIn(0f, 1.25f)
+
+                // Decay makes this a recent-workload classifier instead of a
+                // permanent verdict. Low FPS with broad process CPU saturation
+                // is treated as compute/entity pressure; low FPS without it is
+                // treated as GS/render/depth pressure. This never changes VM/JIT
+                // settings live -- the result is only a next-boot hint.
+                renderPressure *= 0.88f
+                computePressure *= 0.88f
+                if (ratio < 0.90f) {
+                    val severity = ((0.90f - ratio) / 0.90f).coerceIn(0f, 1f)
+                    if (processCoreLoad >= 0.34f) {
+                        computePressure += severity * (1.0f + processCoreLoad)
+                    } else {
+                        renderPressure += severity * (1.20f - processCoreLoad).coerceAtLeast(0.35f)
+                    }
+                }
+                samples++
+
+                val thermal = if (Build.VERSION.SDK_INT >= 29) {
+                    runCatching { power?.currentThermalStatus ?: PowerManager.THERMAL_STATUS_NONE }
+                        .getOrDefault(PowerManager.THERMAL_STATUS_NONE)
+                } else PowerManager.THERMAL_STATUS_NONE
+                val shouldUseAdpf = Build.VERSION.SDK_INT >= 33 && power?.isPowerSaveMode != true &&
+                    thermal < PowerManager.THERMAL_STATUS_SEVERE
+                if (shouldUseAdpf != adpfEnabled) {
+                    runCatching { NativeApp.setAdpfEnabled(shouldUseAdpf) }
+                    adpfEnabled = shouldUseAdpf
+                }
+
+                if (samples % 8 == 0) {
+                    val next = when {
+                        renderPressure >= 0.80f && renderPressure > computePressure * 1.22f -> PERF_PROFILE_RENDER
+                        computePressure >= 0.80f && computePressure > renderPressure * 1.22f -> PERF_PROFILE_COMPUTE
+                        else -> PERF_PROFILE_UNKNOWN
+                    }
+                    if (next != PERF_PROFILE_UNKNOWN && next != learned) {
+                        prefs.edit().putInt(profileKey, next).apply()
+                        learned = next
+                    }
+                    Log.i(
+                        "OmniCorePS2Perf",
+                        "pressure profile=$learned fps=${String.format("%.1f", fps)}/${String.format("%.1f", target)} " +
+                            "cpu=${String.format("%.2f", processCoreLoad)} render=${String.format("%.2f", renderPressure)} " +
+                            "compute=${String.format("%.2f", computePressure)} thermal=$thermal adpf=$adpfEnabled"
+                    )
+                }
+            }
+        }, "OmniCore-PS2-PressureProfiler").apply {
+            priority = Thread.MIN_PRIORITY
+            start()
+        }
+    }
+
+    private fun perfProfileKey(imagePath: String): String =
+        "game_${imagePath.hashCode().toUInt().toString(16)}"
+
+    private fun publishSurface(surface: Surface) {'''
+text, count = pattern.subn(replacement, text, count=1)
+if count != 1:
+    raise SystemExit('Old PS2 adaptive governor block not found/replaced')
+
+text = text.replace('        private const val GOVERNOR_SAMPLE_MS = 850L\n',
+                    '        private const val PRESSURE_SAMPLE_MS = 900L\n', 1)
+companion_anchor = '        private const val ANALOG_DEADZONE = 0.001f\n'
+perf_constants = '''        private const val PERF_PREFS = "omnicore_ps2_perf_learning_v1"
+        private const val PERF_PROFILE_COMPUTE = -1
+        private const val PERF_PROFILE_UNKNOWN = 0
+        private const val PERF_PROFILE_RENDER = 1
+        private const val ANALOG_DEADZONE = 0.001f
+'''
+if 'PERF_PROFILE_RENDER' not in text:
+    if companion_anchor not in text:
+        raise SystemExit('PS2 companion constant anchor not found')
+    text = text.replace(companion_anchor, perf_constants, 1)
+
+# Retire stale state from the old governor.
+text = text.replace('    @Volatile private var adaptiveLevel = 0\n', '')
+text = text.replace('            adaptiveLevel = 0\n', '')
+text = text.replace('        adaptiveLevel = 0\n', '')
+text = text.replace('import kotlin.math.min\n', '')
+
+p.write_text(text, encoding="utf-8")
+PY
+
 grep -Fq 'runCatching { NativeApp.renderPreloading(2) }' "$BACKEND"
 grep -Fq 'EnableVUProgramCache' "$BACKEND"
-if grep -Fq '            startAdaptiveGovernor()' "$BACKEND"; then
-  echo 'Adaptive EE-cycle governor is still armed' >&2
+grep -Fq 'CoalesceRenderPasses' "$BACKEND"
+grep -Fq 'GSBackThreadMode' "$BACKEND"
+grep -Fq 'startPressureProfiler(request.imagePath)' "$BACKEND"
+grep -Fq 'PERF_PROFILE_RENDER' "$BACKEND"
+if grep -Fq 'startAdaptiveGovernor' "$BACKEND"; then
+  echo 'Old adaptive EE-cycle governor still exists' >&2
+  exit 1
+fi
+if grep -Fq 'NativeApp.speedhackEecyclerate(' "$BACKEND"; then
+  echo 'Live EE cycle-rate mutation reintroduced into PS2 backend' >&2
+  exit 1
+fi
+if grep -Fq 'NativeApp.speedhackEecycleskip(' "$BACKEND"; then
+  echo 'Live EE cycle-skip mutation reintroduced into PS2 backend' >&2
   exit 1
 fi
 
