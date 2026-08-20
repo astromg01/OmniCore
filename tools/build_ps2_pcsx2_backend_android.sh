@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Alpha 6 #24: keep #23's visual-safe BALANCED baseline, then move the pinned
-# PCSX2/ARMSX2 emucore from prebuilt-only to source-overlay compilation so
-# Visibility v1 can observe the real GS primitive/effect stream. BALANCED may
-# try strict Lockstep (mode 2), never the fog-flickering two-object Pipelined
-# path. Fog/alpha are measured only; they are never disabled.
+# Alpha 6 #29: preserve the #23 visual-safe single-object GS baseline after the
+# Vulkan Lockstep device test reproduced fog flashing. Keep source-built PCSX2
+# Visibility telemetry, but correct v1's mixed two-stage cull denominator so
+# CULL% and prim/s describe real primitive attempts. No fog/alpha removal,
+# resolution reduction, cycle skipping or affinity pinning is allowed.
 BASE="$(cd "$(dirname "$0")" && pwd)/build_ps2_pcsx2_backend_android_base.sh"
 PATCH21="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_21.py"
 PATCH22="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_22.py"
 PATCH23="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_23.py"
 PATCH24="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_24.py"
+PATCH29="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_29.py"
 UPSTREAM_PATCH24="$(cd "$(dirname "$0")" && pwd)/patch_armsx2_alpha6_24_visibility.py"
+UPSTREAM_PATCH29="$(cd "$(dirname "$0")" && pwd)/patch_armsx2_alpha6_29_visibility_v2.py"
 SOURCE_BUILD="$(cd "$(dirname "$0")" && pwd)/build_ps2_pcsx2_source_overlay_android.sh"
 SRC="${1:-build/third_party/armsx2}"
 
@@ -21,7 +23,9 @@ python3 "$PATCH21"
 python3 "$PATCH22"
 python3 "$PATCH23"
 python3 "$PATCH24"
+python3 "$PATCH29"
 python3 "$UPSTREAM_PATCH24" "$SRC"
+python3 "$UPSTREAM_PATCH29" "$SRC"
 "$SOURCE_BUILD" "$SRC" app/src/main/jniLibs/arm64-v8a
 
 BACKEND="app/src/main/java/com/omnicore/emulator/core/ps2/Pcsx2PS2Backend.kt"
@@ -60,26 +64,32 @@ grep -Fq 'PERF_PROFILE_BALANCED = 4' "$CONSTANTS"
 grep -Fq 'PERF_PROFILE_BALANCED -> "BALANCED"' "$CONSTANTS"
 grep -Fq 'ps2TidPriorities' "$BACKEND"
 
-# #23 baseline remains visual-safe and sticky. #24 adds strict Lockstep as a
-# separate mode for BALANCED but does not promote BALANCED back to Pipelined.
-grep -Fq 'val useGsPipeline = pipelineCapable && learnedProfile == PERF_PROFILE_GS' "$BACKEND"
+# #29 physical-device safety result: both Pipelined and Vulkan Lockstep caused
+# intermittent fog flashing. Alpha 6 therefore keeps the GS back thread OFF.
+grep -Fq 'val useGsPipeline = false' "$BACKEND"
 grep -Fq 'val visualSafeBalanced = learnedProfile == PERF_PROFILE_BALANCED' "$BACKEND"
-grep -Fq 'val useGsLockstep = pipelineCapable && visualSafeBalanced' "$BACKEND"
-grep -Fq 'useGsPipeline -> 3' "$BACKEND"
-grep -Fq 'useGsLockstep -> 2' "$BACKEND"
+grep -Fq 'val useGsLockstep = false' "$BACKEND"
+grep -Fq 'val gsBackMode = 0' "$BACKEND"
 grep -Fq 'gsBackMode.toString()' "$BACKEND"
 grep -Fq 'PERF_PROFILE_BALANCED -> 1' "$BACKEND"
 grep -Fq 'learned == PERF_PROFILE_BALANCED' "$BACKEND"
 
-# #24 Visibility v1: source-built GS telemetry, low-overhead primitive cull
-# accounting plus fog/alpha workload evidence. These counters are read-only.
-grep -Fq 'OmniVisibilityTelemetry::RecordCull' "$GS_STATE"
+# Visibility v2: source-built GS telemetry remains read-only, but primitive
+# accounting now has a true one-entry-per-primitive denominator. Fast and legacy
+# cull rejection points are tracked separately while preserving PCSX2 decisions.
+grep -Fq 'OmniVisibilityTelemetry::RecordFastCull' "$GS_STATE"
+grep -Fq 'OmniVisibilityTelemetry::RecordLegacyCull' "$GS_STATE"
 grep -Fq 'OmniVisibilityTelemetry::RecordDrawBatch' "$GS_STATE"
-grep -Fq 'thread_local std::uint64_t tl_cull_tests' "$VIS_HEADER"
+grep -Fq 'thread_local std::uint64_t tl_primitive_tests' "$VIS_HEADER"
+grep -Fq 'g_fast_culled' "$VIS_HEADER"
+grep -Fq 'g_legacy_culled' "$VIS_HEADER"
 grep -Fq 'memory_order_relaxed' "$VIS_HEADER"
+grep -Fq 'source=omnicore-gs-visibility-v2' "$UPSTREAM_NATIVE"
+grep -Fq 'primitiveTests=%llu' "$UPSTREAM_NATIVE"
 grep -Fq 'Java_kr_co_iefriends_pcsx2_NativeApp_getOmniVisibilitySnapshot' "$UPSTREAM_NATIVE"
 grep -Fq 'getOmniVisibilitySnapshot' "$NATIVE_APP"
 grep -Fq 'Pcsx2VisibilitySample' "$BRIDGE_KT"
+grep -Fq 'cullTests = values.long("primitiveTests")' "$BRIDGE_KT"
 grep -Fq 'samplePcsx2Visibility' "$BACKEND"
 grep -Fq 'PERF_VIS_EFFECTS = 3' "$CONSTANTS"
 grep -Fq 'PERF_VIS_EFFECTS -> "EFFECTS"' "$CONSTANTS"
@@ -89,7 +99,6 @@ grep -Fq 'fogWorkPercent' "$TELEMETRY"
 grep -Fq 'alphaWorkPercent' "$TELEMETRY"
 grep -Fq 'CULL ${fmt(t.visibilityCullPercent)}%' "$ACTIVITY"
 grep -Fq 'FOG ${fmt(t.fogWorkPercent)}%' "$ACTIVITY"
-grep -Fq 'hasGsBack && t.bottleneck == "BALANCED" -> "SYNC"' "$ACTIVITY"
 
 # Never allow the #13 regression or fake-FPS shortcuts back in.
 if grep -Fq 'startAdaptiveGovernor' "$BACKEND"; then
@@ -113,8 +122,8 @@ if grep -Eq 'renderUpscalemultiplier\((0\.|[0-9]*\.[0-9]*[1-9][0-9]*f?\))' "$BAC
   exit 1
 fi
 
-# The custom JNI symbol proves these are the source-overlaid #24 cores, not the
-# untouched official prebuilt binaries accidentally left behind by the importer.
+# The custom JNI symbol proves these are source-overlaid cores, not untouched
+# prebuilts accidentally left behind by the importer.
 READELF="${ANDROID_NDK_HOME:-${OMNI_NDK_HOME:-}}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
 test -x "$READELF"
 for CORE in app/src/main/jniLibs/arm64-v8a/libemucore_4k.so app/src/main/jniLibs/arm64-v8a/libemucore_16k.so; do
@@ -124,4 +133,4 @@ for CORE in app/src/main/jniLibs/arm64-v8a/libemucore_4k.so app/src/main/jniLibs
   grep -Fq 'Java_kr_co_iefriends_pcsx2_NativeApp_getFPS' <<< "$TABLE"
 done
 
-echo 'OMNICORE_PCSX2_ALPHA6_24_POLICY_OK source_overlay=1 visibility_v1=1 cull_telemetry=1 fog_alpha_measurement=1 balanced_lockstep=1 no_fog_disable=1 no_affinity=1 safe_cycle_defaults=1'
+echo 'OMNICORE_PCSX2_ALPHA6_29_POLICY_OK source_overlay=1 visibility_v2=1 true_primitive_accounting=1 gs_back_off=1 fog_safety=1 no_fog_disable=1 no_affinity=1 safe_cycle_defaults=1'
