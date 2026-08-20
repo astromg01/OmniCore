@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <mutex>
@@ -15,6 +16,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace {
 
@@ -111,7 +113,8 @@ ThreadSet collectThreads(pid_t requestedEeTid) {
         const std::string name = lower(*nameOpt);
 
         // PCSX2 names these threads explicitly in the pinned core: "GS" and
-        // "MTVU". OmniCore owns the EE/VM Java thread and passes its exact tid.
+        // "MTVU". OmniCore owns the EE/VM Java thread and can also be found by
+        // its stable Java-thread name (Linux truncates it to 15 characters).
         if (name == "gs") {
             result.gs = tid;
         } else if (name == "mtvu") {
