@@ -1,21 +1,19 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Alpha 6 #30: stop iterating telemetry-only micro-patches. Keep the proven
-# fog-safe single-object GS path, retire the per-primitive measurement overhead,
-# move the PCSX2 native build to the current NDK29 + outline-atomics baseline,
-# use real asynchronous readbacks only for already-proven BALANCED/EFFECTS titles,
-# and stop the profiler after its warm-up window. Accuracy guardrails remain.
+# Alpha 6 #29: preserve the #23 visual-safe single-object GS baseline after the
+# Vulkan Lockstep device test reproduced fog flashing. Keep source-built PCSX2
+# Visibility telemetry, but correct v1's mixed two-stage cull denominator so
+# CULL% and prim/s describe real primitive attempts. No fog/alpha removal,
+# resolution reduction, cycle skipping or affinity pinning is allowed.
 BASE="$(cd "$(dirname "$0")" && pwd)/build_ps2_pcsx2_backend_android_base.sh"
 PATCH21="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_21.py"
 PATCH22="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_22.py"
 PATCH23="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_23.py"
 PATCH24="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_24.py"
 PATCH29="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_29.py"
-PATCH30="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_30.py"
 UPSTREAM_PATCH24="$(cd "$(dirname "$0")" && pwd)/patch_armsx2_alpha6_24_visibility.py"
 UPSTREAM_PATCH29="$(cd "$(dirname "$0")" && pwd)/patch_armsx2_alpha6_29_visibility_v2.py"
-UPSTREAM_PATCH30="$(cd "$(dirname "$0")" && pwd)/patch_armsx2_alpha6_30_release_visibility.py"
 SOURCE_BUILD="$(cd "$(dirname "$0")" && pwd)/build_ps2_pcsx2_source_overlay_android.sh"
 SRC="${1:-build/third_party/armsx2}"
 
@@ -26,10 +24,8 @@ python3 "$PATCH22"
 python3 "$PATCH23"
 python3 "$PATCH24"
 python3 "$PATCH29"
-python3 "$PATCH30"
 python3 "$UPSTREAM_PATCH24" "$SRC"
 python3 "$UPSTREAM_PATCH29" "$SRC"
-python3 "$UPSTREAM_PATCH30" "$SRC"
 "$SOURCE_BUILD" "$SRC" app/src/main/jniLibs/arm64-v8a
 
 BACKEND="app/src/main/java/com/omnicore/emulator/core/ps2/Pcsx2PS2Backend.kt"
@@ -59,7 +55,7 @@ grep -Fq 'speedPercent' "$BACKEND"
 grep -Fq 'frameSpike' "$BACKEND"
 grep -Fq 'peak_frame_ms' "$BACKEND"
 
-# #21/#22 scheduler assist remains priority-only, never affinity.
+# #21/#22 device telemetry and parallel scoring remain intact.
 grep -Fq 'vmThreadTid = Process.myTid()' "$BACKEND"
 grep -Fq 'Process.THREAD_PRIORITY_DISPLAY' "$BACKEND"
 grep -Fq 'val gsParallelMs = max(' "$BACKEND"
@@ -68,8 +64,8 @@ grep -Fq 'PERF_PROFILE_BALANCED = 4' "$CONSTANTS"
 grep -Fq 'PERF_PROFILE_BALANCED -> "BALANCED"' "$CONSTANTS"
 grep -Fq 'ps2TidPriorities' "$BACKEND"
 
-# Physical-device safety: Pipelined and Vulkan Lockstep both reproduced fog
-# flashing, so #30 must stay on the single-object GS path.
+# #29 physical-device safety result: both Pipelined and Vulkan Lockstep caused
+# intermittent fog flashing. Alpha 6 therefore keeps the GS back thread OFF.
 grep -Fq 'val useGsPipeline = false' "$BACKEND"
 grep -Fq 'val visualSafeBalanced = learnedProfile == PERF_PROFILE_BALANCED' "$BACKEND"
 grep -Fq 'val useGsLockstep = false' "$BACKEND"
@@ -78,30 +74,31 @@ grep -Fq 'gsBackMode.toString()' "$BACKEND"
 grep -Fq 'PERF_PROFILE_BALANCED -> 1' "$BACKEND"
 grep -Fq 'learned == PERF_PROFILE_BALANCED' "$BACKEND"
 
-# #30 throughput policy: PCSX2 enum 5 is Asynchronous HWDownloadMode. It keeps
-# real readbacks but removes the synchronous EE wait, and is only selected for a
-# title with persisted BALANCED + EFFECTS evidence. The profiler then exits after
-# ~22 seconds instead of sampling JNI/procfs forever.
-grep -Fq 'val useAsyncReadbacks = learnedProfile == PERF_PROFILE_BALANCED' "$BACKEND"
-grep -Fq 'visibilityClass == PERF_VIS_EFFECTS' "$BACKEND"
-grep -Fq '"HWDownloadMode", "int", if (useAsyncReadbacks) "5" else "0"' "$BACKEND"
-grep -Fq 'while (!governorStop && running && samples < 24)' "$BACKEND"
-
-# Visibility ABI stays intact, but the device study is complete: per-primitive
-# hooks must compile to no-ops so our telemetry is no longer part of the hot GS
-# workload. Persisted classification can still guide #30's scoped policy.
+# Visibility v2: source-built GS telemetry remains read-only, but primitive
+# accounting now has a true one-entry-per-primitive denominator. Fast and legacy
+# cull rejection points are tracked separately while preserving PCSX2 decisions.
 grep -Fq 'OmniVisibilityTelemetry::RecordFastCull' "$GS_STATE"
 grep -Fq 'OmniVisibilityTelemetry::RecordLegacyCull' "$GS_STATE"
 grep -Fq 'OmniVisibilityTelemetry::RecordDrawBatch' "$GS_STATE"
-grep -Fq 'inline void RecordFastCull(bool) {}' "$VIS_HEADER"
-grep -Fq 'inline void RecordLegacyCull(bool) {}' "$VIS_HEADER"
-grep -Fq 'inline void RecordDrawBatch(bool, bool, std::uint64_t) {}' "$VIS_HEADER"
-grep -Fq 'source=omnicore-gs-visibility-retired' "$UPSTREAM_NATIVE"
+grep -Fq 'thread_local std::uint64_t tl_primitive_tests' "$VIS_HEADER"
+grep -Fq 'g_fast_culled' "$VIS_HEADER"
+grep -Fq 'g_legacy_culled' "$VIS_HEADER"
+grep -Fq 'memory_order_relaxed' "$VIS_HEADER"
+grep -Fq 'source=omnicore-gs-visibility-v2' "$UPSTREAM_NATIVE"
+grep -Fq 'primitiveTests=%llu' "$UPSTREAM_NATIVE"
 grep -Fq 'Java_kr_co_iefriends_pcsx2_NativeApp_getOmniVisibilitySnapshot' "$UPSTREAM_NATIVE"
 grep -Fq 'getOmniVisibilitySnapshot' "$NATIVE_APP"
 grep -Fq 'Pcsx2VisibilitySample' "$BRIDGE_KT"
 grep -Fq 'cullTests = values.long("primitiveTests")' "$BRIDGE_KT"
+grep -Fq 'samplePcsx2Visibility' "$BACKEND"
 grep -Fq 'PERF_VIS_EFFECTS = 3' "$CONSTANTS"
+grep -Fq 'PERF_VIS_EFFECTS -> "EFFECTS"' "$CONSTANTS"
+grep -Fq 'visibilityCullPercent' "$TELEMETRY"
+grep -Fq 'visibilityTestsPerSecond' "$TELEMETRY"
+grep -Fq 'fogWorkPercent' "$TELEMETRY"
+grep -Fq 'alphaWorkPercent' "$TELEMETRY"
+grep -Fq 'CULL ${fmt(t.visibilityCullPercent)}%' "$ACTIVITY"
+grep -Fq 'FOG ${fmt(t.fogWorkPercent)}%' "$ACTIVITY"
 
 # Never allow the #13 regression or fake-FPS shortcuts back in.
 if grep -Fq 'startAdaptiveGovernor' "$BACKEND"; then
@@ -136,4 +133,4 @@ for CORE in app/src/main/jniLibs/arm64-v8a/libemucore_4k.so app/src/main/jniLibs
   grep -Fq 'Java_kr_co_iefriends_pcsx2_NativeApp_getFPS' <<< "$TABLE"
 done
 
-echo 'OMNICORE_PCSX2_ALPHA6_30_POLICY_OK consolidated_throughput=1 ndk29=1 outline_atomics=1 visibility_hotpath_retired=1 async_readbacks_scoped=1 profiler_warmup_only=1 gs_back_off=1 fog_safety=1 no_fog_disable=1 no_affinity=1 safe_cycle_defaults=1'
+echo 'OMNICORE_PCSX2_ALPHA6_29_POLICY_OK source_overlay=1 visibility_v2=1 true_primitive_accounting=1 gs_back_off=1 fog_safety=1 no_fog_disable=1 no_affinity=1 safe_cycle_defaults=1'
