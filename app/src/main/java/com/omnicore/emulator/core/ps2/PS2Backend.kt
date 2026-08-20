@@ -30,7 +30,7 @@ interface PS2Backend {
     fun setAxis(controlId: Int, value: Float)
     fun releaseAllInput()
 
-    /** Process-scoped Play! state slots. Returns false when unsupported/not ready. */
+    /** Process-scoped state slots. Returns false when unsupported/not ready. */
     fun saveState(slot: Int): Boolean
     fun loadState(slot: Int): Boolean
 
@@ -61,10 +61,9 @@ interface PS2Backend {
     data class RuntimeConfig(
         val renderer: Renderer = Renderer.AUTO,
         val biosMode: BiosMode = BiosMode.AUTO,
-        /** Play! framebuffer multiplier: 1, 2 or 4. */
+        /** PCSX2 internal-resolution multiplier: 1, 2 or 4. */
         val internalResolutionFactor: Int = 1,
         val widescreen: Boolean = false,
-        /** Play! presentation mode: 0 fill, 1 fit, 2 original. */
         val presentationMode: Int = 1,
         val forceBilinear: Boolean = false,
         val limitFrameRate: Boolean = true,
@@ -104,16 +103,32 @@ interface PS2Backend {
 
     /**
      * Times are split by subsystem whenever the backend can expose them.
-     * Unknown values stay negative instead of being guessed.
+     * Unknown numeric values stay negative instead of being guessed.
      */
     data class Telemetry(
         val hostFrameMs: Float = -1f,
         val measuredFps: Float = -1f,
+        val internalFps: Float = -1f,
+        val emulationSpeedPercent: Float = -1f,
         val drawCallsPerFrame: Float = -1f,
         val eeMs: Float = -1f,
         val vuMs: Float = -1f,
         val gsMs: Float = -1f,
+        val gsBackMs: Float = -1f,
         val presentMs: Float = -1f,
+        val frameAverageMs: Float = -1f,
+        val frameMaximumMs: Float = -1f,
+        val eeUsagePercent: Float = -1f,
+        val vuUsagePercent: Float = -1f,
+        val gsUsagePercent: Float = -1f,
+        val gsBackUsagePercent: Float = -1f,
+        val gpuUsagePercent: Float = -1f,
+        val gpuVertexInvocations: Double = -1.0,
+        val gpuPixelInvocations: Double = -1.0,
+        val bottleneck: String = "UNKNOWN",
+        val visibilityPressure: String = "UNKNOWN",
+        val peakFrameMs: Float = -1f,
+        val spikeCount: Int = 0,
         val audioFillMs: Float = -1f,
         val hardAudioUnderruns: Long = 0,
         val jitCacheUsedMiB: Float = -1f,
@@ -124,6 +139,6 @@ interface PS2Backend {
         val renderer: Renderer = Renderer.AUTO,
         val sampleFrames: Int = 0
     ) {
-        fun hasFrameBreakdown(): Boolean = eeMs >= 0f || vuMs >= 0f || gsMs >= 0f
+        fun hasFrameBreakdown(): Boolean = eeMs >= 0f || vuMs >= 0f || gsMs >= 0f || presentMs >= 0f
     }
 }
