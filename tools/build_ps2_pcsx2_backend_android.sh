@@ -49,6 +49,14 @@ grep -Fq 'emulationSpeedPercent' "$TELEMETRY"
 grep -Fq 'visibilityPressure' "$TELEMETRY"
 grep -Fq 'peakFrameMs' "$TELEMETRY"
 
+# In-game HUD must remain optional and measurement-only.
+grep -Fq 'perfHudVisible' "$ACTIVITY"
+grep -Fq 'formatPerformanceHud' "$ACTIVITY"
+grep -Fq 'MENU_HUD' "$ACTIVITY"
+grep -Fq 'emulationSpeedPercent' "$ACTIVITY"
+grep -Fq 'bottleneck' "$ACTIVITY"
+grep -Fq 'visibilityPressure' "$ACTIVITY"
+
 # Never allow the #13 regression back in.
 if grep -Fq 'startAdaptiveGovernor' "$BACKEND"; then
   echo 'Old adaptive EE-cycle governor reintroduced' >&2
