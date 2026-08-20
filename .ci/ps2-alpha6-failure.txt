@@ -1,6 +1,6 @@
-run_id=32407618522
-commit=62e412dfb3643611051e62d335bb37eda9f956b8
-status=failure
+run_id=32419337512
+commit=4e4e3be84a8742d614d21b663434840bf4cec128
+status=cancelled
 version=0.11.5
 backend=pcsx2-armsx2
 armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
