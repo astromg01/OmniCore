@@ -125,7 +125,7 @@ for core in "$DEST/libemucore_4k.so" "$DEST/libemucore_16k.so"; do
   while IFS= read -r dep; do
     [[ -z "$dep" ]] && continue
     case "$dep" in
-      libc.so|libdl.so|libm.so|liblog.so|libandroid.so|libz.so|libEGL.so|libGLESv2.so|libvulkan.so|libOpenSLES.so|libaaudio.so|libjnigraphics.so|libnativewindow.so|libstdc++.so) continue ;;
+      libc.so|libdl.so|libm.so|liblog.so|libandroid.so|libz.so|libstdc++.so|libEGL.so|libGLESv1_CM.so|libGLESv2.so|libGLESv3.so|libvulkan.so|libOpenSLES.so|libaaudio.so|libamidi.so|libjnigraphics.so|libnativewindow.so|libmediandk.so|libcamera2ndk.so|libbinder_ndk.so|libneuralnetworks.so|libsync.so) continue ;;
     esac
     test -s "$DEST/$dep" || { echo "Patched core dependency missing: $dep" >&2; exit 1; }
   done < <("$READELF" -d "$core" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
