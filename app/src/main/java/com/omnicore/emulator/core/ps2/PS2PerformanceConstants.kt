@@ -3,11 +3,13 @@ package com.omnicore.emulator.core.ps2
 /**
  * Stable identifiers shared by the PS2 backend and Alpha 6 build guards.
  *
- * v3 learning is intentionally preserved for Alpha 6 #19: #18 already learned
- * useful per-game EE/VU/GS/GPU classifications. #19 makes those classifications
- * actionable and exposes them in telemetry instead of throwing the data away.
+ * v4 intentionally starts a clean per-game learning set for Alpha 6 #20. The
+ * official ARMSX2 release hides PerformanceMetrics C++ symbols, so #18/#19
+ * could only persist coarse process-level guesses. #20 learns again from real
+ * Android per-thread EE/MTVU/GS CPU accounting instead of inheriting those
+ * ambiguous classifications.
  */
-internal const val PERF_PREFS = "omnicore_ps2_perf_learning_v3"
+internal const val PERF_PREFS = "omnicore_ps2_perf_learning_v4"
 
 internal const val PERF_PROFILE_VU = -3
 internal const val PERF_PROFILE_EE = -2
