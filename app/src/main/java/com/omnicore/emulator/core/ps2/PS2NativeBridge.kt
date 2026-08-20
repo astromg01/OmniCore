@@ -30,6 +30,8 @@ object PS2NativeBridge {
      */
     data class Pcsx2PerfSample(
         val available: Boolean = false,
+        val speedPercent: Float = -1f,
+        val internalFps: Float = -1f,
         val eeUsage: Float = -1f,
         val eeMs: Float = -1f,
         val vuUsage: Float = -1f,
@@ -72,6 +74,8 @@ object PS2NativeBridge {
         val values = parseKeyValues(raw)
         return Pcsx2PerfSample(
             available = values["ok"] == "1",
+            speedPercent = values.float("speedPct"),
+            internalFps = values.float("internalFps"),
             eeUsage = values.float("eePct"),
             eeMs = values.float("eeMs"),
             vuUsage = values.float("vuPct"),
