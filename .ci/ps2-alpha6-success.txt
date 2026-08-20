@@ -1,5 +1,5 @@
-run_id=32335580543
-commit=1f9ca5b236285632e7c2d0f4a16a3771fc79d170
+run_id=32401858158
+commit=308ea7abf9d1499bcb07622c38d20d54e69387ad
 status=success
 version=0.11.5
 backend=pcsx2-armsx2
