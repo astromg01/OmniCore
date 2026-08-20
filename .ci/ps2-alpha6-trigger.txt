@@ -2,5 +2,5 @@ phase=ps2-alpha6-pcsx2-foundation
 version=0.11.5
 backend=pcsx2-armsx2
 armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
-focus=god-of-war-balanced-ee-vu-gs-parallel-critical-path
-attempt=22-parallel-gs-score-ee-vu-priority-balanced-profile
+focus=god-of-war-balanced-ee-vu-visual-stability-fog-flicker
+attempt=23-balanced-pipeline-off-queue1-visual-safe
