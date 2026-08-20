@@ -5,7 +5,7 @@ import com.omnicore.emulator.core.ps2.PS2Backend
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
-/** Per-game PS2 telemetry monitor. Runtime pressure handling lives in the PCSX2 backend governor. */
+/** Per-game PS2 telemetry monitor. Runtime bottleneck policy lives in the PCSX2 backend profiler. */
 object PS2GameTuning {
     enum class Phase { MEASURING, LOCKED }
 
@@ -76,6 +76,7 @@ object PS2GameTuning {
         val slow = telemetry.measuredFps < SLOW_FPS
         val slowSamples = if (slow) previous.slowSamples + 1 else 0
         val sustainedSlow = slowSamples >= REQUIRED_SLOW_SAMPLES
+        val nativeLabel = telemetry.bottleneck.takeIf { it != "UNKNOWN" } ?: "medindo"
 
         val next = previous.copy(
             forcedRenderer = null,
@@ -89,11 +90,11 @@ object PS2GameTuning {
             frameLimiterEnabled = frameLimitRequested,
             note = when {
                 sustainedSlow ->
-                    "pressão sustentada em ${formatFps(telemetry.measuredFps)} FPS • governor adaptativo ativo"
+                    "pressão sustentada em ${formatFps(telemetry.measuredFps)} FPS • profiler $nativeLabel"
                 session.fpsCount < BASELINE_SAMPLES ->
-                    "medindo baseline ${session.fpsCount}/$BASELINE_SAMPLES • governor ativo • ${activeRenderer.name}"
+                    "medindo baseline ${session.fpsCount}/$BASELINE_SAMPLES • profiler nativo • ${activeRenderer.name}"
                 else ->
-                    "baseline ${formatFps(baseline)} FPS • governor adaptativo ativo • ${activeRenderer.name}"
+                    "baseline ${formatFps(baseline)} FPS • perfil $nativeLabel • ${activeRenderer.name}"
             }
         )
         session.state = next
@@ -135,7 +136,7 @@ object PS2GameTuning {
         baselineFps = -1f,
         probeFps = -1f,
         frameLimiterEnabled = true,
-        note = "SmartPerf aguardando telemetria • governor preparado"
+        note = "SmartPerf aguardando telemetria nativa"
     )
 
     private fun key(identity: String): String {
