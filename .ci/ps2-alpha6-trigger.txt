@@ -2,5 +2,5 @@ phase=ps2-alpha6-pcsx2-foundation
 version=0.11.5
 backend=pcsx2-armsx2
 armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
-focus=culling-aware-god-of-war-compute-visibility-pressure
-attempt=17-conservative-gs-culling-aware-cpu-classifier-v2
+focus=god-of-war-native-bottleneck-telemetry-visibility-pressure
+attempt=18-native-ee-vu-gs-gpu-profiler-frame-spikes-per-game-v3
