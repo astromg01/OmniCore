@@ -3,4 +3,4 @@ version=0.11.5
 backend=pcsx2-armsx2
 armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
 focus=visibility-v1-gs-cull-fog-alpha-lockstep-source-overlay
-attempt=24c-sdk-pipefail-fix
+attempt=24d-native-only-no-aar-metadata
