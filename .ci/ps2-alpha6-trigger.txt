@@ -2,5 +2,5 @@ phase=ps2-alpha6-pcsx2-foundation
 version=0.11.5
 backend=pcsx2-armsx2
 armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
-focus=god-of-war-real-ee-vu-gs-thread-telemetry-procfs-fallback
-attempt=20-procfs-ee-vu-gs-telemetry-learning-v4
+focus=god-of-war-gs-vu-pipeline-engagement-ee-telemetry
+attempt=21-force-vulkan-gs-pipeline-ee-tid-scheduler-assist
