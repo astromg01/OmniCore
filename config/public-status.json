@@ -14,18 +14,18 @@
     },
     "ps2": {
       "label": "PS2 device-test",
-      "version": "0.11.0 Alpha 1",
-      "status": "First isolated Play! backend build with VM + Surface + content-URI boot path validated in CI",
-      "tag": "v0.11.0-ps2-alpha1"
+      "version": "0.11.5 Alpha 6",
+      "status": "PCSX2/ARMSX2 foundation and Visibility v1 telemetry validated in CI; physical-device testing is next",
+      "tag": "v0.11.5-ps2-alpha6"
     }
   },
   "latest": {
     "system": "ps2",
-    "title": "PS2 Alpha 1",
-    "version": "0.11.0 Alpha 1",
-    "tag": "v0.11.0-ps2-alpha1",
-    "release_url": "https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.11.0-ps2-alpha1",
-    "apk_url": "https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.11.0-ps2-alpha1/OmniCore-v0.11.0-ps2-alpha1-debug.apk",
-    "summary": "First public device-test build for the isolated PlayStation 2 runtime using the pinned Play! backend behind OmniCore's PS2Backend adapter."
+    "title": "PS2 Alpha 6 — PCSX2 Foundation",
+    "version": "0.11.5 Alpha 6",
+    "tag": "v0.11.5-ps2-alpha6",
+    "release_url": "https://github.com/mauricio-gamedev/OmniCore/releases/tag/v0.11.5-ps2-alpha6",
+    "apk_url": "https://github.com/mauricio-gamedev/OmniCore/releases/download/v0.11.5-ps2-alpha6/OmniCore-v0.11.5-ps2-alpha6.apk",
+    "summary": "Alpha 6 replaces the previous Play! PS2 path with the pinned PCSX2/ARMSX2 Android ARM64 foundation, preserves the 1x quality floor and measurement-only SmartPerf policy, and adds source-built Visibility v1 GS telemetry for evidence-driven optimization on real hardware."
   }
 }
