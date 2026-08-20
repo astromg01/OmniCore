@@ -107,8 +107,6 @@ object PS2SmartPerf {
         }
         val renderer = PS2Settings.rendererFor(requested, caps)
         val base = basePlan(mode, requested, renderer, "perfil inicial medido do dispositivo")
-        // WarmStart is conservative only in scheduling/audio. It never rewrites
-        // the requested framebuffer scale.
         return if (isThermallyConstrained(env.thermalStatus)) {
             base.copy(
                 mode = Mode.ECO,
@@ -151,10 +149,38 @@ object PS2SmartPerf {
             return Decision(next, Pressure.AUDIO, 0.9f, next != current)
         }
 
-        // EE/VU/GS classifications only become actionable when the backend
-        // exposes real timing counters. Unknown values remain negative.
+        // Alpha 6 #19 prefers the backend's persistent native classifier. These
+        // labels come from PCSX2 EE/VU/GS/GPU counters, not process-wide guesses.
+        when (telemetry.bottleneck) {
+            "EE" -> return Decision(
+                current.copy(reason = "EE dominante; GS extra mantido desligado no próximo boot"),
+                Pressure.EE_VU,
+                (telemetry.eeUsagePercent / 100f).coerceIn(0f, 1f),
+                false
+            )
+            "VU" -> return Decision(
+                current.copy(reason = "VU dominante; MTVU/InstantVU1 preservados e afinidade deixada ao EAS"),
+                Pressure.EE_VU,
+                (telemetry.vuUsagePercent / 100f).coerceIn(0f, 1f),
+                false
+            )
+            "GS" -> return Decision(
+                current.copy(reason = "GS dominante; pipeline GS será elegível no próximo boot"),
+                Pressure.GS,
+                ((telemetry.gsUsagePercent + telemetry.gsBackUsagePercent) / 100f).coerceIn(0f, 1f),
+                false
+            )
+            "GPU" -> return Decision(
+                current.copy(reason = "GPU dominante; visibilidade=${telemetry.visibilityPressure}; resolução protegida"),
+                Pressure.GS,
+                (telemetry.gpuUsagePercent / 100f).coerceIn(0f, 1f),
+                false
+            )
+        }
+
+        // Fallback for backends without the native classifier.
         val eeVu = positive(telemetry.eeMs) + positive(telemetry.vuMs)
-        val gs = positive(telemetry.gsMs) + positive(telemetry.presentMs)
+        val gs = positive(telemetry.gsMs) + positive(telemetry.gsBackMs) + positive(telemetry.presentMs)
         if (eeVu <= 0f && gs <= 0f) {
             return Decision(current, Pressure.STABLE, 0f, changed = false)
         }
@@ -162,8 +188,8 @@ object PS2SmartPerf {
         val eeShare = eeVu / total
         val gsShare = gs / total
         return when {
-            eeShare >= 0.62f -> Decision(current.copy(reason = "EE/VU dominante; aguardando knob nativo seguro"), Pressure.EE_VU, eeShare, false)
-            gsShare >= 0.62f -> Decision(current.copy(reason = "GS/present dominante; resolução solicitada protegida"), Pressure.GS, gsShare, false)
+            eeShare >= 0.62f -> Decision(current.copy(reason = "EE/VU dominante; aguardando perfil persistente"), Pressure.EE_VU, eeShare, false)
+            gsShare >= 0.62f -> Decision(current.copy(reason = "GS/GPU dominante; qualidade solicitada protegida"), Pressure.GS, gsShare, false)
             else -> Decision(current, Pressure.MIXED, 0.55f, false)
         }
     }
