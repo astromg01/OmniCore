@@ -2,5 +2,5 @@ phase=ps2-alpha6-pcsx2-foundation
 version=0.11.5
 backend=pcsx2-armsx2
 armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
-focus=device-tested-depth-geometry-entity-pressure
-attempt=16-fix-pressure-profiler-constants-preserve-gs-pipeline
+focus=culling-aware-god-of-war-compute-visibility-pressure
+attempt=17-conservative-gs-culling-aware-cpu-classifier-v2
