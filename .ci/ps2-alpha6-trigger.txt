@@ -2,5 +2,5 @@ phase=ps2-alpha6-pcsx2-foundation
 version=0.11.5
 backend=pcsx2-armsx2
 armsx2_revision=7f0ae7a6c689b5b36eccc61b7adb480f65c7a3a3
-focus=god-of-war-native-bottleneck-telemetry-visibility-pressure
-attempt=18-native-ee-vu-gs-gpu-profiler-frame-spikes-per-game-v3
+focus=god-of-war-actionable-native-bottleneck-hud-per-game-policy
+attempt=19-actionable-ee-vu-gs-gpu-hud-permanent-policy
