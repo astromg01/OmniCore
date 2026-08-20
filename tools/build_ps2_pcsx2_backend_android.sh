@@ -199,6 +199,62 @@ p.write_text(text, encoding="utf-8")
 PY
 grep -Fq 'NativeApp.nativeLoadDiagnostic()' "$BACKEND"
 
+# Alpha 6 device-test regression guard. Attempt #13 changed EE cycle rate live
+# whenever FPS dipped. ARMSX2 applies that through VMManager::ApplySettings(),
+# which reconfigures CPU/JIT state; workload bursts therefore caused the governor
+# itself to add hitches. Keep EE rate/skip at PCSX2 defaults for the whole session.
+# The same device test also exposed Partial texture preloading, while the pinned
+# core's own default is Full. Force Full so texture residency work happens up
+# front instead of during entity/effect-heavy gameplay. VU program caching is
+# enabled for repeat-run microprogram compilation stutter reduction on ARM64.
+python3 - "$BACKEND" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+text = p.read_text(encoding="utf-8")
+
+old_preload = 'runCatching { NativeApp.renderPreloading(1) }'
+if old_preload in text:
+    text = text.replace(old_preload, 'runCatching { NativeApp.renderPreloading(2) }', 1)
+elif 'runCatching { NativeApp.renderPreloading(2) }' not in text:
+    raise SystemExit('PS2 Full texture-preloading anchor not found')
+
+fastmem = '        NativeApp.setSetting("EmuCore/CPU/Recompiler", "EnableFastmem", "bool", "true")'
+vu_cache = '        NativeApp.setSetting("EmuCore/CPU/Recompiler", "EnableVUProgramCache", "bool", "true")'
+if vu_cache not in text:
+    if fastmem not in text:
+        raise SystemExit('PS2 recompiler settings anchor not found')
+    text = text.replace(fastmem, fastmem + '\n' + vu_cache, 1)
+
+# The governor can remain compiled for telemetry/reference, but it must not be
+# started until we have a non-JIT-invalidating adaptation strategy.
+text = text.replace(
+    '            startAdaptiveGovernor()\n            PS2Backend.BootResult.Started(id, activeRenderer)',
+    '            PS2Backend.BootResult.Started(id, activeRenderer)',
+    1,
+)
+if '            startAdaptiveGovernor()\n            PS2Backend.BootResult.Started(id, activeRenderer)' in text:
+    raise SystemExit('PS2 adaptive governor is still armed at boot')
+
+# Avoid a redundant post-boot cycle-skip write. ARMSX2 routes it through a full
+# ApplySettings() even when writing zero, so doing it after the VM starts creates
+# a needless JIT/settings transition. Pre-boot settings already pin it to zero.
+text = text.replace(
+    '        runCatching { NativeApp.speedhackEecycleskip(0) }\n        runCatching { NativeApp.setInstantVU1(true) }',
+    '        runCatching { NativeApp.setInstantVU1(true) }',
+    1,
+)
+
+p.write_text(text, encoding="utf-8")
+PY
+
+grep -Fq 'runCatching { NativeApp.renderPreloading(2) }' "$BACKEND"
+grep -Fq 'EnableVUProgramCache' "$BACKEND"
+if grep -Fq '            startAdaptiveGovernor()' "$BACKEND"; then
+  echo 'Adaptive EE-cycle governor is still armed' >&2
+  exit 1
+fi
+
 RESOURCE_SRC="$STAGE/assets/resources"
 RESOURCE_DST="app/src/main/assets/pcsx2/resources"
 test -d "$RESOURCE_SRC"
