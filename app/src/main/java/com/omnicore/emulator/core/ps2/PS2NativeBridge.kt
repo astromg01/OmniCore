@@ -20,13 +20,8 @@ object PS2NativeBridge {
     )
 
     /**
-     * Snapshot of PCSX2's native PerformanceMetrics counters.
-     *
-     * Percent fields are per-thread/device utilization over PCSX2's rolling
-     * window. Millisecond fields are average time per emulated frame. The bridge
-     * resolves the pinned emucore symbols dynamically so OmniCore remains able to
-     * fall back to its Android process-level classifier if a future core hides or
-     * renames a metric symbol instead of crashing the VM.
+     * Snapshot of PCSX2's native PerformanceMetrics counters or the Android
+     * per-thread CPU fallback when the prebuilt emucore hides those C++ symbols.
      */
     data class Pcsx2PerfSample(
         val available: Boolean = false,
@@ -68,8 +63,28 @@ object PS2NativeBridge {
         )
     }
 
-    fun samplePcsx2Performance(): Pcsx2PerfSample {
-        val raw = runCatching { nativePcsx2Performance() }.getOrDefault("")
+    /**
+     * Prefer PCSX2's own counters when the symbols are exported. Official
+     * ARMSX2 release builds currently hide them, so #20 falls back to Linux
+     * /proc task CPU accounting for OmniCore's exact EE VM tid plus PCSX2's
+     * explicitly named GS/MTVU threads. This is read-only telemetry and never
+     * mutates emulation timing, JIT state, affinity, or renderer state.
+     */
+    fun samplePcsx2Performance(
+        eeTid: Int = -1,
+        fps: Float = -1f,
+        nominalFps: Float = 0f
+    ): Pcsx2PerfSample {
+        val direct = parsePerf(runCatching { nativePcsx2Performance() }.getOrDefault(""))
+        if (direct.available) return direct
+
+        val fallback = parsePerf(
+            runCatching { nativePcsx2ThreadPerformance(eeTid, fps, nominalFps) }.getOrDefault("")
+        )
+        return if (fallback.available) fallback else direct
+    }
+
+    private fun parsePerf(raw: String): Pcsx2PerfSample {
         if (raw.isBlank()) return Pcsx2PerfSample()
         val values = parseKeyValues(raw)
         return Pcsx2PerfSample(
@@ -109,4 +124,5 @@ object PS2NativeBridge {
     private external fun nativeDescriptor(): String
     private external fun nativeProbe(): String
     private external fun nativePcsx2Performance(): String
+    private external fun nativePcsx2ThreadPerformance(eeTid: Int, fps: Float, nominalFps: Float): String
 }
