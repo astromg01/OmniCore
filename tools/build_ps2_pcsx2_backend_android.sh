@@ -1,30 +1,31 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Alpha 6 #21: preserve the stable #20 runtime, then apply the measured God of
-# War GS/VU policy. Learned GS-bound AUTO titles are steered to Vulkan because
-# the pinned ARMSX2 hardware GS back-thread only engages on Vulkan. We also
-# carry the real EE TID into the read-only procfs sampler and apply priority-only
-# scheduler assistance without affinity, cycle hacks, frameskip, or resolution loss.
+# Alpha 6 #22: keep the stable #20 telemetry and #21 Vulkan GS split, then
+# correct the classifier for parallel GS/GSB execution and rebalance scheduler
+# priority toward EE/VU when they become the new critical path. No affinity,
+# cycle hacks, frameskip, or resolution loss are allowed.
 BASE="$(cd "$(dirname "$0")" && pwd)/build_ps2_pcsx2_backend_android_base.sh"
 PATCH21="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_21.py"
+PATCH22="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_22.py"
 chmod +x "$BASE"
 "$BASE" "$@"
 python3 "$PATCH21"
+python3 "$PATCH22"
 
 BACKEND="app/src/main/java/com/omnicore/emulator/core/ps2/Pcsx2PS2Backend.kt"
 BRIDGE_KT="app/src/main/java/com/omnicore/emulator/core/ps2/PS2NativeBridge.kt"
 BRIDGE_CPP="app/src/main/cpp/ps2/ps2_native_bridge.cpp"
 FALLBACK_CPP="app/src/main/cpp/ps2/ps2_thread_perf_fallback.cpp"
+CONSTANTS="app/src/main/java/com/omnicore/emulator/core/ps2/PS2PerformanceConstants.kt"
 TELEMETRY="app/src/main/java/com/omnicore/emulator/core/ps2/PS2Backend.kt"
 ACTIVITY="app/src/main/java/com/omnicore/emulator/emulation/PS2EmulationActivity.kt"
 
-for f in "$BACKEND" "$BRIDGE_KT" "$BRIDGE_CPP" "$FALLBACK_CPP" "$TELEMETRY" "$ACTIVITY"; do
+for f in "$BACKEND" "$BRIDGE_KT" "$BRIDGE_CPP" "$FALLBACK_CPP" "$CONSTANTS" "$TELEMETRY" "$ACTIVITY"; do
   test -s "$f"
 done
 
 # Permanent runtime safety/performance contract retained from #19/#20.
-grep -Fq 'learnedProfile == PERF_PROFILE_GS' "$BACKEND"
 grep -Fq 'GSBackThreadMode' "$BACKEND"
 grep -Fq 'CoalesceRenderPasses' "$BACKEND"
 grep -Fq 'SkipDuplicateFrames' "$BACKEND"
@@ -38,13 +39,10 @@ grep -Fq 'frameSpike' "$BACKEND"
 grep -Fq 'peak_frame_ms' "$BACKEND"
 grep -Fq 'spike_count' "$BACKEND"
 
-# #21 measured-device contract: actual EE TID, Vulkan steering for a learned
-# GS bottleneck, deeper queue only for GS, and scheduler priority assistance.
+# #21 device contract remains: real EE TID plus Vulkan-only true GS pipeline.
 grep -Fq 'vmThreadTid = Process.myTid()' "$BACKEND"
 grep -Fq 'forceLearnedGsVulkan' "$BACKEND"
-grep -Fq 'PERF_PROFILE_GS -> 3' "$BACKEND"
-grep -Fq 'applySchedulerAssist' "$BACKEND"
-grep -Fq 'Process.setThreadPriority(tid, Process.THREAD_PRIORITY_DISPLAY)' "$BACKEND"
+grep -Fq 'Process.THREAD_PRIORITY_DISPLAY' "$BACKEND"
 grep -Fq 'val eeTid: Int = -1' "$BRIDGE_KT"
 grep -Fq 'val vuTid: Int = -1' "$BRIDGE_KT"
 grep -Fq 'val gsTid: Int = -1' "$BRIDGE_KT"
@@ -53,8 +51,22 @@ grep -Fq 'values["gsbTid"]?.toIntOrNull()' "$BRIDGE_KT"
 grep -Fq 'eeTid=' "$FALLBACK_CPP"
 grep -Fq 'gsbTid=' "$FALLBACK_CPP"
 
-# Native telemetry contract: use direct PCSX2 counters when exported; official
-# payloads may hide them, in which case #20/#21 use the procfs thread sampler.
+# #22 measured-device contract. GS/GSB are parallel branches, never additive.
+# The BALANCED profile keeps Vulkan pipelining but reduces queue depth and gives
+# EE/VU scheduler priority when they exceed the longest GS branch.
+grep -Fq 'PERF_PROFILE_BALANCED = 4' "$CONSTANTS"
+grep -Fq 'PERF_PROFILE_BALANCED -> "BALANCED"' "$CONSTANTS"
+grep -Fq 'learnedProfile == PERF_PROFILE_BALANCED' "$BACKEND"
+grep -Fq 'PERF_PROFILE_BALANCED -> 2' "$BACKEND"
+grep -Fq 'val gsParallelMs = max(' "$BACKEND"
+grep -Fq 'val gsParallelPct = max(' "$BACKEND"
+grep -Fq 'balancedPressure' "$BACKEND"
+grep -Fq 'val liveBalanced =' "$BACKEND"
+grep -Fq 'ps2TidPriorities' "$BACKEND"
+grep -Fq 'setPs2Priority(perf.gsBackTid, Process.THREAD_PRIORITY_DEFAULT)' "$BACKEND"
+grep -Fq 'setPs2Priority(perf.eeTid, Process.THREAD_PRIORITY_DISPLAY)' "$BACKEND"
+
+# Native telemetry contract: direct metrics when exported, procfs otherwise.
 grep -Fq '_ZN18PerformanceMetrics8GetSpeedEv' "$BRIDGE_CPP"
 grep -Fq '_ZN18PerformanceMetrics14GetInternalFPSEv' "$BRIDGE_CPP"
 grep -Fq '_ZN18PerformanceMetrics17GetCPUThreadUsageEv' "$BRIDGE_CPP"
@@ -93,9 +105,13 @@ if grep -Eq 'setAffinity|sched_setaffinity' "$FALLBACK_CPP"; then
   echo 'Procfs telemetry must never affinity-pin PS2 workers' >&2
   exit 1
 fi
+if grep -Eq 'renderUpscalemultiplier\((0\.|[0-9]*\.[0-9]*[1-9][0-9]*f?\))' "$BACKEND"; then
+  echo 'Dynamic sub-native resolution is not allowed by Alpha 6 policy' >&2
+  exit 1
+fi
 
 # Record symbol visibility. Hidden metrics are expected for the official ARMSX2
-# payload and must degrade to procfs rather than fail the build or the VM.
+# payload and must degrade to procfs rather than fail the build or VM.
 READELF="${ANDROID_NDK_HOME:-${OMNI_NDK_HOME:-}}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
 if [[ -x "$READELF" ]]; then
   for CORE in app/src/main/jniLibs/arm64-v8a/libemucore_4k.so app/src/main/jniLibs/arm64-v8a/libemucore_16k.so; do
@@ -112,4 +128,4 @@ if [[ -x "$READELF" ]]; then
   done
 fi
 
-echo 'OMNICORE_PCSX2_ALPHA6_21_POLICY_OK ee_tid=1 gs_vulkan_steering=1 gs_queue=3 scheduler_priority=1 procfs=1 no_affinity=1 safe_cycle_defaults=1'
+echo 'OMNICORE_PCSX2_ALPHA6_22_POLICY_OK gs_parallel_score=1 balanced_profile=1 ee_vu_priority=1 reversible_scheduler=1 vulkan_pipeline=1 queue2=1 procfs=1 no_affinity=1 safe_cycle_defaults=1'
