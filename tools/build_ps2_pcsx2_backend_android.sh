@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Alpha 6 #29: preserve the #23 visual-safe single-object GS baseline after the
-# Vulkan Lockstep device test reproduced fog flashing. Keep source-built PCSX2
-# Visibility telemetry, but correct v1's mixed two-stage cull denominator so
-# CULL% and prim/s describe real primitive attempts. No fog/alpha removal,
-# resolution reduction, cycle skipping or affinity pinning is allowed.
+# Alpha 6 #31: keep the #29 fog-safe single-object GS core, but replace the
+# telemetry-driven micro-tuning loop with one static pre-boot architecture:
+# device class + GameDB-style game class + SAFE/OPTIMAL/FAST tier. PCSX2's own
+# GameDB remains authoritative for compatibility hacks. No cycle skipping,
+# sub-native resolution, effect removal or affinity pinning is allowed.
 BASE="$(cd "$(dirname "$0")" && pwd)/build_ps2_pcsx2_backend_android_base.sh"
 PATCH21="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_21.py"
 PATCH22="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_22.py"
 PATCH23="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_23.py"
 PATCH24="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_24.py"
 PATCH29="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_29.py"
+PATCH31="$(cd "$(dirname "$0")" && pwd)/patch_ps2_alpha6_31_performance_architecture.py"
 UPSTREAM_PATCH24="$(cd "$(dirname "$0")" && pwd)/patch_armsx2_alpha6_24_visibility.py"
 UPSTREAM_PATCH29="$(cd "$(dirname "$0")" && pwd)/patch_armsx2_alpha6_29_visibility_v2.py"
 SOURCE_BUILD="$(cd "$(dirname "$0")" && pwd)/build_ps2_pcsx2_source_overlay_android.sh"
@@ -24,22 +25,25 @@ python3 "$PATCH22"
 python3 "$PATCH23"
 python3 "$PATCH24"
 python3 "$PATCH29"
+python3 "$PATCH31"
 python3 "$UPSTREAM_PATCH24" "$SRC"
 python3 "$UPSTREAM_PATCH29" "$SRC"
 "$SOURCE_BUILD" "$SRC" app/src/main/jniLibs/arm64-v8a
 
 BACKEND="app/src/main/java/com/omnicore/emulator/core/ps2/Pcsx2PS2Backend.kt"
+ARCH="app/src/main/java/com/omnicore/emulator/core/ps2/PS2PerformanceArchitecture.kt"
 BRIDGE_KT="app/src/main/java/com/omnicore/emulator/core/ps2/PS2NativeBridge.kt"
 FALLBACK_CPP="app/src/main/cpp/ps2/ps2_thread_perf_fallback.cpp"
 CONSTANTS="app/src/main/java/com/omnicore/emulator/core/ps2/PS2PerformanceConstants.kt"
 TELEMETRY="app/src/main/java/com/omnicore/emulator/core/ps2/PS2Backend.kt"
+SMART="app/src/main/java/com/omnicore/emulator/performance/PS2SmartPerf.kt"
 ACTIVITY="app/src/main/java/com/omnicore/emulator/emulation/PS2EmulationActivity.kt"
 NATIVE_APP="app/src/main/java/kr/co/iefriends/pcsx2/NativeApp.java"
 VIS_HEADER="$SRC/pcsx2/GS/OmniVisibilityTelemetry.h"
 GS_STATE="$SRC/pcsx2/GS/GSState.cpp"
 UPSTREAM_NATIVE="$SRC/platforms/android/app/src/main/cpp/native-lib.cpp"
 
-for f in "$BACKEND" "$BRIDGE_KT" "$FALLBACK_CPP" "$CONSTANTS" "$TELEMETRY" "$ACTIVITY" "$NATIVE_APP" "$VIS_HEADER" "$GS_STATE" "$UPSTREAM_NATIVE"; do
+for f in "$BACKEND" "$ARCH" "$BRIDGE_KT" "$FALLBACK_CPP" "$CONSTANTS" "$TELEMETRY" "$SMART" "$ACTIVITY" "$NATIVE_APP" "$VIS_HEADER" "$GS_STATE" "$UPSTREAM_NATIVE"; do
   test -s "$f"
 done
 
@@ -55,7 +59,8 @@ grep -Fq 'speedPercent' "$BACKEND"
 grep -Fq 'frameSpike' "$BACKEND"
 grep -Fq 'peak_frame_ms' "$BACKEND"
 
-# #21/#22 device telemetry and parallel scoring remain intact.
+# #21/#22 diagnostics remain compiled for opt-in HUD/debug use. They no longer
+# choose renderer/readback/scheduler policy during normal gameplay.
 grep -Fq 'vmThreadTid = Process.myTid()' "$BACKEND"
 grep -Fq 'Process.THREAD_PRIORITY_DISPLAY' "$BACKEND"
 grep -Fq 'val gsParallelMs = max(' "$BACKEND"
@@ -64,19 +69,34 @@ grep -Fq 'PERF_PROFILE_BALANCED = 4' "$CONSTANTS"
 grep -Fq 'PERF_PROFILE_BALANCED -> "BALANCED"' "$CONSTANTS"
 grep -Fq 'ps2TidPriorities' "$BACKEND"
 
-# #29 physical-device safety result: both Pipelined and Vulkan Lockstep caused
-# intermittent fog flashing. Alpha 6 therefore keeps the GS back thread OFF.
+# #29 physical-device safety remains non-negotiable: Pipelined and Vulkan
+# Lockstep reproduced fog flashing, so the GS back thread stays OFF.
 grep -Fq 'val useGsPipeline = false' "$BACKEND"
-grep -Fq 'val visualSafeBalanced = learnedProfile == PERF_PROFILE_BALANCED' "$BACKEND"
 grep -Fq 'val useGsLockstep = false' "$BACKEND"
 grep -Fq 'val gsBackMode = 0' "$BACKEND"
 grep -Fq 'gsBackMode.toString()' "$BACKEND"
-grep -Fq 'PERF_PROFILE_BALANCED -> 1' "$BACKEND"
-grep -Fq 'learned == PERF_PROFILE_BALANCED' "$BACKEND"
 
-# Visibility v2: source-built GS telemetry remains read-only, but primitive
-# accounting now has a true one-entry-per-primitive denominator. Fast and legacy
-# cull rejection points are tracked separately while preserving PCSX2 decisions.
+# #31 architecture contract: static tier -> device/game policy -> renderer and
+# hardware-download policy, all before boot. FAST uses PCSX2 NoReadbacks; the
+# currently validated heavy reference can receive the same policy under OPTIMAL.
+grep -Fq 'enum class PerformanceTier' "$TELEMETRY"
+grep -Fq 'performanceTier: PerformanceTier = PerformanceTier.OPTIMAL' "$TELEMETRY"
+grep -Fq 'object PS2PerformanceArchitecture' "$ARCH"
+grep -Fq 'HEAVY_GS_REFERENCE' "$ARCH"
+grep -Fq 'NO_READBACKS(2)' "$ARCH"
+grep -Fq 'PS2PerformanceArchitecture.resolve(appContext, gameKey, config)' "$BACKEND"
+grep -Fq '"HWDownloadMode", "int", architecture.readbacks.nativeValue.toString()' "$BACKEND"
+grep -Fq 'architecture.mtvu.toString()' "$BACKEND"
+grep -Fq 'performanceTier = when (mode)' "$SMART"
+grep -Fq 'currentGame.title.lowercase()' "$ACTIVITY"
+grep -Fq 'started && perfHudVisible' "$ACTIVITY"
+if grep -Fq 'startPressureProfiler(request.imagePath)' "$BACKEND"; then
+  echo 'Live pressure profiler must not run in #31 static architecture' >&2
+  exit 1
+fi
+
+# Visibility v2 source telemetry remains ABI-compatible and read-only. It is
+# available when the HUD is explicitly enabled, not as a permanent governor.
 grep -Fq 'OmniVisibilityTelemetry::RecordFastCull' "$GS_STATE"
 grep -Fq 'OmniVisibilityTelemetry::RecordLegacyCull' "$GS_STATE"
 grep -Fq 'OmniVisibilityTelemetry::RecordDrawBatch' "$GS_STATE"
@@ -133,4 +153,4 @@ for CORE in app/src/main/jniLibs/arm64-v8a/libemucore_4k.so app/src/main/jniLibs
   grep -Fq 'Java_kr_co_iefriends_pcsx2_NativeApp_getFPS' <<< "$TABLE"
 done
 
-echo 'OMNICORE_PCSX2_ALPHA6_29_POLICY_OK source_overlay=1 visibility_v2=1 true_primitive_accounting=1 gs_back_off=1 fog_safety=1 no_fog_disable=1 no_affinity=1 safe_cycle_defaults=1'
+echo 'OMNICORE_PCSX2_ALPHA6_31_POLICY_OK architecture_v1=1 device_profile=1 game_profile=1 static_tiers=1 no_readbacks_scoped=1 profiler_off=1 hud_opt_in=1 gs_back_off=1 fog_safety=1 no_fog_disable=1 no_affinity=1 safe_cycle_defaults=1'
